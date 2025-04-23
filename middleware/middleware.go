@@ -6,6 +6,9 @@
 package middleware
 
 import (
+	"bytes"
+	"encoding/json"
+	"net/http"
 	"path/filepath"
 	"time"
 
@@ -27,16 +30,21 @@ import (
 type login struct {
 	Username string `form:"username" json:"username" binding:"required"`
 	Password string `form:"password" json:"password" binding:"required"`
-	Otp      string `form:"otp" json:"otp,omitempty"`
 }
+
+type UserSession struct {
+	JWTToken    string
+	NetCTIToken string
+}
+
+var UserSessions = make(map[string]*UserSession)
 
 var jwtMiddleware *jwt.GinJWTMiddleware
 var identityKey = "id"
 
 func InstanceJWT() *jwt.GinJWTMiddleware {
 	if jwtMiddleware == nil {
-		jwtMiddleware := InitJWT()
-		return jwtMiddleware
+		jwtMiddleware = InitJWT()
 	}
 	return jwtMiddleware
 }
@@ -49,17 +57,88 @@ func InitJWT() *jwt.GinJWTMiddleware {
 		Timeout:     time.Hour * 24 * 14, // 2 weeks
 		IdentityKey: identityKey,
 		Authenticator: func(c *gin.Context) (interface{}, error) {
+			// Ensure jwtMiddleware is initialized before using it
+			if jwtMiddleware == nil {
+				jwtMiddleware = InitJWT()
+			}
+
 			// check login credentials exists
 			var loginVals login
 			if err := c.ShouldBind(&loginVals); err != nil {
+				utils.LogError(errors.Wrap(err, "[AUTH] Missing login values"))
 				return "", jwt.ErrMissingLoginValues
 			}
 
 			// set login credentials
 			username := loginVals.Username
+			password := loginVals.Password
+
+			// Perform login on the old NetCTI server
+			netCtiLoginURL := configuration.Config.V1Endpoint + configuration.Config.V1Path + "/authentication/login"
+			payload := map[string]string{"username": username, "password": password}
+			payloadBytes, _ := json.Marshal(payload)
+
+			req, err := http.NewRequest("POST", netCtiLoginURL, bytes.NewBuffer(payloadBytes))
+			if err != nil {
+				utils.LogError(errors.Wrap(err, "[AUTH] Failed to create HTTP request"))
+				return nil, err
+			}
+			req.Header.Set("Content-Type", "application/json")
+
+			client := &http.Client{}
+			resp, err := client.Do(req)
+			if err != nil {
+				utils.LogError(errors.Wrap(err, "[AUTH] Failed to send request to NetCTI"))
+				return nil, jwt.ErrFailedAuthentication
+			}
+			defer resp.Body.Close()
+
+			var NetCTIToken string
+
+			if resp.StatusCode == http.StatusUnauthorized {
+				wwwAuth := resp.Header.Get("Www-Authenticate")
+				if wwwAuth != "" {
+					// Generate NetCTIToken using the www-authenticate header
+					NetCTIToken = utils.GenerateLegacyToken(resp, username, password)
+					if NetCTIToken == "" {
+						utils.LogError(errors.New("[AUTH] Failed to generate NetCTIToken"))
+						return nil, jwt.ErrFailedAuthentication
+					}
+
+					// Retry the request with the new Authorization header
+					netCtiMeURL := configuration.Config.V1Endpoint + configuration.Config.V1Path + "/user/me"
+					req, _ := http.NewRequest("GET", netCtiMeURL, nil) // Use GET for /user/me
+					req.Header.Set("Authorization", NetCTIToken)
+					// print request headers
+					resp, err = client.Do(req)
+					if err != nil {
+						utils.LogError(errors.Wrap(err, "[AUTH] Failed to retry request to NetCTI"))
+						return nil, jwt.ErrFailedAuthentication
+					}
+					defer resp.Body.Close()
+				}
+			}
+
+			if resp.StatusCode != http.StatusOK {
+				utils.LogError(errors.Errorf("[AUTH] Authentication failed with status: %d", resp.StatusCode))
+				return nil, jwt.ErrFailedAuthentication
+			}
 
 			// Login is successful. Middleware returns a JWT.
-			// store login action
+			// Generate JWTToken
+			JWTToken, _, err := jwtMiddleware.TokenGenerator(&models.UserAuthorizations{Username: username})
+			if err != nil {
+				utils.LogError(errors.Wrap(err, "[AUTH] Failed to generate JWTToken"))
+				return nil, jwt.ErrFailedAuthentication
+			}
+
+			// Create a new user session object
+			UserSessions[JWTToken] = &UserSession{
+				JWTToken:    JWTToken,
+				NetCTIToken: NetCTIToken,
+			}
+
+			// Store login action
 			auditData := models.Audit{
 				ID:        0,
 				User:      username,
@@ -69,7 +148,7 @@ func InitJWT() *jwt.GinJWTMiddleware {
 			}
 			audit.Store(auditData)
 
-			// return user auth model
+			// Return user auth model
 			return &models.UserAuthorizations{
 				Username: username,
 			}, nil
@@ -82,7 +161,6 @@ func InitJWT() *jwt.GinJWTMiddleware {
 					identityKey: user.Username,
 					"role":      "",
 					"actions":   []string{},
-					"2fa":       user.OtpPass, // OTP value check result: true=success, false=not needed
 				}
 			}
 
@@ -104,14 +182,6 @@ func InitJWT() *jwt.GinJWTMiddleware {
 		Authorizator: func(data interface{}, c *gin.Context) bool {
 			// bypass auth for GET requests: // TODO
 			if c.Request.Method == "GET" {
-				return true
-			}
-
-			// bypass for 2FA apis
-			if c.Request.Method == "POST" && c.Request.RequestURI == "/api/2FA" {
-				return true
-			}
-			if c.Request.Method == "DELETE" && c.Request.RequestURI == "/api/2FA" {
 				return true
 			}
 

@@ -55,21 +55,28 @@ func main() {
 	// define api group
 	api := router.Group("/api")
 
-	// define login and logout endpoint
 	api.POST("/login", middleware.InstanceJWT().LoginHandler)
 	api.POST("/logout", middleware.InstanceJWT().LogoutHandler)
 
-	// define JWT middleware
 	api.Use(middleware.InstanceJWT().MiddlewareFunc())
 	{
-		// audit APIs
 		api.GET("/audit", methods.GetAudits)
 		api.GET("/audit/users", methods.GetAuditsUsers)
 		api.GET("/audit/actions", methods.GetAuditsActions)
 	}
 
 	// handle missing endpoint
-	router.NoRoute(func(c *gin.Context) {
+	router.NoRoute(middleware.InstanceJWT().MiddlewareFunc(), func(c *gin.Context) {
+		// Check if the requested API exists on the current server
+		if c.Request.Method == http.MethodGet || c.Request.Method == http.MethodPost {
+			// Remove the "/api" prefix from the requested path
+			pathWithoutPrefix := c.Request.URL.Path[len("/api"):]
+			// Fallback to proxy logic for legacy V1 API
+			methods.ProxyV1Request(c, pathWithoutPrefix)
+			return
+		}
+
+		// If not handled, return 404
 		c.JSON(http.StatusNotFound, structs.Map(response.StatusNotFound{
 			Code:    404,
 			Message: "API not found",

@@ -6,9 +6,37 @@
 package utils
 
 import (
+	"crypto/hmac"
+	"crypto/sha1"
+	"encoding/hex"
+	"net/http"
 	"os"
+	"strings"
 )
+
+func LogInfo(message string) {
+	os.Stdout.WriteString(message + "\n")
+}
 
 func LogError(err error) {
 	os.Stderr.WriteString(err.Error() + "\n")
+}
+
+func GenerateLegacyToken(res *http.Response, username, password string) string {
+	wwwAuth := res.Header.Get("Www-Authenticate")
+	parts := strings.Split(wwwAuth, " ")
+	if len(parts) < 2 {
+		return ""
+	}
+
+	nonce := parts[1]
+	message := username + ":" + password + ":" + nonce
+
+	mac := hmac.New(sha1.New, []byte(password))
+	mac.Write([]byte(message))
+	token := hex.EncodeToString(mac.Sum(nil))
+
+	token = username + ":" + token
+
+	return token
 }
