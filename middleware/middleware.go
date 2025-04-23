@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/pkg/errors"
@@ -236,6 +237,12 @@ func InitJWT() *jwt.GinJWTMiddleware {
 			c.JSON(200, gin.H{"code": 200, "expire": t, "token": token})
 		},
 		LogoutResponse: func(c *gin.Context, code int) {
+			// Extract the JWT token from the Authorization header
+			JWTToken := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
+			if JWTToken != "" {
+				// Remove the UserSession associated with the token
+				delete(UserSessions, JWTToken)
+			}
 			c.JSON(200, gin.H{"code": 200})
 		},
 		Unauthorized: func(c *gin.Context, code int, message string) {

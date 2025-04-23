@@ -63,6 +63,15 @@ func main() {
 		api.GET("/audit", methods.GetAudits)
 		api.GET("/audit/users", methods.GetAuditsUsers)
 		api.GET("/audit/actions", methods.GetAuditsActions)
+
+		// Ping endpoint
+		api.GET("/ping", func(c *gin.Context) {
+			c.JSON(http.StatusOK, gin.H{
+				"code":    200,
+				"message": "pong",
+				"data":    nil,
+			})
+		})
 	}
 
 	// handle missing endpoint

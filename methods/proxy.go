@@ -77,7 +77,7 @@ func ProxyV1Request(c *gin.Context, path string) {
 	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{
 			"code":    401,
-			"message": "User session not found",
+			"message": "User not logged in",
 		})
 		return
 	}
