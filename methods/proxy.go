@@ -73,14 +73,10 @@ func ProxyV1Request(c *gin.Context, path string) {
 		return
 	}
 
-	userSession, exists := middleware.UserSessions[JWTToken]
-	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"code":    401,
-			"message": "User not logged in",
-		})
-		return
-	}
+	// Extract claims from the JWT token
+	claims := jwt.ExtractClaims(c)
+
+	userSession := middleware.UserSessions[claims["id"].(string)]
 
 	// Add the NetCTI token to the request headers
 	req.Header.Set("Authorization", userSession.NetCTIToken)
@@ -104,9 +100,6 @@ func ProxyV1Request(c *gin.Context, path string) {
 		return
 	}
 	defer resp.Body.Close()
-
-	// Extract claims from the JWT token
-	claims := jwt.ExtractClaims(c)
 
 	// Log the proxy action
 	auditData := models.Audit{

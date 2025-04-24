@@ -34,6 +34,7 @@ type login struct {
 }
 
 type UserSession struct {
+	Username    string
 	JWTToken    string
 	NetCTIToken string
 }
@@ -126,16 +127,10 @@ func InitJWT() *jwt.GinJWTMiddleware {
 			}
 
 			// Login is successful. Middleware returns a JWT.
-			// Generate JWTToken
-			JWTToken, _, err := jwtMiddleware.TokenGenerator(&models.UserAuthorizations{Username: username})
-			if err != nil {
-				utils.LogError(errors.Wrap(err, "[AUTH] Failed to generate JWTToken"))
-				return nil, jwt.ErrFailedAuthentication
-			}
-
 			// Create a new user session object
-			UserSessions[JWTToken] = &UserSession{
-				JWTToken:    JWTToken,
+			UserSessions[username] = &UserSession{
+				Username:    username,
+				JWTToken:    "",
 				NetCTIToken: NetCTIToken,
 			}
 
@@ -181,6 +176,18 @@ func InitJWT() *jwt.GinJWTMiddleware {
 			return user
 		},
 		Authorizator: func(data interface{}, c *gin.Context) bool {
+			// Check if the user is logged in
+			claims := jwt.ExtractClaims(c)
+
+			username, ok := claims[identityKey].(string)
+
+			userSession := UserSessions[claims[identityKey].(string)]
+			JWTToken := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
+
+			if !ok || UserSessions[username] == nil || JWTToken != userSession.JWTToken {
+				return false
+			}
+
 			// bypass auth for GET requests: // TODO
 			if c.Request.Method == "GET" {
 				return true
@@ -234,15 +241,29 @@ func InitJWT() *jwt.GinJWTMiddleware {
 			return false
 		},
 		LoginResponse: func(c *gin.Context, code int, token string, t time.Time) {
+			// Extract the JWT token from the Authorization header
+			tokenObj, _ := InstanceJWT().ParseTokenString(token)
+			claims := jwt.ExtractClaimsFromToken(tokenObj)
+
+			// Store the JWT token in the UserSession
+			UserSessions[claims[identityKey].(string)].JWTToken = token
+
 			c.JSON(200, gin.H{"code": 200, "expire": t, "token": token})
 		},
 		LogoutResponse: func(c *gin.Context, code int) {
 			// Extract the JWT token from the Authorization header
 			JWTToken := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
-			if JWTToken != "" {
-				// Remove the UserSession associated with the token
-				delete(UserSessions, JWTToken)
+			tokenObj, _ := InstanceJWT().ParseTokenString(JWTToken)
+			claims := jwt.ExtractClaimsFromToken(tokenObj)
+
+			userSession := UserSessions[claims[identityKey].(string)]
+
+			if userSession != nil {
+				if JWTToken == userSession.JWTToken {
+					delete(UserSessions, claims[identityKey].(string))
+				}
 			}
+
 			c.JSON(200, gin.H{"code": 200})
 		},
 		Unauthorized: func(c *gin.Context, code int, message string) {
