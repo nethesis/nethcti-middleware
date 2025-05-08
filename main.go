@@ -19,6 +19,7 @@ import (
 	"github.com/nethesis/nethcti-middleware/methods"
 	"github.com/nethesis/nethcti-middleware/middleware"
 	"github.com/nethesis/nethcti-middleware/response"
+	"github.com/nethesis/nethcti-middleware/socket"
 )
 
 func main() {
@@ -35,6 +36,7 @@ func main() {
 
 	// init routers
 	router := gin.New()
+	router.RedirectTrailingSlash = false
 	router.Use(
 		gin.LoggerWithWriter(gin.DefaultWriter),
 		gin.Recovery(),
@@ -73,6 +75,10 @@ func main() {
 			})
 		})
 	}
+
+	// define websocket endpoint
+	ws := router.Group("/socket.io")
+	ws.GET("/", socket.WsProxyHandler)
 
 	// handle missing endpoint
 	router.NoRoute(middleware.InstanceJWT().MiddlewareFunc(), func(c *gin.Context) {

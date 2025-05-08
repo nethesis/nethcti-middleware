@@ -13,6 +13,7 @@ type Configuration struct {
 	ListenAddress string `json:"listen_address"`
 	Secret        string `json:"secret"`
 	AuditFile     string `json:"audit_file"`
+	V1Protocol    string `json:"v1_protocol"`
 	V1Endpoint    string `json:"v1_endpoint"`
 	V1Path        string `json:"v1_path"`
 }
@@ -42,11 +43,18 @@ func Init() {
 		Config.AuditFile = ""
 	}
 
+	// set V1 API protocol
+	if os.Getenv("V1_PROTOCOL") != "" {
+		Config.V1Protocol = os.Getenv("V1_PROTOCOL")
+	} else {
+		Config.V1Protocol = "https"
+	}
+
 	// set V1 API endpoint
 	if os.Getenv("V1_ENDPOINT") != "" {
 		Config.V1Endpoint = os.Getenv("V1_ENDPOINT")
 	} else {
-		Config.V1Endpoint = "https://cti2.demo-heron.sf.nethserver.net"
+		Config.V1Endpoint = "cti2.demo-heron.sf.nethserver.net"
 	}
 
 	// set V1 API path

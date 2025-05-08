@@ -9,7 +9,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/http"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -17,7 +16,6 @@ import (
 
 	"github.com/fatih/structs"
 	"github.com/gin-gonic/gin"
-	"github.com/gin-gonic/gin/binding"
 
 	jwt "github.com/appleboy/gin-jwt/v2"
 
@@ -76,7 +74,7 @@ func InitJWT() *jwt.GinJWTMiddleware {
 			password := loginVals.Password
 
 			// Perform login on the old NetCTI server
-			netCtiLoginURL := configuration.Config.V1Endpoint + configuration.Config.V1Path + "/authentication/login"
+			netCtiLoginURL := configuration.Config.V1Protocol + "://" + configuration.Config.V1Endpoint + configuration.Config.V1Path + "/authentication/login"
 			payload := map[string]string{"username": username, "password": password}
 			payloadBytes, _ := json.Marshal(payload)
 
@@ -108,7 +106,7 @@ func InitJWT() *jwt.GinJWTMiddleware {
 					}
 
 					// Retry the request with the new Authorization header
-					netCtiMeURL := configuration.Config.V1Endpoint + configuration.Config.V1Path + "/user/me"
+					netCtiMeURL := configuration.Config.V1Protocol + "://" + configuration.Config.V1Endpoint + configuration.Config.V1Path + "/user/me"
 					req, _ := http.NewRequest("GET", netCtiMeURL, nil) // Use GET for /user/me
 					req.Header.Set("Authorization", NetCTIToken)
 					// print request headers
@@ -145,16 +143,14 @@ func InitJWT() *jwt.GinJWTMiddleware {
 			audit.Store(auditData)
 
 			// Return user auth model
-			return &models.UserAuthorizations{
-				Username: username,
-			}, nil
+			return UserSessions[username], nil
 		},
 		PayloadFunc: func(data interface{}) jwt.MapClaims {
 			// read current user
-			if user, ok := data.(*models.UserAuthorizations); ok {
+			if userSession, ok := data.(*UserSession); ok {
 				// create claims map
 				return jwt.MapClaims{
-					identityKey: user.Username,
+					identityKey: userSession.Username,
 					"role":      "",
 					"actions":   []string{},
 				}
@@ -167,13 +163,10 @@ func InitJWT() *jwt.GinJWTMiddleware {
 			// handle identity and extract claims
 			claims := jwt.ExtractClaims(c)
 
-			// create user object
-			user := &models.UserAuthorizations{
-				Username: claims[identityKey].(string),
-			}
+			username := claims[identityKey].(string)
 
-			// return user
-			return user
+			// return username
+			return username
 		},
 		Authorizator: func(data interface{}, c *gin.Context) bool {
 			// Check if the user is logged in
@@ -188,49 +181,10 @@ func InitJWT() *jwt.GinJWTMiddleware {
 				return false
 			}
 
-			// bypass auth for GET requests: // TODO
-			if c.Request.Method == "GET" {
-				return true
-			}
-
-			// extract data payload and check authorizations
-			if v, ok := data.(*models.UserAuthorizations); ok {
-				authorizedActions := v.Actions
-
-				// extract task obj
-				var jsonTask models.Task
-				errJson := c.ShouldBindBodyWith(&jsonTask, binding.JSON)
-				if errJson != nil {
-					utils.LogError(errors.Wrap(errJson, "[AUTH] error unmarshalling task obj"))
-					return false
-				}
-
-				// check action authorization
-				actionAllowed := false
-				for _, authorizedAction := range authorizedActions {
-					actionAllowed, _ = filepath.Match(authorizedAction, jsonTask.Action)
-					if actionAllowed {
-						break
-					}
-				}
-
-				// store auth action
-				auditData := models.Audit{
-					ID:        0,
-					User:      data.(*models.UserAuthorizations).Username,
-					Action:    "auth-ok",
-					Data:      "",
-					Timestamp: time.Now().UTC(),
-				}
-				audit.Store(auditData)
-
-				return actionAllowed
-			}
-
 			// store auth action
 			auditData := models.Audit{
 				ID:        0,
-				User:      data.(*models.UserAuthorizations).Username,
+				User:      username,
 				Action:    "auth-fail",
 				Data:      "",
 				Timestamp: time.Now().UTC(),
@@ -238,7 +192,7 @@ func InitJWT() *jwt.GinJWTMiddleware {
 			audit.Store(auditData)
 
 			// not authorized
-			return false
+			return true
 		},
 		LoginResponse: func(c *gin.Context, code int, token string, t time.Time) {
 			// Extract the JWT token from the Authorization header
@@ -247,7 +201,6 @@ func InitJWT() *jwt.GinJWTMiddleware {
 
 			// Store the JWT token in the UserSession
 			UserSessions[claims[identityKey].(string)].JWTToken = token
-
 			c.JSON(200, gin.H{"code": 200, "expire": t, "token": token})
 		},
 		LogoutResponse: func(c *gin.Context, code int) {

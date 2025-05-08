@@ -39,7 +39,7 @@ func ProxyV1Request(c *gin.Context, path string) {
 	}
 
 	// Build the forwarding URL
-	url := configuration.Config.V1Endpoint + configuration.Config.V1Path + path
+	url := configuration.Config.V1Protocol + "://" + configuration.Config.V1Endpoint + configuration.Config.V1Path + path
 
 	// Create a new request
 	req, err := http.NewRequest(c.Request.Method, url, c.Request.Body)
