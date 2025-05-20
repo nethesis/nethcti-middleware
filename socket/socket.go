@@ -32,8 +32,8 @@ func WsProxyHandler(c *gin.Context) {
 	// Connect to backend
 	backendURL := url.URL{
 		Scheme:   protocol,
-		Host:     configuration.Config.V1Endpoint,
-		Path:     "/socket.io/",
+		Host:     configuration.Config.V1WsEndpoint,
+		Path:     configuration.Config.V1WsPath + "/",
 		RawQuery: c.Request.URL.RawQuery,
 	}
 	backendConn, _, err := websocket.DefaultDialer.Dial(backendURL.String(), nil)

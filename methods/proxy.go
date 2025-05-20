@@ -25,7 +25,7 @@ import (
 // ProxyV1Request forwards requests to the legacy V1 API
 func ProxyV1Request(c *gin.Context, path string) {
 	// Check if V1 endpoint is configured
-	if configuration.Config.V1Endpoint == "" {
+	if configuration.Config.V1ApiEndpoint == "" {
 		c.JSON(http.StatusServiceUnavailable, gin.H{
 			"code":    503,
 			"message": "V1 API endpoint not configured",
@@ -39,7 +39,7 @@ func ProxyV1Request(c *gin.Context, path string) {
 	}
 
 	// Build the forwarding URL
-	url := configuration.Config.V1Protocol + "://" + configuration.Config.V1Endpoint + configuration.Config.V1Path + path
+	url := configuration.Config.V1Protocol + "://" + configuration.Config.V1ApiEndpoint + configuration.Config.V1ApiPath + path
 
 	// Create a new request
 	req, err := http.NewRequest(c.Request.Method, url, c.Request.Body)

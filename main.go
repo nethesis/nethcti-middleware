@@ -77,7 +77,7 @@ func main() {
 	}
 
 	// define websocket endpoint
-	ws := router.Group("/socket.io")
+	ws := router.Group(configuration.Config.V1WsPath)
 	ws.GET("/", socket.WsProxyHandler)
 
 	// handle missing endpoint

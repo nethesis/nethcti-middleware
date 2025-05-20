@@ -14,8 +14,10 @@ type Configuration struct {
 	Secret        string `json:"secret"`
 	AuditFile     string `json:"audit_file"`
 	V1Protocol    string `json:"v1_protocol"`
-	V1Endpoint    string `json:"v1_endpoint"`
-	V1Path        string `json:"v1_path"`
+	V1ApiEndpoint string `json:"v1_api_endpoint"`
+	V1WsEndpoint  string `json:"v1_ws_endpoint"`
+	V1ApiPath     string `json:"v1_api_path"`
+	V1WsPath      string `json:"v1_ws_path"`
 }
 
 var Config = Configuration{}
@@ -52,29 +54,29 @@ func Init() {
 
 	// set V1 API endpoint
 	if os.Getenv("V1_API_ENDPOINT") != "" {
-		Config.V1Endpoint = os.Getenv("V1_API_ENDPOINT")
+		Config.V1ApiEndpoint = os.Getenv("V1_API_ENDPOINT")
 	} else {
-		Config.V1Endpoint = "cti2.demo-heron.sf.nethserver.net"
+		Config.V1ApiEndpoint = "cti2.demo-heron.sf.nethserver.net"
 	}
 
 	// set V1 API endpoint
 	if os.Getenv("V1_WS_ENDPOINT") != "" {
-		Config.V1Endpoint = os.Getenv("V1_WS_ENDPOINT")
+		Config.V1WsEndpoint = os.Getenv("V1_WS_ENDPOINT")
 	} else {
-		Config.V1Endpoint = "cti2.demo-heron.sf.nethserver.net"
+		Config.V1WsEndpoint = "cti2.demo-heron.sf.nethserver.net"
 	}
 
 	// set V1 API path
 	if os.Getenv("V1_API_PATH") != "" {
-		Config.V1Path = os.Getenv("V1_API_PATH")
+		Config.V1ApiPath = os.Getenv("V1_API_PATH")
 	} else {
-		Config.V1Path = "/webrest"
+		Config.V1ApiPath = "/webrest"
 	}
 
 	// set V1 API path
 	if os.Getenv("V1_WS_PATH") != "" {
-		Config.V1Path = os.Getenv("V1_WS_PATH")
+		Config.V1WsPath = os.Getenv("V1_WS_PATH")
 	} else {
-		Config.V1Path = "/socket.io"
+		Config.V1WsPath = "/socket.io"
 	}
 }

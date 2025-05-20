@@ -74,7 +74,7 @@ func InitJWT() *jwt.GinJWTMiddleware {
 			password := loginVals.Password
 
 			// Perform login on the old NetCTI server
-			netCtiLoginURL := configuration.Config.V1Protocol + "://" + configuration.Config.V1Endpoint + configuration.Config.V1Path + "/authentication/login"
+			netCtiLoginURL := configuration.Config.V1Protocol + "://" + configuration.Config.V1ApiEndpoint + configuration.Config.V1ApiPath + "/authentication/login"
 			payload := map[string]string{"username": username, "password": password}
 			payloadBytes, _ := json.Marshal(payload)
 
@@ -106,7 +106,7 @@ func InitJWT() *jwt.GinJWTMiddleware {
 					}
 
 					// Retry the request with the new Authorization header
-					netCtiMeURL := configuration.Config.V1Protocol + "://" + configuration.Config.V1Endpoint + configuration.Config.V1Path + "/user/me"
+					netCtiMeURL := configuration.Config.V1Protocol + "://" + configuration.Config.V1ApiEndpoint + configuration.Config.V1ApiPath + "/user/me"
 					req, _ := http.NewRequest("GET", netCtiMeURL, nil) // Use GET for /user/me
 					req.Header.Set("Authorization", NetCTIToken)
 					// print request headers
