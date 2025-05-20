@@ -17,4 +17,4 @@ RUN go build -o whale
 EXPOSE 8080
 
 # Run the binary (fix the command format)
-CMD ["./whale", "-c", "conf.dev.json"]
+CMD ["./whale"]

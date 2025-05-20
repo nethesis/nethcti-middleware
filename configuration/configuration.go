@@ -51,16 +51,30 @@ func Init() {
 	}
 
 	// set V1 API endpoint
-	if os.Getenv("V1_ENDPOINT") != "" {
-		Config.V1Endpoint = os.Getenv("V1_ENDPOINT")
+	if os.Getenv("V1_API_ENDPOINT") != "" {
+		Config.V1Endpoint = os.Getenv("V1_API_ENDPOINT")
+	} else {
+		Config.V1Endpoint = "cti2.demo-heron.sf.nethserver.net"
+	}
+
+	// set V1 API endpoint
+	if os.Getenv("V1_WS_ENDPOINT") != "" {
+		Config.V1Endpoint = os.Getenv("V1_WS_ENDPOINT")
 	} else {
 		Config.V1Endpoint = "cti2.demo-heron.sf.nethserver.net"
 	}
 
 	// set V1 API path
-	if os.Getenv("V1_PATH") != "" {
-		Config.V1Path = os.Getenv("V1_PATH")
+	if os.Getenv("V1_API_PATH") != "" {
+		Config.V1Path = os.Getenv("V1_API_PATH")
 	} else {
 		Config.V1Path = "/webrest"
+	}
+
+	// set V1 API path
+	if os.Getenv("V1_WS_PATH") != "" {
+		Config.V1Path = os.Getenv("V1_WS_PATH")
+	} else {
+		Config.V1Path = "/socket.io"
 	}
 }
