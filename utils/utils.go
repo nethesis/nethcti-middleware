@@ -10,17 +10,8 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"net/http"
-	"os"
 	"strings"
 )
-
-func LogInfo(message string) {
-	os.Stdout.WriteString(message + "\n")
-}
-
-func LogError(err error) {
-	os.Stderr.WriteString(err.Error() + "\n")
-}
 
 func GenerateLegacyToken(res *http.Response, username, password string) string {
 	wwwAuth := res.Header.Get("Www-Authenticate")

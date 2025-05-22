@@ -8,20 +8,19 @@ package middleware
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"strings"
 	"time"
 
-	"github.com/pkg/errors"
-
 	"github.com/fatih/structs"
 	"github.com/gin-gonic/gin"
+	"github.com/nqd/flat"
 
 	jwt "github.com/appleboy/gin-jwt/v2"
 
-	"github.com/nethesis/nethcti-middleware/audit"
 	"github.com/nethesis/nethcti-middleware/configuration"
-	"github.com/nethesis/nethcti-middleware/models"
+	"github.com/nethesis/nethcti-middleware/logs"
 	"github.com/nethesis/nethcti-middleware/response"
 	"github.com/nethesis/nethcti-middleware/utils"
 )
@@ -53,7 +52,7 @@ func InitJWT() *jwt.GinJWTMiddleware {
 	// define jwt middleware
 	authMiddleware, errDefine := jwt.New(&jwt.GinJWTMiddleware{
 		Realm:       "nethcti",
-		Key:         []byte(configuration.Config.Secret),
+		Key:         []byte(configuration.Config.Secret_jwt),
 		Timeout:     time.Hour * 24 * 14, // 2 weeks
 		IdentityKey: identityKey,
 		Authenticator: func(c *gin.Context) (interface{}, error) {
@@ -65,7 +64,7 @@ func InitJWT() *jwt.GinJWTMiddleware {
 			// check login credentials exists
 			var loginVals login
 			if err := c.ShouldBind(&loginVals); err != nil {
-				utils.LogError(errors.Wrap(err, "[AUTH] Missing login values"))
+				logs.Log("[AUTH] Missing login values")
 				return "", jwt.ErrMissingLoginValues
 			}
 
@@ -80,7 +79,7 @@ func InitJWT() *jwt.GinJWTMiddleware {
 
 			req, err := http.NewRequest("POST", netCtiLoginURL, bytes.NewBuffer(payloadBytes))
 			if err != nil {
-				utils.LogError(errors.Wrap(err, "[AUTH] Failed to create HTTP request"))
+				logs.Log("[AUTH] Failed to create HTTP request")
 				return nil, err
 			}
 			req.Header.Set("Content-Type", "application/json")
@@ -88,7 +87,7 @@ func InitJWT() *jwt.GinJWTMiddleware {
 			client := &http.Client{}
 			resp, err := client.Do(req)
 			if err != nil {
-				utils.LogError(errors.Wrap(err, "[AUTH] Failed to send request to NetCTI"))
+				logs.Log("[AUTH] Failed to send request to NetCTI")
 				return nil, jwt.ErrFailedAuthentication
 			}
 			defer resp.Body.Close()
@@ -101,7 +100,7 @@ func InitJWT() *jwt.GinJWTMiddleware {
 					// Generate NetCTIToken using the www-authenticate header
 					NetCTIToken = utils.GenerateLegacyToken(resp, username, password)
 					if NetCTIToken == "" {
-						utils.LogError(errors.New("[AUTH] Failed to generate NetCTIToken"))
+						logs.Log("[AUTH] Failed to generate NetCTIToken")
 						return nil, jwt.ErrFailedAuthentication
 					}
 
@@ -112,7 +111,7 @@ func InitJWT() *jwt.GinJWTMiddleware {
 					// print request headers
 					resp, err = client.Do(req)
 					if err != nil {
-						utils.LogError(errors.Wrap(err, "[AUTH] Failed to retry request to NetCTI"))
+						logs.Log("[AUTH] Failed to retry request to NetCTI")
 						return nil, jwt.ErrFailedAuthentication
 					}
 					defer resp.Body.Close()
@@ -120,7 +119,7 @@ func InitJWT() *jwt.GinJWTMiddleware {
 			}
 
 			if resp.StatusCode != http.StatusOK {
-				utils.LogError(errors.Errorf("[AUTH] Authentication failed with status: %d", resp.StatusCode))
+				logs.Log("[ERROR][AUTH] Authentication failed for user " + username + " with status: " + resp.Status)
 				return nil, jwt.ErrFailedAuthentication
 			}
 
@@ -132,15 +131,8 @@ func InitJWT() *jwt.GinJWTMiddleware {
 				NetCTIToken: NetCTIToken,
 			}
 
-			// Store login action
-			auditData := models.Audit{
-				ID:        0,
-				User:      username,
-				Action:    "login-ok",
-				Data:      "",
-				Timestamp: time.Now().UTC(),
-			}
-			audit.Store(auditData)
+			// login ok action
+			logs.Logs.Println("[INFO][AUTH] authentication success for user " + username)
 
 			// Return user auth model
 			return UserSessions[username], nil
@@ -177,21 +169,48 @@ func InitJWT() *jwt.GinJWTMiddleware {
 			userSession := UserSessions[claims[identityKey].(string)]
 			JWTToken := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
 
+			reqMethod := c.Request.Method
+			reqURI := c.Request.RequestURI
+
 			if !ok || UserSessions[username] == nil || JWTToken != userSession.JWTToken {
+				logs.Logs.Println("[ERROR][AUTH] authorization failed for user " + claims["id"].(string) + ". " + reqMethod + " " + reqURI)
 				return false
 			}
 
-			// store auth action
-			auditData := models.Audit{
-				ID:        0,
-				User:      username,
-				Action:    "auth-fail",
-				Data:      "",
-				Timestamp: time.Now().UTC(),
-			}
-			audit.Store(auditData)
+			reqBody := ""
+			if reqMethod == "POST" || reqMethod == "PUT" {
+				// extract body
+				var buf bytes.Buffer
+				tee := io.TeeReader(c.Request.Body, &buf)
+				body, _ := io.ReadAll(tee)
+				c.Request.Body = io.NopCloser(&buf)
 
-			// not authorized
+				// convert to map and flat it
+				var jsonDyn map[string]interface{}
+				json.Unmarshal(body, &jsonDyn)
+				in, _ := flat.Flatten(jsonDyn, nil)
+
+				// search for sensitve data, in sensitive list
+				for k := range in {
+					for _, s := range configuration.Config.SensitiveList {
+						if strings.Contains(strings.ToLower(k), strings.ToLower(s)) {
+							in[k] = "XXX"
+						}
+					}
+				}
+
+				// unflat the map
+				out, _ := flat.Unflatten(in, nil)
+
+				// convert to json string
+				jsonOut, _ := json.Marshal(out)
+
+				// compose string
+				reqBody = string(jsonOut)
+			}
+
+			logs.Logs.Println("[INFO][AUTH] authorization success for user " + claims["id"].(string) + ". " + reqMethod + " " + reqURI + " " + reqBody)
+
 			return true
 		},
 		LoginResponse: func(c *gin.Context, code int, token string, t time.Time) {
@@ -243,7 +262,7 @@ func InitJWT() *jwt.GinJWTMiddleware {
 
 	// check middleware errors
 	if errDefine != nil {
-		utils.LogError(errors.Wrap(errDefine, "[AUTH] middleware definition error"))
+		logs.Log("[AUTH] middleware definition error")
 	}
 
 	// init middleware
@@ -251,7 +270,7 @@ func InitJWT() *jwt.GinJWTMiddleware {
 
 	// check error on initialization
 	if errInit != nil {
-		utils.LogError(errors.Wrap(errInit, "[AUTH] middleware initialization error"))
+		logs.Log("[AUTH] middleware initialization error")
 	}
 
 	// return object

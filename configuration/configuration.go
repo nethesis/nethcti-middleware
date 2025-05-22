@@ -7,17 +7,20 @@ package configuration
 
 import (
 	"os"
+	"strings"
+
+	"github.com/google/uuid"
 )
 
 type Configuration struct {
-	ListenAddress string `json:"listen_address"`
-	Secret        string `json:"secret"`
-	AuditFile     string `json:"audit_file"`
-	V1Protocol    string `json:"v1_protocol"`
-	V1ApiEndpoint string `json:"v1_api_endpoint"`
-	V1WsEndpoint  string `json:"v1_ws_endpoint"`
-	V1ApiPath     string `json:"v1_api_path"`
-	V1WsPath      string `json:"v1_ws_path"`
+	ListenAddress string   `json:"listen_address"`
+	Secret_jwt    string   `json:"secret"`
+	V1Protocol    string   `json:"v1_protocol"`
+	V1ApiEndpoint string   `json:"v1_api_endpoint"`
+	V1WsEndpoint  string   `json:"v1_ws_endpoint"`
+	V1ApiPath     string   `json:"v1_api_path"`
+	V1WsPath      string   `json:"v1_ws_path"`
+	SensitiveList []string `json:"sensitive_list"`
 }
 
 var Config = Configuration{}
@@ -31,18 +34,10 @@ func Init() {
 	}
 
 	// set default secret
-	if os.Getenv("SECRET") != "" {
-		Config.Secret = os.Getenv("SECRET")
+	if os.Getenv("SECRET_JWT") != "" {
+		Config.Secret_jwt = os.Getenv("SECRET_JWT")
 	} else {
-		os.Stderr.WriteString("SECRET variable is empty. ")
-		os.Exit(1)
-	}
-
-	// set default audit file
-	if os.Getenv("AUDIT_FILE") != "" {
-		Config.AuditFile = os.Getenv("AUDIT_FILE")
-	} else {
-		Config.AuditFile = ""
+		Config.Secret_jwt = uuid.New().String()
 	}
 
 	// set V1 API protocol
@@ -78,5 +73,12 @@ func Init() {
 		Config.V1WsPath = os.Getenv("V1_WS_PATH")
 	} else {
 		Config.V1WsPath = "/socket.io"
+	}
+
+	// set sensitive list
+	if os.Getenv("SENSITIVE_LIST") != "" {
+		Config.SensitiveList = strings.Split(os.Getenv("SENSITIVE_LIST"), ",")
+	} else {
+		Config.SensitiveList = []string{"password", "secret", "token", "passphrase", "private", "key"}
 	}
 }

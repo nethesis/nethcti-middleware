@@ -13,13 +13,10 @@ import (
 
 	jwt "github.com/appleboy/gin-jwt/v2"
 	"github.com/gin-gonic/gin"
-	"github.com/pkg/errors"
 
-	"github.com/nethesis/nethcti-middleware/audit"
 	"github.com/nethesis/nethcti-middleware/configuration"
+	"github.com/nethesis/nethcti-middleware/logs"
 	"github.com/nethesis/nethcti-middleware/middleware"
-	"github.com/nethesis/nethcti-middleware/models"
-	"github.com/nethesis/nethcti-middleware/utils"
 )
 
 // ProxyV1Request forwards requests to the legacy V1 API
@@ -44,7 +41,7 @@ func ProxyV1Request(c *gin.Context, path string) {
 	// Create a new request
 	req, err := http.NewRequest(c.Request.Method, url, c.Request.Body)
 	if err != nil {
-		utils.LogError(errors.Wrap(err, "failed to create proxy request"))
+		logs.Log("failed to create proxy request")
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"code":    500,
 			"message": "Failed to forward request",
@@ -92,7 +89,7 @@ func ProxyV1Request(c *gin.Context, path string) {
 	// Forward the request
 	resp, err := client.Do(req)
 	if err != nil {
-		utils.LogError(errors.Wrap(err, "failed to forward request to V1 API"))
+		logs.Log("failed to forward request to V1 API")
 		c.JSON(http.StatusBadGateway, gin.H{
 			"code":    502,
 			"message": "Failed to reach V1 API",
@@ -100,15 +97,6 @@ func ProxyV1Request(c *gin.Context, path string) {
 		return
 	}
 	defer resp.Body.Close()
-
-	// Log the proxy action
-	auditData := models.Audit{
-		User:      claims["id"].(string),
-		Action:    "proxy-v1-request",
-		Data:      path,
-		Timestamp: time.Now().UTC(),
-	}
-	audit.Store(auditData)
 
 	// Copy response headers
 	for name, values := range resp.Header {
@@ -123,7 +111,7 @@ func ProxyV1Request(c *gin.Context, path string) {
 	// Copy response body
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		utils.LogError(errors.Wrap(err, "failed to read V1 API response"))
+		logs.Log("failed to read V1 API response")
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"code":    500,
 			"message": "Failed to process V1 API response",

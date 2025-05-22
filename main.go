@@ -14,8 +14,8 @@ import (
 	"github.com/gin-contrib/gzip"
 	"github.com/gin-gonic/gin"
 
-	"github.com/nethesis/nethcti-middleware/audit"
 	"github.com/nethesis/nethcti-middleware/configuration"
+	"github.com/nethesis/nethcti-middleware/logs"
 	"github.com/nethesis/nethcti-middleware/methods"
 	"github.com/nethesis/nethcti-middleware/middleware"
 	"github.com/nethesis/nethcti-middleware/response"
@@ -26,13 +26,13 @@ func main() {
 	// init configuration
 	configuration.Init()
 
+	// init logger
+	logs.Init("nethcti-middleware")
+
 	// disable log to stdout when running in release mode
 	if gin.Mode() == gin.ReleaseMode {
 		gin.DefaultWriter = io.Discard
 	}
-
-	// init audit file
-	audit.Init()
 
 	// init routers
 	router := gin.New()
@@ -62,10 +62,6 @@ func main() {
 
 	api.Use(middleware.InstanceJWT().MiddlewareFunc())
 	{
-		api.GET("/audit", methods.GetAudits)
-		api.GET("/audit/users", methods.GetAuditsUsers)
-		api.GET("/audit/actions", methods.GetAuditsActions)
-
 		// Ping endpoint
 		api.GET("/ping", func(c *gin.Context) {
 			c.JSON(http.StatusOK, gin.H{
