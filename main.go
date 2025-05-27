@@ -28,6 +28,7 @@ func main() {
 
 	// init logger
 	logs.Init("nethcti-middleware")
+	logs.LogConfig(configuration.Config)
 
 	// disable log to stdout when running in release mode
 	if gin.Mode() == gin.ReleaseMode {

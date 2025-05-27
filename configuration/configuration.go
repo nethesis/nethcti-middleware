@@ -27,57 +27,57 @@ var Config = Configuration{}
 
 func Init() {
 	// read configuration from ENV
-	if os.Getenv("LISTEN_ADDRESS") != "" {
-		Config.ListenAddress = os.Getenv("LISTEN_ADDRESS")
+	if os.Getenv("NETHVOICE_MIDDLEWARE_LISTEN_ADDRESS") != "" {
+		Config.ListenAddress = os.Getenv("NETHVOICE_MIDDLEWARE_LISTEN_ADDRESS")
 	} else {
 		Config.ListenAddress = "127.0.0.1:8080"
 	}
 
 	// set default secret
-	if os.Getenv("SECRET_JWT") != "" {
-		Config.Secret_jwt = os.Getenv("SECRET_JWT")
+	if os.Getenv("NETHVOICE_MIDDLEWARE_SECRET_JWT") != "" {
+		Config.Secret_jwt = os.Getenv("NETHVOICE_MIDDLEWARE_SECRET_JWT")
 	} else {
 		Config.Secret_jwt = uuid.New().String()
 	}
 
 	// set V1 API protocol
-	if os.Getenv("V1_PROTOCOL") != "" {
-		Config.V1Protocol = os.Getenv("V1_PROTOCOL")
+	if os.Getenv("NETHVOICE_MIDDLEWARE_V1_PROTOCOL") != "" {
+		Config.V1Protocol = os.Getenv("NETHVOICE_MIDDLEWARE_V1_PROTOCOL")
 	} else {
 		Config.V1Protocol = "https"
 	}
 
 	// set V1 API endpoint
-	if os.Getenv("V1_API_ENDPOINT") != "" {
-		Config.V1ApiEndpoint = os.Getenv("V1_API_ENDPOINT")
+	if os.Getenv("NETHVOICE_MIDDLEWARE_V1_API_ENDPOINT") != "" {
+		Config.V1ApiEndpoint = os.Getenv("NETHVOICE_MIDDLEWARE_V1_API_ENDPOINT")
 	} else {
 		Config.V1ApiEndpoint = "cti2.demo-heron.sf.nethserver.net"
 	}
 
 	// set V1 API endpoint
-	if os.Getenv("V1_WS_ENDPOINT") != "" {
-		Config.V1WsEndpoint = os.Getenv("V1_WS_ENDPOINT")
+	if os.Getenv("NETHVOICE_MIDDLEWARE_V1_WS_ENDPOINT") != "" {
+		Config.V1WsEndpoint = os.Getenv("NETHVOICE_MIDDLEWARE_V1_WS_ENDPOINT")
 	} else {
 		Config.V1WsEndpoint = "cti2.demo-heron.sf.nethserver.net"
 	}
 
 	// set V1 API path
-	if os.Getenv("V1_API_PATH") != "" {
-		Config.V1ApiPath = os.Getenv("V1_API_PATH")
+	if os.Getenv("NETHVOICE_MIDDLEWARE_V1_API_PATH") != "" {
+		Config.V1ApiPath = os.Getenv("NETHVOICE_MIDDLEWARE_V1_API_PATH")
 	} else {
 		Config.V1ApiPath = "/webrest"
 	}
 
 	// set V1 API path
-	if os.Getenv("V1_WS_PATH") != "" {
-		Config.V1WsPath = os.Getenv("V1_WS_PATH")
+	if os.Getenv("NETHVOICE_MIDDLEWARE_V1_WS_PATH") != "" {
+		Config.V1WsPath = os.Getenv("NETHVOICE_MIDDLEWARE_V1_WS_PATH")
 	} else {
 		Config.V1WsPath = "/socket.io"
 	}
 
 	// set sensitive list
-	if os.Getenv("SENSITIVE_LIST") != "" {
-		Config.SensitiveList = strings.Split(os.Getenv("SENSITIVE_LIST"), ",")
+	if os.Getenv("NETHVOICE_MIDDLEWARE_SENSITIVE_LIST") != "" {
+		Config.SensitiveList = strings.Split(os.Getenv("NETHVOICE_MIDDLEWARE_SENSITIVE_LIST"), ",")
 	} else {
 		Config.SensitiveList = []string{"password", "secret", "token", "passphrase", "private", "key"}
 	}
