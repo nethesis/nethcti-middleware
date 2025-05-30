@@ -81,10 +81,8 @@ func main() {
 	router.NoRoute(middleware.InstanceJWT().MiddlewareFunc(), func(c *gin.Context) {
 		// Check if the requested API exists on the current server
 		if c.Request.Method == http.MethodGet || c.Request.Method == http.MethodPost {
-			// Remove the "/api" prefix from the requested path
-			pathWithoutPrefix := c.Request.URL.Path[len("/api"):]
 			// Fallback to proxy logic for legacy V1 API
-			methods.ProxyV1Request(c, pathWithoutPrefix)
+			methods.ProxyV1Request(c, c.Request.URL.Path)
 			return
 		}
 
