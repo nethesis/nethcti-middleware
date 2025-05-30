@@ -71,6 +71,24 @@ func main() {
 				"data":    nil,
 			})
 		})
+
+		// Ping endpoint
+		api.GET("/astproxy/ciao", func(c *gin.Context) {
+			c.JSON(http.StatusOK, gin.H{
+				"code":    200,
+				"message": "ciao",
+				"data":    nil,
+			})
+		})
+
+		// Ping endpoint
+		api.GET("/astproxy/queues", func(c *gin.Context) {
+			c.JSON(http.StatusOK, gin.H{
+				"code":    200,
+				"message": "queues",
+				"data":    nil,
+			})
+		})
 	}
 
 	// define websocket endpoint
