@@ -65,7 +65,7 @@ func Init() {
 	if os.Getenv("NETHVOICE_MIDDLEWARE_V1_API_PATH") != "" {
 		Config.V1ApiPath = os.Getenv("NETHVOICE_MIDDLEWARE_V1_API_PATH")
 	} else {
-		Config.V1ApiPath = "/webrest"
+		Config.V1ApiPath = ""
 	}
 
 	// set V1 API path
