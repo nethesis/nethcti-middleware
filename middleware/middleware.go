@@ -239,21 +239,11 @@ func InitJWT() *jwt.GinJWTMiddleware {
 			c.JSON(200, gin.H{"code": 200})
 		},
 		Unauthorized: func(c *gin.Context, code int, message string) {
-			if message == "redis is not running" {
-				c.JSON(503, structs.Map(response.StatusServiceUnavailable{
-					Code:    503,
-					Message: message,
-					Data:    nil,
-				}))
-				return
-			} else {
-				c.JSON(code, structs.Map(response.StatusUnauthorized{
-					Code:    code,
-					Message: message,
-					Data:    nil,
-				}))
-				return
-			}
+			c.JSON(code, structs.Map(response.StatusUnauthorized{
+				Code:    code,
+				Message: message,
+				Data:    nil,
+			}))
 		},
 		TokenLookup:   "header: Authorization, query: jwt",
 		TokenHeadName: "Bearer",

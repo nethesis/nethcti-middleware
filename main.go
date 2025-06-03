@@ -63,32 +63,7 @@ func main() {
 
 	api.Use(middleware.InstanceJWT().MiddlewareFunc())
 	{
-		// Ping endpoint
-		api.GET("/ping", func(c *gin.Context) {
-			c.JSON(http.StatusOK, gin.H{
-				"code":    200,
-				"message": "pong",
-				"data":    nil,
-			})
-		})
-
-		// Ping endpoint
-		api.GET("/astproxy/ciao", func(c *gin.Context) {
-			c.JSON(http.StatusOK, gin.H{
-				"code":    200,
-				"message": "ciao",
-				"data":    nil,
-			})
-		})
-
-		// Ping endpoint
-		api.GET("/astproxy/queues", func(c *gin.Context) {
-			c.JSON(http.StatusOK, gin.H{
-				"code":    200,
-				"message": "queues",
-				"data":    nil,
-			})
-		})
+		// define v1 api group
 	}
 
 	// define websocket endpoint
