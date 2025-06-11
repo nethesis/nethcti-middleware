@@ -16,6 +16,7 @@ import (
 	"github.com/gin-contrib/cors"
 	"github.com/gin-contrib/gzip"
 	"github.com/gin-gonic/gin"
+	"github.com/robfig/cron/v3"
 
 	"github.com/nethesis/nethcti-middleware/configuration"
 	"github.com/nethesis/nethcti-middleware/logs"
@@ -100,6 +101,11 @@ func main() {
 			Data:    nil,
 		}))
 	})
+
+	// create cron to run daily
+	c := cron.New()
+	c.AddFunc("@daily", methods.DeleteExpiredTokens)
+	c.Start()
 
 	// run server
 	router.Run(configuration.Config.ListenAddress)
