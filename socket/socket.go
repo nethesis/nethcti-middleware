@@ -9,7 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	"github.com/nethesis/nethcti-middleware/configuration"
-	"github.com/nethesis/nethcti-middleware/middleware"
+	"github.com/nethesis/nethcti-middleware/store"
 )
 
 func WsProxyHandler(c *gin.Context) {
@@ -63,7 +63,7 @@ func WsProxyHandler(c *gin.Context) {
 						// Check if accessKeyId exists and is valid
 						accessKeyId, ok := loginData["accessKeyId"].(string)
 						if ok {
-							session, sessionExists := middleware.UserSessions[accessKeyId]
+							session, sessionExists := store.UserSessions[accessKeyId]
 							if sessionExists {
 								// Extract only the token from the string "username:token"
 								tokenParts := strings.SplitN(session.NetCTIToken, ":", 2)

@@ -8,6 +8,7 @@ package middleware
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -21,7 +22,10 @@ import (
 
 	"github.com/nethesis/nethcti-middleware/configuration"
 	"github.com/nethesis/nethcti-middleware/logs"
+	"github.com/nethesis/nethcti-middleware/methods"
+	"github.com/nethesis/nethcti-middleware/models"
 	"github.com/nethesis/nethcti-middleware/response"
+	"github.com/nethesis/nethcti-middleware/store"
 	"github.com/nethesis/nethcti-middleware/utils"
 )
 
@@ -29,14 +33,6 @@ type login struct {
 	Username string `form:"username" json:"username" binding:"required"`
 	Password string `form:"password" json:"password" binding:"required"`
 }
-
-type UserSession struct {
-	Username    string
-	JWTToken    string
-	NetCTIToken string
-}
-
-var UserSessions = make(map[string]*UserSession)
 
 var jwtMiddleware *jwt.GinJWTMiddleware
 var identityKey = "id"
@@ -125,26 +121,31 @@ func InitJWT() *jwt.GinJWTMiddleware {
 
 			// Login is successful. Middleware returns a JWT.
 			// Create a new user session object
-			UserSessions[username] = &UserSession{
-				Username:    username,
-				JWTToken:    "",
-				NetCTIToken: NetCTIToken,
+			store.UserSessions[username] = &models.UserSession{
+				Username:     username,
+				JWTToken:     "",
+				NetCTIToken:  NetCTIToken,
+				OTP_Verified: false,
 			}
 
 			// login ok action
 			logs.Logs.Println("[INFO][AUTH] authentication success for user " + username)
 
 			// Return user auth model
-			return UserSessions[username], nil
+			return store.UserSessions[username], nil
 		},
 		PayloadFunc: func(data interface{}) jwt.MapClaims {
 			// read current user
-			if userSession, ok := data.(*UserSession); ok {
+			if userSession, ok := data.(*models.UserSession); ok {
+				// check if user require 2fa
+				status, _ := methods.GetUserStatus(userSession.Username)
+
 				// create claims map
 				return jwt.MapClaims{
 					identityKey: userSession.Username,
 					"role":      "",
 					"actions":   []string{},
+					"2fa":       status == "1",
 				}
 			}
 
@@ -166,13 +167,26 @@ func InitJWT() *jwt.GinJWTMiddleware {
 
 			username, ok := claims[identityKey].(string)
 
-			userSession := UserSessions[claims[identityKey].(string)]
+			userSession := store.UserSessions[username]
 			JWTToken := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
 
 			reqMethod := c.Request.Method
 			reqURI := c.Request.RequestURI
 
-			if !ok || UserSessions[username] == nil || JWTToken != userSession.JWTToken {
+			fmt.Println("first check:", !ok)
+			fmt.Println("second check:", userSession == nil)
+			fmt.Println("third check:", JWTToken != userSession.JWTToken)
+			fmt.Println("2fa claims:", claims["2fa"].(bool))
+			fmt.Println("userSession.OTP_Verified:", userSession.OTP_Verified)
+			fmt.Println("fourth check:", (claims["2fa"].(bool) && !userSession.OTP_Verified))
+
+			fmt.Println("userSession:", userSession)
+			status, _ := methods.GetUserStatus(userSession.Username)
+			fmt.Println("userStatus:", status)
+
+			// Check basic authentication and 2FA/OTP verification
+			if !ok || userSession == nil || JWTToken != userSession.JWTToken ||
+				(claims["2fa"].(bool) && !userSession.OTP_Verified) {
 				logs.Logs.Println("[ERROR][AUTH] authorization failed for user " + claims["id"].(string) + ". " + reqMethod + " " + reqURI)
 				return false
 			}
@@ -219,7 +233,7 @@ func InitJWT() *jwt.GinJWTMiddleware {
 			claims := jwt.ExtractClaimsFromToken(tokenObj)
 
 			// Store the JWT token in the UserSession
-			UserSessions[claims[identityKey].(string)].JWTToken = token
+			store.UserSessions[claims[identityKey].(string)].JWTToken = token
 			c.JSON(200, gin.H{"code": 200, "expire": t, "token": token})
 		},
 		LogoutResponse: func(c *gin.Context, code int) {
@@ -228,11 +242,11 @@ func InitJWT() *jwt.GinJWTMiddleware {
 			tokenObj, _ := InstanceJWT().ParseTokenString(JWTToken)
 			claims := jwt.ExtractClaimsFromToken(tokenObj)
 
-			userSession := UserSessions[claims[identityKey].(string)]
+			userSession := store.UserSessions[claims[identityKey].(string)]
 
 			if userSession != nil {
 				if JWTToken == userSession.JWTToken {
-					delete(UserSessions, claims[identityKey].(string))
+					delete(store.UserSessions, claims[identityKey].(string))
 				}
 			}
 

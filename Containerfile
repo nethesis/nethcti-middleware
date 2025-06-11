@@ -1,5 +1,8 @@
 # Use Go as base image for building
-FROM docker.io/library/golang:1.24
+FROM docker.io/golang:1.24
+
+# Install oath-toolkit-oathtool
+RUN apt-get update && apt-get install -y oathtool && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
 WORKDIR /app

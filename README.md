@@ -14,6 +14,8 @@ The application can be configured using the following environment variables:
 | `NETHVOICE_MIDDLEWARE_V1_API_PATH` | Path prefix for V1 API calls | _(empty)_ |
 | `NETHVOICE_MIDDLEWARE_V1_WS_PATH` | Path for V1 WebSocket connections | `/socket.io` |
 | `NETHVOICE_MIDDLEWARE_SENSITIVE_LIST` | Comma-separated list of sensitive field names for logging | `password,secret,token,passphrase,private,key` |
+| `SECRETS_DIR` | Directory path for storing secrets | **Required** |
+| `ISSUER_2FA` | Issuer name for 2FA tokens | `NethVoice` |
 
 ## Container Management
 
@@ -23,7 +25,7 @@ Stop the existing container and clean up system resources:
 
 ```bash
 podman stop nethcti-container
-podman system prune --all --volumes
+podman system prune --all --volumes --force
 ```
 
 ### Build Image
@@ -39,5 +41,10 @@ podman build -t nethcti-middleware .
 Run the container with environment configuration:
 
 ```bash
-podman run -d -p 8080:8080 --name nethcti-container --env NETHVOICE_MIDDLEWARE_LISTEN_ADDRESS=:8080 --env NETHVOICE_MIDDLEWARE_SECRET_JWT=test --replace nethcti-middleware
+podman run -d -p 8080:8080 --name nethcti-container \
+  --env NETHVOICE_MIDDLEWARE_LISTEN_ADDRESS=:8080 \
+  --env NETHVOICE_MIDDLEWARE_SECRET_JWT=test \
+  --env SECRETS_DIR=/var/log \
+  --env NETHVOICE_MIDDLEWARE_V1_API_PATH=/webrest \
+  --replace nethcti-middleware
 ```

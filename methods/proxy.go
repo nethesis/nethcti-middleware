@@ -17,7 +17,7 @@ import (
 
 	"github.com/nethesis/nethcti-middleware/configuration"
 	"github.com/nethesis/nethcti-middleware/logs"
-	"github.com/nethesis/nethcti-middleware/middleware"
+	"github.com/nethesis/nethcti-middleware/store"
 )
 
 // ProxyV1Request forwards requests to the legacy V1 API
@@ -75,7 +75,7 @@ func ProxyV1Request(c *gin.Context, path string) {
 	// Extract claims from the JWT token
 	claims := jwt.ExtractClaims(c)
 
-	userSession := middleware.UserSessions[claims["id"].(string)]
+	userSession := store.UserSessions[claims["id"].(string)]
 
 	// Add the NetCTI token to the request headers
 	req.Header.Set("Authorization", userSession.NetCTIToken)

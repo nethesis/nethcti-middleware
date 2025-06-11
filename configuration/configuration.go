@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/nethesis/nethcti-middleware/logs"
 )
 
 type Configuration struct {
@@ -21,6 +22,9 @@ type Configuration struct {
 	V1ApiPath     string   `json:"v1_api_path"`
 	V1WsPath      string   `json:"v1_ws_path"`
 	SensitiveList []string `json:"sensitive_list"`
+
+	SecretsDir string `json:"secrets_dir"`
+	Issuer2FA  string `json:"issuer_2fa"`
 }
 
 var Config = Configuration{}
@@ -80,5 +84,20 @@ func Init() {
 		Config.SensitiveList = strings.Split(os.Getenv("NETHVOICE_MIDDLEWARE_SENSITIVE_LIST"), ",")
 	} else {
 		Config.SensitiveList = []string{"password", "secret", "token", "passphrase", "private", "key"}
+	}
+
+	// set secrets dir
+	if os.Getenv("SECRETS_DIR") != "" {
+		Config.SecretsDir = os.Getenv("SECRETS_DIR")
+	} else {
+		logs.Log("[CRITICAL][ENV] SECRETS_DIR variable is empty")
+		os.Exit(1)
+	}
+
+	// set issuer for 2FA
+	if os.Getenv("ISSUER_2FA") != "" {
+		Config.Issuer2FA = os.Getenv("ISSUER_2FA")
+	} else {
+		Config.Issuer2FA = "NethVoice"
 	}
 }

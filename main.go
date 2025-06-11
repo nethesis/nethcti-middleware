@@ -7,7 +7,10 @@ package main
 
 import (
 	"io"
+	"log"
 	"net/http"
+	"os"
+	"strings"
 
 	"github.com/fatih/structs"
 	"github.com/gin-contrib/cors"
@@ -20,15 +23,19 @@ import (
 	"github.com/nethesis/nethcti-middleware/middleware"
 	"github.com/nethesis/nethcti-middleware/response"
 	"github.com/nethesis/nethcti-middleware/socket"
+	"github.com/nethesis/nethcti-middleware/store"
 )
 
 func main() {
-	// init configuration
-	configuration.Init()
-
 	// init logger
 	logs.Init("nethcti-middleware")
-	logs.LogConfig(configuration.Config)
+
+	// init configuration
+	configuration.Init()
+	LogConfig(configuration.Config)
+
+	// init store
+	store.UserSessionInit()
 
 	// disable log to stdout when running in release mode
 	if gin.Mode() == gin.ReleaseMode {
@@ -61,9 +68,16 @@ func main() {
 	api.POST("/login", middleware.InstanceJWT().LoginHandler)
 	api.POST("/logout", middleware.InstanceJWT().LogoutHandler)
 
+	// 2FA APIs
+	api.POST("/2fa/otp-verify", methods.OTPVerify)
+
 	api.Use(middleware.InstanceJWT().MiddlewareFunc())
 	{
-		// define v1 api group
+		// 2FA APIs
+		api.GET("/2fa", methods.Get2FAStatus)
+		api.DELETE("/2fa", methods.Disable2FA)
+		api.GET("/2fa/recovery-codes", methods.Get2FARecoveryCodes)
+		api.GET("/2fa/qr-code", methods.QRCode)
 	}
 
 	// define websocket endpoint
@@ -89,4 +103,25 @@ func main() {
 
 	// run server
 	router.Run(configuration.Config.ListenAddress)
+}
+
+func LogConfig(Config configuration.Configuration) {
+
+	logger := log.New(os.Stderr, "", 0)
+
+	// log environment variables
+	logger.Print("\n================= CONFIGURATION =================\n\n")
+	logger.Println("[CONFIG] NETHVOICE_MIDDLEWARE_LISTEN_ADDRESS: " + Config.ListenAddress)
+	logger.Println("[CONFIG] NETHVOICE_MIDDLEWARE_V1_PROTOCOL: " + Config.V1Protocol)
+	logger.Println("[CONFIG] NETHVOICE_MIDDLEWARE_V1_API_ENDPOINT: " + Config.V1ApiEndpoint)
+	logger.Println("[CONFIG] NETHVOICE_MIDDLEWARE_V1_WS_ENDPOINT: " + Config.V1WsEndpoint)
+	logger.Println("[CONFIG] NETHVOICE_MIDDLEWARE_V1_API_PATH: " + Config.V1ApiPath)
+	logger.Println("[CONFIG] NETHVOICE_MIDDLEWARE_V1_WS_PATH: " + Config.V1WsPath)
+	logger.Println("[CONFIG] NETHVOICE_MIDDLEWARE_SENSITIVE_LIST: " + strings.Join(Config.SensitiveList, ","))
+	if Config.Secret_jwt != "" {
+		logger.Println("[CONFIG] NETHVOICE_MIDDLEWARE_SECRET_JWT: set")
+	} else {
+		logger.Println("[CONFIG] NETHVOICE_MIDDLEWARE_SECRET_JWT: not set")
+	}
+	logger.Print("\n=================================================\n\n")
 }
