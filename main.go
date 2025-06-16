@@ -79,6 +79,14 @@ func main() {
 		api.DELETE("/2fa", methods.Disable2FA)
 		api.GET("/2fa/recovery-codes", methods.Get2FARecoveryCodes)
 		api.GET("/2fa/qr-code", methods.QRCode)
+
+		// Test endpoint (no auth required)
+		api.GET("/ping", func(c *gin.Context) {
+			c.JSON(http.StatusOK, gin.H{
+				"message": "pong",
+				"status":  "ok",
+			})
+		})
 	}
 
 	// define websocket endpoint

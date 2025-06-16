@@ -8,7 +8,6 @@ package middleware
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -172,17 +171,6 @@ func InitJWT() *jwt.GinJWTMiddleware {
 
 			reqMethod := c.Request.Method
 			reqURI := c.Request.RequestURI
-
-			fmt.Println("first check:", !ok)
-			fmt.Println("second check:", userSession == nil)
-			fmt.Println("third check:", JWTToken != userSession.JWTToken)
-			fmt.Println("2fa claims:", claims["2fa"].(bool))
-			fmt.Println("userSession.OTP_Verified:", userSession.OTP_Verified)
-			fmt.Println("fourth check:", (claims["2fa"].(bool) && !userSession.OTP_Verified))
-
-			fmt.Println("userSession:", userSession)
-			status, _ := methods.GetUserStatus(userSession.Username)
-			fmt.Println("userStatus:", status)
 
 			// Check basic authentication and 2FA/OTP verification
 			if !ok || userSession == nil || JWTToken != userSession.JWTToken ||

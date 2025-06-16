@@ -6,7 +6,6 @@
 package methods
 
 import (
-	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -38,7 +37,6 @@ func ProxyV1Request(c *gin.Context, path string) {
 
 	// Build the forwarding URL
 	url := configuration.Config.V1Protocol + "://" + configuration.Config.V1ApiEndpoint + configuration.Config.V1ApiPath + path
-	fmt.Println("Url: ", url)
 
 	// Create a new request
 	req, err := http.NewRequest(c.Request.Method, url, c.Request.Body)
