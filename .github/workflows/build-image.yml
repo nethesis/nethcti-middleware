@@ -8,14 +8,44 @@ permissions:
   packages: write
 
 jobs:
+  test:
+    name: 'Run tests'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.24'
+      - name: Install oathtool
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y oathtool
+      - name: Download dependencies
+        run: go mod download
+      - name: Run tests
+        run: go test -v -cover ./...
+      - name: Generate coverage report
+        run: |
+          go test -coverprofile=coverage.out ./...
+          go tool cover -html=coverage.out -o coverage.html
+      - name: Upload coverage reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: |
+            coverage.out
+            coverage.html
+
   publish_images:
     name: 'Build and publish image'
     runs-on: ubuntu-latest
+    needs: test
     env:
       REPOBASE: ghcr.io/${{ github.repository_owner }}
       IMAGETAG: ${{ github.ref_name }}
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
       - id: install-podman
         run: |
           # Install podman

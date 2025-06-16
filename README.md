@@ -17,6 +17,45 @@ The application can be configured using the following environment variables:
 | `SECRETS_DIR` | Directory path for storing secrets | **Required** |
 | `ISSUER_2FA` | Issuer name for 2FA tokens | `NethVoice` |
 
+## Testing
+
+### Prerequisites
+
+- Go 1.24 or later
+- `oathtool` package (for 2FA testing)
+
+Install oathtool on Ubuntu/Debian:
+```bash
+sudo apt-get install oathtool
+```
+
+### Running Tests
+
+Run all tests:
+```bash
+go test ./...
+```
+
+Run tests with verbose output:
+```bash
+go test -v ./...
+```
+
+### Test Environment
+
+Tests automatically create a temporary test environment with:
+- Mock NetCTI server for authentication testing
+- Temporary secrets directory (`/tmp/test-secrets`)
+- Test JWT secret key
+- Clean state for each test
+
+The test suite covers:
+- Authentication and login flows
+- 2FA setup, verification, and management
+- JWT token handling
+- Recovery codes functionality
+- Error handling and edge cases
+
 ## Container Management
 
 ### Stop and Clean Up
