@@ -19,7 +19,7 @@ FROM docker.io/alpine:3.22 AS runtime
 WORKDIR /app
 
 # Install oath-toolkit-oathtool in the runtime image
-RUN apk --no-cache add oath-toolkit-oathtool
+RUN apk --no-cache add oath-toolkit-oathtool=~2.6.12
 
 # Copy the built binary from the builder stage
 COPY --from=builder /app/whale .
