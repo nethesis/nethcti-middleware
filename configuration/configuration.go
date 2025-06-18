@@ -87,16 +87,16 @@ func Init() {
 	}
 
 	// set secrets dir
-	if os.Getenv("SECRETS_DIR") != "" {
-		Config.SecretsDir = os.Getenv("SECRETS_DIR")
+	if os.Getenv("NETHVOICE_MIDDLEWARE_SECRETS_DIR") != "" {
+		Config.SecretsDir = os.Getenv("NETHVOICE_MIDDLEWARE_SECRETS_DIR")
 	} else {
-		logs.Log("[CRITICAL][ENV] SECRETS_DIR variable is empty")
+		logs.Log("[CRITICAL][ENV] NETHVOICE_MIDDLEWARE_SECRETS_DIR variable is empty")
 		os.Exit(1)
 	}
 
 	// set issuer for 2FA
-	if os.Getenv("ISSUER_2FA") != "" {
-		Config.Issuer2FA = os.Getenv("ISSUER_2FA")
+	if os.Getenv("NETHVOICE_MIDDLEWARE_ISSUER_2FA") != "" {
+		Config.Issuer2FA = os.Getenv("NETHVOICE_MIDDLEWARE_ISSUER_2FA")
 	} else {
 		Config.Issuer2FA = "NethVoice"
 	}

@@ -38,6 +38,19 @@ func main() {
 	// init store
 	store.UserSessionInit()
 
+	// create router
+	router := createRouter()
+
+	// create cron to run daily
+	c := cron.New()
+	c.AddFunc("@daily", methods.DeleteExpiredTokens)
+	c.Start()
+
+	// run server
+	router.Run(configuration.Config.ListenAddress)
+}
+
+func createRouter() *gin.Engine {
 	// disable log to stdout when running in release mode
 	if gin.Mode() == gin.ReleaseMode {
 		gin.DefaultWriter = io.Discard
@@ -81,9 +94,9 @@ func main() {
 		api.GET("/2fa/qr-code", methods.QRCode)
 
 		// Test endpoint (no auth required)
-		api.GET("/ping", func(c *gin.Context) {
+		api.GET("/health", func(c *gin.Context) {
 			c.JSON(http.StatusOK, gin.H{
-				"message": "pong",
+				"message": "healthy",
 				"status":  "ok",
 			})
 		})
@@ -110,13 +123,7 @@ func main() {
 		}))
 	})
 
-	// create cron to run daily
-	c := cron.New()
-	c.AddFunc("@daily", methods.DeleteExpiredTokens)
-	c.Start()
-
-	// run server
-	router.Run(configuration.Config.ListenAddress)
+	return router
 }
 
 func LogConfig(Config configuration.Configuration) {
