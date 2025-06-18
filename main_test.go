@@ -8,80 +8,84 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/nethesis/nethcti-middleware/configuration"
-	"github.com/nethesis/nethcti-middleware/logs"
-	"github.com/nethesis/nethcti-middleware/methods"
-	"github.com/nethesis/nethcti-middleware/middleware"
 	"github.com/nethesis/nethcti-middleware/models"
 	"github.com/nethesis/nethcti-middleware/store"
+	"github.com/nethesis/nethcti-middleware/utils"
 )
 
-// Test setup
-func setupTest() *gin.Engine {
+// Global variables for test server URLs and mock server
+var testServerURL string
+var mockNetCTI *httptest.Server
+
+// TestMain sets up the test environment once for all tests
+func TestMain(m *testing.M) {
+	// Setup test environment and dependencies
+	setupTestEnvironment()
+
+	// Run all tests
+	code := m.Run()
+
+	// Cleanup after all tests
+	cleanupTestEnvironment()
+
+	// Exit with the same code as the tests
+	os.Exit(code)
+}
+
+// Global test setup - starts actual main server once
+func setupTestEnvironment() {
 	gin.SetMode(gin.TestMode)
 
-	// Initialize configuration for testing
-	configuration.Config = configuration.Configuration{
-		ListenAddress: ":8080",
-		V1Protocol:    "http",
-		V1ApiEndpoint: "localhost:8080",
-		V1ApiPath:     "/webrest",
-		V1WsPath:      "/socket.io",
-		Secret_jwt:    "test-secret-key-for-jwt-tokens",
-		SecretsDir:    "/tmp/test-secrets",
-		Issuer2FA:     "NetCTI-Test",
-		SensitiveList: []string{"password", "secret"},
-	}
+	// Start mock NetCTI server first
+	mockNetCTI = mockNetCTIServer()
+	mockURL := strings.TrimPrefix(mockNetCTI.URL, "http://")
 
-	// Initialize logs
-	logs.Init("nethcti-middleware-test")
-
-	// Initialize store
-	store.UserSessionInit()
+	// Set environment variables for the middleware
+	os.Setenv("NETHVOICE_MIDDLEWARE_LISTEN_ADDRESS", "127.0.0.1:8899")
+	os.Setenv("NETHVOICE_MIDDLEWARE_V1_PROTOCOL", "http")
+	os.Setenv("NETHVOICE_MIDDLEWARE_V1_API_ENDPOINT", mockURL)
+	os.Setenv("NETHVOICE_MIDDLEWARE_V1_API_PATH", "/webrest")
+	os.Setenv("NETHVOICE_MIDDLEWARE_V1_WS_PATH", "/ws")
+	os.Setenv("NETHVOICE_MIDDLEWARE_SECRET_JWT", "test-secret-key-for-jwt-tokens")
+	os.Setenv("NETHVOICE_MIDDLEWARE_SECRETS_DIR", "/tmp/test-secrets")
+	os.Setenv("NETHVOICE_MIDDLEWARE_ISSUER_2FA", "NetCTI-Test")
+	os.Setenv("NETHVOICE_MIDDLEWARE_SENSITIVE_LIST", "password,secret")
 
 	// Create test secrets directory
-	os.MkdirAll(configuration.Config.SecretsDir, 0700)
+	os.MkdirAll("/tmp/test-secrets", 0700)
 
-	// Create router
-	router := gin.New()
-	router.RedirectTrailingSlash = false
+	// Start the actual main server in a goroutine
+	go func() {
+		main()
+	}()
 
-	// Setup routes
-	api := router.Group("/")
-	api.POST("/login", middleware.InstanceJWT().LoginHandler)
-	api.POST("/logout", middleware.InstanceJWT().LogoutHandler)
-	api.POST("/2fa/otp-verify", methods.OTPVerify)
+	// Set test server URL
+	testServerURL = "http://127.0.0.1:8899"
 
-	api.Use(middleware.InstanceJWT().MiddlewareFunc())
-	{
-		api.GET("/2fa", methods.Get2FAStatus)
-		api.DELETE("/2fa", methods.Disable2FA)
-		api.GET("/2fa/recovery-codes", methods.Get2FARecoveryCodes)
-		api.GET("/2fa/qr-code", methods.QRCode)
-		api.GET("/ping", func(c *gin.Context) {
-			c.JSON(http.StatusOK, gin.H{"message": "pong"})
-		})
-	}
-
-	return router
+	// Give server time to fully start
+	time.Sleep(2 * time.Second)
 }
 
 // Mock NetCTI server for testing
 func mockNetCTIServer() *httptest.Server {
+	// This mock server simulates the NetCTI backend for authentication and user info
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/webrest/authentication/login" {
 			var loginData map[string]string
 			json.NewDecoder(r.Body).Decode(&loginData)
 
+			// Simulate Digest authentication challenge for correct credentials
 			if loginData["username"] == "testuser" && loginData["password"] == "testpass" {
 				w.Header().Set("Www-Authenticate", `Digest realm="test", nonce="test123", qop="auth"`)
 				w.WriteHeader(http.StatusUnauthorized)
@@ -100,22 +104,38 @@ func mockNetCTIServer() *httptest.Server {
 	}))
 }
 
-// Cleanup test data
-func cleanupTest() {
-	os.RemoveAll(configuration.Config.SecretsDir)
-	store.UserSessions = make(map[string]*models.UserSession)
+// Global cleanup test data
+func cleanupTestEnvironment() {
+	if mockNetCTI != nil {
+		mockNetCTI.Close()
+	}
+	os.RemoveAll("/tmp/test-secrets")
+
+	// Clear environment variables
+	os.Unsetenv("NETHVOICE_MIDDLEWARE_LISTEN_ADDRESS")
+	os.Unsetenv("NETHVOICE_MIDDLEWARE_V1_PROTOCOL")
+	os.Unsetenv("NETHVOICE_MIDDLEWARE_V1_API_ENDPOINT")
+	os.Unsetenv("NETHVOICE_MIDDLEWARE_V1_API_PATH")
+	os.Unsetenv("NETHVOICE_MIDDLEWARE_V1_WS_PATH")
+	os.Unsetenv("NETHVOICE_MIDDLEWARE_SECRET_JWT")
+	os.Unsetenv("NETHVOICE_MIDDLEWARE_SECRETS_DIR")
+	os.Unsetenv("NETHVOICE_MIDDLEWARE_ISSUER_2FA")
+	os.Unsetenv("NETHVOICE_MIDDLEWARE_SENSITIVE_LIST")
 }
 
+// Helper function to reset test state between tests
+func resetTestState() {
+	// Clear user sessions and test files to ensure isolation between tests
+	store.UserSessions = make(map[string]*models.UserSession)
+
+	// Clean up any test files
+	os.RemoveAll("/tmp/test-secrets")
+	os.MkdirAll("/tmp/test-secrets", 0700)
+}
+
+// Test successful login with correct credentials
 func TestLogin_Success(t *testing.T) {
-	router := setupTest()
-	defer cleanupTest()
-
-	// Start mock server
-	mockServer := mockNetCTIServer()
-	defer mockServer.Close()
-
-	// Update config to use mock server
-	configuration.Config.V1ApiEndpoint = strings.TrimPrefix(mockServer.URL, "http://")
+	resetTestState()
 
 	loginData := map[string]string{
 		"username": "testuser",
@@ -123,31 +143,22 @@ func TestLogin_Success(t *testing.T) {
 	}
 	jsonData, _ := json.Marshal(loginData)
 
-	req, _ := http.NewRequest("POST", "/login", bytes.NewBuffer(jsonData))
-	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.Post(testServerURL+"/login", "application/json", bytes.NewBuffer(jsonData))
+	assert.NoError(t, err)
+	defer resp.Body.Close()
 
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 	var response map[string]interface{}
-	err := json.Unmarshal(w.Body.Bytes(), &response)
+	err = json.NewDecoder(resp.Body).Decode(&response)
 	assert.NoError(t, err)
 	assert.Equal(t, float64(200), response["code"])
 	assert.NotEmpty(t, response["token"])
 }
 
+// Test login with invalid credentials
 func TestLogin_InvalidCredentials(t *testing.T) {
-	router := setupTest()
-	defer cleanupTest()
-
-	// Start mock server
-	mockServer := mockNetCTIServer()
-	defer mockServer.Close()
-
-	// Update config to use mock server
-	configuration.Config.V1ApiEndpoint = strings.TrimPrefix(mockServer.URL, "http://")
+	resetTestState()
 
 	loginData := map[string]string{
 		"username": "wronguser",
@@ -155,45 +166,67 @@ func TestLogin_InvalidCredentials(t *testing.T) {
 	}
 	jsonData, _ := json.Marshal(loginData)
 
-	req, _ := http.NewRequest("POST", "/login", bytes.NewBuffer(jsonData))
-	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.Post(testServerURL+"/login", "application/json", bytes.NewBuffer(jsonData))
+	assert.NoError(t, err)
+	defer resp.Body.Close()
 
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 }
 
+// Test login with missing credentials
 func TestLogin_MissingCredentials(t *testing.T) {
-	router := setupTest()
-	defer cleanupTest()
+	resetTestState()
 
-	req, _ := http.NewRequest("POST", "/login", bytes.NewBuffer([]byte("{}")))
-	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.Post(testServerURL+"/login", "application/json", bytes.NewBuffer([]byte("{}")))
+	assert.NoError(t, err)
+	defer resp.Body.Close()
 
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 }
 
-func TestQRCode_Generation(t *testing.T) {
-	router := setupTest()
-	defer cleanupTest()
+// Test logout endpoint and session cleanup
+func TestLogout(t *testing.T) {
+	resetTestState()
 
 	// First login to get token
-	token := performLogin(router)
+	token := utils.PerformLogin(testServerURL)
 
-	req, _ := http.NewRequest("GET", "/2fa/qr-code", nil)
+	client := &http.Client{}
+	req, _ := http.NewRequest("POST", testServerURL+"/logout", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
+	resp, err := client.Do(req)
+	assert.NoError(t, err)
+	defer resp.Body.Close()
 
-	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	// Wait a moment for session cleanup
+	time.Sleep(100 * time.Millisecond)
+
+	// Verify session is removed
+	assert.Empty(t, store.UserSessions)
+}
+
+// Test QR code generation for 2FA setup
+func TestQRCode_Generation(t *testing.T) {
+	resetTestState()
+
+	// First login to get token
+	token := utils.PerformLogin(testServerURL)
+
+	client := &http.Client{}
+	req, _ := http.NewRequest("GET", testServerURL+"/2fa/qr-code", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	resp, err := client.Do(req)
+	assert.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 	var response map[string]interface{}
-	err := json.Unmarshal(w.Body.Bytes(), &response)
+	err = json.NewDecoder(resp.Body).Decode(&response)
 	assert.NoError(t, err)
 
 	data := response["data"].(map[string]interface{})
@@ -203,33 +236,35 @@ func TestQRCode_Generation(t *testing.T) {
 	assert.Contains(t, data["url"].(string), "NetCTI-Test")
 }
 
+// Test that 2FA is initially disabled for a new user
 func Test2FAStatus_Initially_Disabled(t *testing.T) {
-	router := setupTest()
-	defer cleanupTest()
+	resetTestState()
 
 	// First login to get token
-	token := performLogin(router)
+	token := utils.PerformLogin(testServerURL)
 
-	req, _ := http.NewRequest("GET", "/2fa", nil)
+	client := &http.Client{}
+	req, _ := http.NewRequest("GET", testServerURL+"/2fa", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
+	resp, err := client.Do(req)
+	assert.NoError(t, err)
+	defer resp.Body.Close()
 
-	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 	var response map[string]interface{}
-	err := json.Unmarshal(w.Body.Bytes(), &response)
+	err = json.NewDecoder(resp.Body).Decode(&response)
 	assert.NoError(t, err)
 	assert.False(t, response["status"].(bool))
 }
 
+// Test OTP verification with an invalid OTP code
 func TestOTPVerify_InvalidOTP(t *testing.T) {
-	router := setupTest()
-	defer cleanupTest()
+	resetTestState()
 
 	// Setup 2FA for user
-	setup2FA("testuser")
+	utils.Setup2FA("testuser")
 
 	otpData := map[string]string{
 		"username": "testuser",
@@ -237,23 +272,21 @@ func TestOTPVerify_InvalidOTP(t *testing.T) {
 	}
 	jsonData, _ := json.Marshal(otpData)
 
-	req, _ := http.NewRequest("POST", "/2fa/otp-verify", bytes.NewBuffer(jsonData))
-	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.Post(testServerURL+"/2fa/otp-verify", "application/json", bytes.NewBuffer(jsonData))
+	assert.NoError(t, err)
+	defer resp.Body.Close()
 
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 
 	var response map[string]interface{}
-	err := json.Unmarshal(w.Body.Bytes(), &response)
+	err = json.NewDecoder(resp.Body).Decode(&response)
 	assert.NoError(t, err)
 	assert.Equal(t, "validation_failed", response["message"])
 }
 
+// Test OTP verification for a non-existent user
 func TestOTPVerify_UserNotFound(t *testing.T) {
-	router := setupTest()
-	defer cleanupTest()
+	resetTestState()
 
 	otpData := map[string]string{
 		"username": "nonexistent",
@@ -261,58 +294,60 @@ func TestOTPVerify_UserNotFound(t *testing.T) {
 	}
 	jsonData, _ := json.Marshal(otpData)
 
-	req, _ := http.NewRequest("POST", "/2fa/otp-verify", bytes.NewBuffer(jsonData))
-	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.Post(testServerURL+"/2fa/otp-verify", "application/json", bytes.NewBuffer(jsonData))
+	assert.NoError(t, err)
+	defer resp.Body.Close()
 
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusNotFound, w.Code)
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 }
 
+// Test recovery codes generation for 2FA
 func TestRecoveryCodes_Generation(t *testing.T) {
-	router := setupTest()
-	defer cleanupTest()
+	resetTestState()
 
 	// First login and setup 2FA
-	token := performLogin(router)
-	setup2FA("testuser")
+	token := utils.PerformLogin(testServerURL)
+	utils.Setup2FA("testuser")
 
-	req, _ := http.NewRequest("GET", "/2fa/recovery-codes", nil)
+	client := &http.Client{}
+	req, _ := http.NewRequest("GET", testServerURL+"/2fa/recovery-codes", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
+	resp, err := client.Do(req)
+	assert.NoError(t, err)
+	defer resp.Body.Close()
 
-	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 	var response map[string]interface{}
-	err := json.Unmarshal(w.Body.Bytes(), &response)
+	err = json.NewDecoder(resp.Body).Decode(&response)
 	assert.NoError(t, err)
 
 	codes := response["codes"].([]interface{})
 	assert.Greater(t, len(codes), 0)
 }
 
+// Test disabling 2FA and receiving a new token
 func TestDisable2FA(t *testing.T) {
-	router := setupTest()
-	defer cleanupTest()
+	resetTestState()
 
 	// First login and setup 2FA
-	token := performLogin(router)
-	setup2FA("testuser")
-	enable2FA("testuser")
+	token := utils.PerformLogin(testServerURL)
+	utils.Setup2FA("testuser")
+	utils.Enable2FA("testuser")
 
-	req, _ := http.NewRequest("DELETE", "/2fa", nil)
+	client := &http.Client{}
+	req, _ := http.NewRequest("DELETE", testServerURL+"/2fa", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
+	resp, err := client.Do(req)
+	assert.NoError(t, err)
+	defer resp.Body.Close()
 
-	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 	var response map[string]interface{}
-	err := json.Unmarshal(w.Body.Bytes(), &response)
+	err = json.NewDecoder(resp.Body).Decode(&response)
 	assert.NoError(t, err)
 	assert.Equal(t, "2FA revocate successfully", response["message"])
 
@@ -321,117 +356,33 @@ func TestDisable2FA(t *testing.T) {
 	assert.NotEmpty(t, data["token"])
 }
 
+// Test that unauthorized access is denied
 func TestUnauthorizedAccess(t *testing.T) {
-	router := setupTest()
-	defer cleanupTest()
+	resetTestState()
 
-	req, _ := http.NewRequest("GET", "/2fa", nil)
+	client := &http.Client{}
+	req, _ := http.NewRequest("GET", testServerURL+"/2fa", nil)
 
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-}
-
-func TestLogout(t *testing.T) {
-	router := setupTest()
-	defer cleanupTest()
-
-	// First login to get token
-	token := performLogin(router)
-
-	req, _ := http.NewRequest("POST", "/logout", nil)
-	req.Header.Set("Authorization", "Bearer "+token)
-
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	// Verify session is removed
-	assert.Empty(t, store.UserSessions)
-}
-
-func TestPingWithAuth(t *testing.T) {
-	router := setupTest()
-	defer cleanupTest()
-
-	// First login to get token
-	token := performLogin(router)
-
-	req, _ := http.NewRequest("GET", "/ping", nil)
-	req.Header.Set("Authorization", "Bearer "+token)
-
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	var response map[string]interface{}
-	err := json.Unmarshal(w.Body.Bytes(), &response)
+	resp, err := client.Do(req)
 	assert.NoError(t, err)
-	assert.Equal(t, "pong", response["message"])
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 }
 
-// Helper functions
-
-func performLogin(router *gin.Engine) string {
-	// Start mock server
-	mockServer := mockNetCTIServer()
-	defer mockServer.Close()
-
-	// Update config to use mock server
-	configuration.Config.V1ApiEndpoint = strings.TrimPrefix(mockServer.URL, "http://")
-
-	loginData := map[string]string{
-		"username": "testuser",
-		"password": "testpass",
-	}
-	jsonData, _ := json.Marshal(loginData)
-
-	req, _ := http.NewRequest("POST", "/login", bytes.NewBuffer(jsonData))
-	req.Header.Set("Content-Type", "application/json")
-
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	var response map[string]interface{}
-	json.Unmarshal(w.Body.Bytes(), &response)
-	return response["token"].(string)
-}
-
-func setup2FA(username string) {
-	// Create user directory
-	userDir := configuration.Config.SecretsDir + "/" + username
-	os.MkdirAll(userDir, 0700)
-
-	// Create secret file
-	secretFile := userDir + "/secret"
-	os.WriteFile(secretFile, []byte("JBSWY3DPEHPK3PXP"), 0600)
-
-	// Set initial status to disabled
-	statusFile := userDir + "/status"
-	os.WriteFile(statusFile, []byte("0"), 0600)
-}
-
-func enable2FA(username string) {
-	statusFile := configuration.Config.SecretsDir + "/" + username + "/status"
-	os.WriteFile(statusFile, []byte("1"), 0600)
-}
-
+// Test OTP verification using a recovery code
 func TestOTPVerify_WithRecoveryCode(t *testing.T) {
-	router := setupTest()
-	defer cleanupTest()
+	resetTestState()
 
 	// Setup 2FA for user
-	setup2FA("testuser")
-	enable2FA("testuser")
+	utils.Setup2FA("testuser")
+	utils.Enable2FA("testuser")
 
 	// First login to establish session context
-	token := performLogin(router)
+	token := utils.PerformLogin(testServerURL)
 
 	// Create recovery codes file
-	userDir := configuration.Config.SecretsDir + "/testuser"
+	userDir := "/tmp/test-secrets/testuser"
 	codesFile := userDir + "/codes"
 	recoveryCode := "12345678"
 	os.WriteFile(codesFile, []byte(recoveryCode+"\n87654321\n"), 0600)
@@ -442,17 +393,19 @@ func TestOTPVerify_WithRecoveryCode(t *testing.T) {
 	}
 	jsonData, _ := json.Marshal(otpData)
 
-	req, _ := http.NewRequest("POST", "/2fa/otp-verify", bytes.NewBuffer(jsonData))
+	client := &http.Client{}
+	req, _ := http.NewRequest("POST", testServerURL+"/2fa/otp-verify", bytes.NewBuffer(jsonData))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
 
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
+	resp, err := client.Do(req)
+	assert.NoError(t, err)
+	defer resp.Body.Close()
 
-	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 	var response map[string]interface{}
-	err := json.Unmarshal(w.Body.Bytes(), &response)
+	err = json.NewDecoder(resp.Body).Decode(&response)
 	assert.NoError(t, err)
 	assert.Equal(t, "OTP verified", response["message"])
 
@@ -462,42 +415,91 @@ func TestOTPVerify_WithRecoveryCode(t *testing.T) {
 	assert.Contains(t, string(remainingCodes), "87654321")
 }
 
+// Test that access is forbidden if 2FA is enabled but OTP is not verified
 func TestAuth_With2FAEnabled_WithoutOTPVerification(t *testing.T) {
-	router := setupTest()
-	defer cleanupTest()
+	resetTestState()
 
 	// Setup and enable 2FA for user
-	setup2FA("testuser")
-	enable2FA("testuser")
+	utils.Setup2FA("testuser")
+	utils.Enable2FA("testuser")
 
 	// Login (this should succeed but user session will have OTP_Verified = false)
-	token := performLogin(router)
+	token := utils.PerformLogin(testServerURL)
 
 	// Try to access protected endpoint without OTP verification
-	req, _ := http.NewRequest("GET", "/ping", nil)
+	client := &http.Client{}
+	req, _ := http.NewRequest("GET", testServerURL+"/health", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
+	resp, err := client.Do(req)
+	assert.NoError(t, err)
+	defer resp.Body.Close()
 
 	// Should be forbidden because 2FA is enabled but OTP not verified
-	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Equal(t, http.StatusForbidden, resp.StatusCode)
 }
 
+// Test malformed OTP verification request
 func TestMalformedOTPRequest(t *testing.T) {
-	router := setupTest()
-	defer cleanupTest()
+	resetTestState()
 
-	req, _ := http.NewRequest("POST", "/2fa/otp-verify", bytes.NewBuffer([]byte("invalid json")))
-	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.Post(testServerURL+"/2fa/otp-verify", "application/json", bytes.NewBuffer([]byte("invalid json")))
+	assert.NoError(t, err)
+	defer resp.Body.Close()
 
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 
 	var response map[string]interface{}
-	err := json.Unmarshal(w.Body.Bytes(), &response)
+	err = json.NewDecoder(resp.Body).Decode(&response)
 	assert.NoError(t, err)
 	assert.Equal(t, "request fields malformed", response["message"])
+}
+
+// Test login with 2FA enabled and required for user
+func TestLogin_With2FAEnabled_Required(t *testing.T) {
+	resetTestState()
+
+	// Enable 2FA for the user
+	utils.Setup2FA("testuser")
+	utils.Enable2FA("testuser")
+
+	loginData := map[string]string{
+		"username": "testuser",
+		"password": "testpass",
+	}
+	jsonData, _ := json.Marshal(loginData)
+
+	resp, err := http.Post(testServerURL+"/login", "application/json", bytes.NewBuffer(jsonData))
+	assert.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var response map[string]interface{}
+	err = json.NewDecoder(resp.Body).Decode(&response)
+	assert.NoError(t, err)
+	assert.Equal(t, float64(200), response["code"])
+	assert.NotEmpty(t, response["token"])
+
+	// Decode JWT and check "2fa" claim
+	tokenString := response["token"].(string)
+	parts := strings.Split(tokenString, ".")
+	assert.Equal(t, 3, len(parts), "JWT should have 3 parts")
+
+	payload, err := utils.DecodeJWTPart(parts[1])
+	fmt.Println("Decoded payload:", string(payload))
+	assert.NoError(t, err)
+	var claims map[string]interface{}
+	err = json.Unmarshal(payload, &claims)
+	assert.NoError(t, err)
+	assert.True(t, claims["2fa"].(bool))
+
+	// Try to access a protected resource: should be forbidden
+	client := &http.Client{}
+	req, _ := http.NewRequest("GET", testServerURL+"/health", nil)
+	req.Header.Set("Authorization", "Bearer "+response["token"].(string))
+	protectedResp, err := client.Do(req)
+	assert.NoError(t, err)
+	defer protectedResp.Body.Close()
+	assert.Equal(t, http.StatusForbidden, protectedResp.StatusCode)
 }
