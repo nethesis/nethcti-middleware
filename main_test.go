@@ -55,15 +55,16 @@ func setupTestEnvironment() {
 	os.Setenv("NETHVOICE_MIDDLEWARE_LISTEN_ADDRESS", "127.0.0.1:8899")
 	os.Setenv("NETHVOICE_MIDDLEWARE_V1_PROTOCOL", "http")
 	os.Setenv("NETHVOICE_MIDDLEWARE_V1_API_ENDPOINT", mockURL)
+	os.Setenv("NETHVOICE_MIDDLEWARE_V1_WS_ENDPOINT", mockURL)
 	os.Setenv("NETHVOICE_MIDDLEWARE_V1_API_PATH", "/webrest")
-	os.Setenv("NETHVOICE_MIDDLEWARE_V1_WS_PATH", "/ws")
+	os.Setenv("NETHVOICE_MIDDLEWARE_V1_WS_PATH", "/socket.io")
 	os.Setenv("NETHVOICE_MIDDLEWARE_SECRET_JWT", "test-secret-key-for-jwt-tokens")
-	os.Setenv("NETHVOICE_MIDDLEWARE_SECRETS_DIR", "/tmp/test-secrets")
+	os.Setenv("NETHVOICE_MIDDLEWARE_SECRETS_DIR", "/tmp/test-secrets/nethcti")
 	os.Setenv("NETHVOICE_MIDDLEWARE_ISSUER_2FA", "NetCTI-Test")
 	os.Setenv("NETHVOICE_MIDDLEWARE_SENSITIVE_LIST", "password,secret")
 
 	// Create test secrets directory
-	os.MkdirAll("/tmp/test-secrets", 0700)
+	os.MkdirAll(os.Getenv("NETHVOICE_MIDDLEWARE_SECRETS_DIR"), 0700)
 
 	// Start the actual main server in a goroutine
 	go func() {
@@ -109,7 +110,7 @@ func cleanupTestEnvironment() {
 	if mockNetCTI != nil {
 		mockNetCTI.Close()
 	}
-	os.RemoveAll("/tmp/test-secrets")
+	os.RemoveAll(os.Getenv("NETHVOICE_MIDDLEWARE_SECRETS_DIR"))
 
 	// Clear environment variables
 	os.Unsetenv("NETHVOICE_MIDDLEWARE_LISTEN_ADDRESS")
@@ -129,8 +130,8 @@ func resetTestState() {
 	store.UserSessions = make(map[string]*models.UserSession)
 
 	// Clean up any test files
-	os.RemoveAll("/tmp/test-secrets")
-	os.MkdirAll("/tmp/test-secrets", 0700)
+	os.RemoveAll(os.Getenv("NETHVOICE_MIDDLEWARE_SECRETS_DIR"))
+	os.MkdirAll(os.Getenv("NETHVOICE_MIDDLEWARE_SECRETS_DIR"), 0700)
 }
 
 // Test successful login with correct credentials
@@ -263,12 +264,17 @@ func Test2FAStatus_Initially_Disabled(t *testing.T) {
 func TestOTPVerify_InvalidOTP(t *testing.T) {
 	resetTestState()
 
-	// Setup 2FA for user
-	utils.Setup2FA("testuser")
+	// First login to get token
+	token := utils.PerformLogin(testServerURL)
+
+	// 2FA
+	otpSecret := utils.Setup2FA(testServerURL, token, t)
+	otp := utils.GenerateOTP(otpSecret)
+	utils.Verify2FA(testServerURL, otp, token, t)
 
 	otpData := map[string]string{
 		"username": "testuser",
-		"otp":      "123456", // Invalid OTP
+		"otp":      "123456",
 	}
 	jsonData, _ := json.Marshal(otpData)
 
@@ -307,7 +313,10 @@ func TestRecoveryCodes_Generation(t *testing.T) {
 
 	// First login and setup 2FA
 	token := utils.PerformLogin(testServerURL)
-	utils.Setup2FA("testuser")
+
+	otpSecret := utils.Setup2FA(testServerURL, token, t)
+	otp := utils.GenerateOTP(otpSecret)
+	token = utils.Verify2FA(testServerURL, otp, token, t)
 
 	client := &http.Client{}
 	req, _ := http.NewRequest("GET", testServerURL+"/2fa/recovery-codes", nil)
@@ -333,8 +342,10 @@ func TestDisable2FA(t *testing.T) {
 
 	// First login and setup 2FA
 	token := utils.PerformLogin(testServerURL)
-	utils.Setup2FA("testuser")
-	utils.Enable2FA("testuser")
+
+	otpSecret := utils.Setup2FA(testServerURL, token, t)
+	otp := utils.GenerateOTP(otpSecret)
+	token = utils.Verify2FA(testServerURL, otp, token, t)
 
 	client := &http.Client{}
 	req, _ := http.NewRequest("DELETE", testServerURL+"/2fa", nil)
@@ -374,15 +385,16 @@ func TestUnauthorizedAccess(t *testing.T) {
 func TestOTPVerify_WithRecoveryCode(t *testing.T) {
 	resetTestState()
 
-	// Setup 2FA for user
-	utils.Setup2FA("testuser")
-	utils.Enable2FA("testuser")
-
 	// First login to establish session context
 	token := utils.PerformLogin(testServerURL)
 
+	// Setup 2FA for user
+	otpSecret := utils.Setup2FA(testServerURL, token, t)
+	otp := utils.GenerateOTP(otpSecret)
+	utils.Verify2FA(testServerURL, otp, token, t)
+
 	// Create recovery codes file
-	userDir := "/tmp/test-secrets/testuser"
+	userDir := os.Getenv("NETHVOICE_MIDDLEWARE_SECRETS_DIR") + "/testuser"
 	codesFile := userDir + "/codes"
 	recoveryCode := "12345678"
 	os.WriteFile(codesFile, []byte(recoveryCode+"\n87654321\n"), 0600)
@@ -420,22 +432,38 @@ func TestAuth_With2FAEnabled_WithoutOTPVerification(t *testing.T) {
 	resetTestState()
 
 	// Setup and enable 2FA for user
-	utils.Setup2FA("testuser")
-	utils.Enable2FA("testuser")
-
-	// Login (this should succeed but user session will have OTP_Verified = false)
 	token := utils.PerformLogin(testServerURL)
 
-	// Try to access protected endpoint without OTP verification
-	client := &http.Client{}
-	req, _ := http.NewRequest("GET", testServerURL+"/health", nil)
-	req.Header.Set("Authorization", "Bearer "+token)
+	// 1. Request QR code generation (setup 2FA)
+	otpSecret := utils.Setup2FA(testServerURL, token, t)
 
+	// 2. Generate a valid OTP for the secret
+	otp := utils.GenerateOTP(otpSecret)
+
+	client := &http.Client{}
+
+	// 3. Verify OTP via API to enable 2FA
+	utils.Verify2FA(testServerURL, otp, token, t)
+
+	// Logout to invalidate the OTP-verified session
+	reqLogout, _ := http.NewRequest("POST", testServerURL+"/logout", nil)
+	reqLogout.Header.Set("Authorization", "Bearer "+token)
+	respLogout, err := client.Do(reqLogout)
+	assert.NoError(t, err)
+	defer respLogout.Body.Close()
+	assert.Equal(t, http.StatusOK, respLogout.StatusCode)
+
+	// Login (user has 2FA enabled but has not verified OTP for this session)
+	token = utils.PerformLogin(testServerURL)
+
+	// Try to access a protected resource without OTP verification
+	req, _ := http.NewRequest("GET", testServerURL+"/auth-health", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := client.Do(req)
 	assert.NoError(t, err)
 	defer resp.Body.Close()
 
-	// Should be forbidden because 2FA is enabled but OTP not verified
+	// Should be forbidden because 2FA is enabled but OTP was not verified for this session
 	assert.Equal(t, http.StatusForbidden, resp.StatusCode)
 }
 
@@ -459,9 +487,13 @@ func TestMalformedOTPRequest(t *testing.T) {
 func TestLogin_With2FAEnabled_Required(t *testing.T) {
 	resetTestState()
 
-	// Enable 2FA for the user
-	utils.Setup2FA("testuser")
-	utils.Enable2FA("testuser")
+	// First login to establish session context
+	token := utils.PerformLogin(testServerURL)
+
+	// Setup 2FA for user
+	otpSecret := utils.Setup2FA(testServerURL, token, t)
+	otp := utils.GenerateOTP(otpSecret)
+	utils.Verify2FA(testServerURL, otp, token, t)
 
 	loginData := map[string]string{
 		"username": "testuser",
@@ -496,7 +528,7 @@ func TestLogin_With2FAEnabled_Required(t *testing.T) {
 
 	// Try to access a protected resource: should be forbidden
 	client := &http.Client{}
-	req, _ := http.NewRequest("GET", testServerURL+"/health", nil)
+	req, _ := http.NewRequest("GET", testServerURL+"/auth-health", nil)
 	req.Header.Set("Authorization", "Bearer "+response["token"].(string))
 	protectedResp, err := client.Do(req)
 	assert.NoError(t, err)
