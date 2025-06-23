@@ -8,6 +8,7 @@ package methods
 import (
 	"crypto/rand"
 	"encoding/base32"
+	"encoding/json"
 	"net/http"
 	"net/url"
 	"os"
@@ -32,7 +33,7 @@ import (
 )
 
 // regenerateUserToken creates a new JWT token for an existing user session
-func regenerateUserToken(userSession *models.UserSession) (string, time.Time, error) {
+func regenerateUserToken(userSession *models.UserSession) (*models.UserSession, time.Time, error) {
 	// Create new JWT payload with updated 2FA status
 	status, _ := GetUserStatus(userSession.Username)
 
@@ -40,25 +41,24 @@ func regenerateUserToken(userSession *models.UserSession) (string, time.Time, er
 	expire := now.Add(time.Hour * 24 * 14) // 2 weeks
 
 	claims := jwtv4.MapClaims{
-		"id":      userSession.Username,
-		"role":    "",
-		"actions": []string{},
-		"2fa":     status == "1",
-		"exp":     expire.Unix(),
-		"iat":     now.Unix(),
+		"id":  userSession.Username,
+		"2fa": status == "1",
+		"exp": expire.Unix(),
+		"iat": now.Unix(),
 	}
 
 	// Create and sign token using github.com/golang-jwt/jwt/v4
 	token := jwtv4.NewWithClaims(jwtv4.SigningMethodHS256, claims)
 	tokenString, err := token.SignedString([]byte(configuration.Config.Secret_jwt))
+
 	if err != nil {
-		return "", time.Time{}, err
+		return nil, time.Time{}, err
 	}
 
 	// Update user session with new token
 	userSession.JWTToken = tokenString
 
-	return tokenString, expire, nil
+	return userSession, expire, nil
 }
 
 func OTPVerify(c *gin.Context) {
@@ -152,8 +152,9 @@ func OTPVerify(c *gin.Context) {
 	store.UserSessions[jsonOTP.Username].OTP_Verified = true
 
 	// Regenerate JWT token with updated 2FA status
-	userSession := store.UserSessions[jsonOTP.Username]
-	newToken, expire, err := regenerateUserToken(userSession)
+	newUserSession, expire, err := regenerateUserToken(store.UserSessions[jsonOTP.Username])
+	store.UserSessions[jsonOTP.Username] = newUserSession
+
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, structs.Map(response.StatusBadRequest{
 			Code:    500,
@@ -167,7 +168,7 @@ func OTPVerify(c *gin.Context) {
 	c.JSON(http.StatusOK, structs.Map(response.StatusOK{
 		Code:    200,
 		Message: "OTP verified",
-		Data:    gin.H{"token": newToken, "expire": expire},
+		Data:    gin.H{"token": store.UserSessions[jsonOTP.Username].JWTToken, "expire": expire},
 	}))
 }
 
@@ -511,4 +512,214 @@ func DeleteExpiredTokens() {
 	}
 
 	logs.Logs.Println("[INFO][JWT] Completed cleanup of expired user sessions")
+}
+
+func PhoneIslandTokenLogin(c *gin.Context) {
+	claims := jwt.ExtractClaims(c)
+	username, ok := claims["id"].(string)
+	if !ok || username == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "invalid user"})
+		return
+	}
+
+	// Get token from CTI Server
+	userSession := store.UserSessions[username]
+	nethctiToken := userSession.NethCTIToken
+
+	req, err := http.NewRequest("POST", configuration.Config.V1Protocol+"://"+configuration.Config.V1ApiEndpoint+configuration.Config.V1ApiPath+"/authentication/phone_island_token_login", nil)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "failed to create request"})
+		return
+	}
+	req.Header.Set("Authorization", nethctiToken)
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "failed to contact server v1"})
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		c.JSON(http.StatusBadGateway, gin.H{"message": "server v1 returned error", "status": resp.StatusCode})
+		return
+	}
+
+	var v1Resp struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&v1Resp); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "failed to parse server v1 response"})
+		return
+	}
+
+	phoneIslandToken := v1Resp.Token
+
+	apiKey, err := generateAPIKey(username)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "failed to generate api key"})
+		return
+	}
+	if err := saveAPIKey(username, apiKey, phoneIslandToken); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "failed to save api key"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"token":    apiKey,
+		"username": username,
+	})
+}
+
+func PhoneIslandTokenRemove(c *gin.Context) {
+	claims := jwt.ExtractClaims(c)
+	username, ok := claims["id"].(string)
+	if !ok || username == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "invalid user"})
+		return
+	}
+
+	err := os.Remove(configuration.Config.SecretsDir + "/" + username + "/phone_island_api_key.json")
+	if err != nil {
+		if os.IsNotExist(err) {
+			c.JSON(http.StatusOK, gin.H{"removed": false, "message": "api key not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"removed": false, "message": "failed to remove api key"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"removed": true})
+}
+
+func PhoneIslandTokenCheck(c *gin.Context) {
+	claims := jwt.ExtractClaims(c)
+	username, ok := claims["id"].(string)
+	if !ok || username == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "invalid user"})
+		return
+	}
+
+	exists := false
+	if _, err := os.Stat(configuration.Config.SecretsDir + "/" + username + "/phone_island_api_key.json"); err == nil {
+		exists = true
+	} else if !os.IsNotExist(err) {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "failed to check api key"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"exists": exists})
+}
+
+// Generate a random API key string
+func generateAPIKey(username string) (string, error) {
+	claims := jwtv4.MapClaims{
+		"id":  username,
+		"2fa": false,
+		"exp": time.Now().Add(100 * 365 * 24 * time.Hour).Unix(),
+		"iat": time.Now().Unix(),
+	}
+
+	token := jwtv4.NewWithClaims(jwtv4.SigningMethodHS256, claims)
+	tokenString, err := token.SignedString([]byte(configuration.Config.Secret_jwt))
+	if err != nil {
+		return "", err
+	}
+	return tokenString, nil
+}
+
+// Save API key for a user
+func saveAPIKey(username, apiKey, phoneIslandToken string) error {
+	dir := configuration.Config.SecretsDir + "/" + username
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			return err
+		}
+	}
+
+	data := models.ApiKeyData{
+		APIKey:           apiKey,
+		PhoneIslandToken: username + ":" + phoneIslandToken,
+	}
+
+	jsonBytes, err := json.Marshal(data)
+	if err != nil {
+		return err
+	}
+
+	f, err := os.OpenFile(dir+"/phone_island_api_key.json", os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	_, err = f.Write(jsonBytes)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// AuthenticateAPIKey returns true if the API key matches the stored key for the user, false otherwise
+func AuthenticateAPIKey(username, apiKey string) bool {
+	dir := configuration.Config.SecretsDir + "/" + username
+	filePath := dir + "/phone_island_api_key.json"
+
+	// Check if directory exists
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		return false
+	}
+
+	// Check if file exists
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return false
+	}
+
+	// Unmarshal the JSON data
+	var keyData models.ApiKeyData
+	if err := json.Unmarshal(data, &keyData); err != nil {
+		return false
+	}
+
+	return keyData.APIKey == apiKey
+}
+
+// Return the PhoneIslandToken from ApiKeyData given a JWT token string
+func GetPhoneIslandToken(jwtToken string) (string, error) {
+	// Parse the JWT token to extract the username (id)
+	token, err := jwtv4.Parse(jwtToken, func(token *jwtv4.Token) (interface{}, error) {
+		return []byte(configuration.Config.Secret_jwt), nil
+	})
+	if err != nil || !token.Valid {
+		return "", err
+	}
+
+	claims, ok := token.Claims.(jwtv4.MapClaims)
+	if !ok {
+		return "", err
+	}
+
+	username, ok := claims["id"].(string)
+	if !ok || username == "" {
+		return "", err
+	}
+
+	dir := configuration.Config.SecretsDir + "/" + username
+	filePath := dir + "/phone_island_api_key.json"
+
+	// Check if file exists
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return "", err
+	}
+
+	var keyData models.ApiKeyData
+	if err := json.Unmarshal(data, &keyData); err != nil {
+		return "", err
+	}
+
+	return keyData.PhoneIslandToken, nil
 }
