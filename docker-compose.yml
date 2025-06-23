@@ -1,0 +1,17 @@
+services:
+  nethcti-middleware:
+    image: nethcti-middleware:latest
+    build:
+      context: .
+      dockerfile: Containerfile
+    container_name: nethcti-container
+    restart: unless-stopped
+    ports:
+      - 8080:8080
+    environment:
+      - NETHVOICE_MIDDLEWARE_LISTEN_ADDRESS=:8080
+      - NETHVOICE_MIDDLEWARE_SECRET_JWT=test
+      - NETHVOICE_MIDDLEWARE_SECRETS_DIR=/var/log/nethcti
+      - NETHVOICE_MIDDLEWARE_V1_API_PATH=/webrest
+    volumes:
+      - ./data:/var/log/nethcti

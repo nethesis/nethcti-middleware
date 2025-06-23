@@ -87,22 +87,22 @@ func InitJWT() *jwt.GinJWTMiddleware {
 			}
 			defer resp.Body.Close()
 
-			var NetCTIToken string
+			var NethCTIToken string
 
 			if resp.StatusCode == http.StatusUnauthorized {
 				wwwAuth := resp.Header.Get("Www-Authenticate")
 				if wwwAuth != "" {
-					// Generate NetCTIToken using the www-authenticate header
-					NetCTIToken = utils.GenerateLegacyToken(resp, username, password)
-					if NetCTIToken == "" {
-						logs.Log("[AUTH] Failed to generate NetCTIToken")
+					// Generate NethCTIToken using the www-authenticate header
+					NethCTIToken = utils.GenerateLegacyToken(resp, username, password)
+					if NethCTIToken == "" {
+						logs.Log("[AUTH] Failed to generate NethCTIToken")
 						return nil, jwt.ErrFailedAuthentication
 					}
 
 					// Retry the request with the new Authorization header
 					netCtiMeURL := configuration.Config.V1Protocol + "://" + configuration.Config.V1ApiEndpoint + configuration.Config.V1ApiPath + "/user/me"
 					req, _ := http.NewRequest("GET", netCtiMeURL, nil) // Use GET for /user/me
-					req.Header.Set("Authorization", NetCTIToken)
+					req.Header.Set("Authorization", NethCTIToken)
 					// print request headers
 					resp, err = client.Do(req)
 					if err != nil {
@@ -123,7 +123,7 @@ func InitJWT() *jwt.GinJWTMiddleware {
 			store.UserSessions[username] = &models.UserSession{
 				Username:     username,
 				JWTToken:     "",
-				NetCTIToken:  NetCTIToken,
+				NethCTIToken: NethCTIToken,
 				OTP_Verified: false,
 			}
 
@@ -142,8 +142,6 @@ func InitJWT() *jwt.GinJWTMiddleware {
 				// create claims map
 				return jwt.MapClaims{
 					identityKey: userSession.Username,
-					"role":      "",
-					"actions":   []string{},
 					"2fa":       status == "1",
 				}
 			}
@@ -173,10 +171,11 @@ func InitJWT() *jwt.GinJWTMiddleware {
 			reqURI := c.Request.RequestURI
 
 			// Check basic authentication and 2FA/OTP verification
-			if !ok || userSession == nil || JWTToken != userSession.JWTToken ||
-				(claims["2fa"].(bool) && !userSession.OTP_Verified) {
-				logs.Logs.Println("[ERROR][AUTH] authorization failed for user " + claims["id"].(string) + ". " + reqMethod + " " + reqURI)
-				return false
+			if !ok || userSession == nil || JWTToken != userSession.JWTToken || (claims["2fa"].(bool) && !userSession.OTP_Verified) {
+				if !methods.AuthenticateAPIKey(username, JWTToken) {
+					logs.Logs.Println("[ERROR][AUTH] authorization failed for user " + claims["id"].(string) + ". " + reqMethod + " " + reqURI)
+					return false
+				}
 			}
 
 			reqBody := ""

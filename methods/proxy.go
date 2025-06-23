@@ -72,11 +72,29 @@ func ProxyV1Request(c *gin.Context, path string) {
 
 	// Extract claims from the JWT token
 	claims := jwt.ExtractClaims(c)
+	username := claims["id"].(string)
+	nethCTIToken := ""
 
-	userSession := store.UserSessions[claims["id"].(string)]
+	// Check if the request is authenticated with an API key
+	if AuthenticateAPIKey(username, JWTToken) {
+		// If authenticated with API key, retrieve the Phone Island token
+		nethCTIToken, err = GetPhoneIslandToken(JWTToken)
+		if err != nil {
+			logs.Log("[ERROR][AUTH] Failed to retrieve Phone Island token for API key")
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"code":    401,
+				"message": "Failed to retrieve Phone Island token",
+			})
+			return
+		}
+	} else {
+		// If not authenticated with API key, use the NethCTI token from the user session
+		userSession := store.UserSessions[username]
+		nethCTIToken = userSession.NethCTIToken
+	}
 
 	// Add the NetCTI token to the request headers
-	req.Header.Set("Authorization", userSession.NetCTIToken)
+	req.Header.Set("Authorization", nethCTIToken)
 
 	// Copy query parameters
 	req.URL.RawQuery = c.Request.URL.RawQuery

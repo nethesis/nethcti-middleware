@@ -7,10 +7,7 @@ package main
 
 import (
 	"io"
-	"log"
 	"net/http"
-	"os"
-	"strings"
 
 	"github.com/fatih/structs"
 	"github.com/gin-contrib/cors"
@@ -33,7 +30,6 @@ func main() {
 
 	// init configuration
 	configuration.Init()
-	LogConfig(configuration.Config)
 
 	// init store
 	store.UserSessionInit()
@@ -85,6 +81,14 @@ func createRouter() *gin.Engine {
 	// 2FA APIs
 	api.POST("/2fa/otp-verify", methods.OTPVerify)
 
+	// Test endpoint (not authenticated)
+	api.GET("/health", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{
+			"message": "healthy",
+			"status":  "ok",
+		})
+	})
+
 	api.Use(middleware.InstanceJWT().MiddlewareFunc())
 	{
 		// 2FA APIs
@@ -93,8 +97,13 @@ func createRouter() *gin.Engine {
 		api.GET("/2fa/recovery-codes", methods.Get2FARecoveryCodes)
 		api.GET("/2fa/qr-code", methods.QRCode)
 
-		// Test endpoint (no auth required)
-		api.GET("/health", func(c *gin.Context) {
+		// Phone Island Integration APIs
+		api.POST("/authentication/phone_island_token_login", methods.PhoneIslandTokenLogin)
+		api.POST("/authentication/persistent_token_remove", methods.PhoneIslandTokenRemove)
+		api.GET("/authentication/phone_island_token_check", methods.PhoneIslandTokenCheck)
+
+		// Test endpoint (authenticated)
+		api.GET("/auth-health", func(c *gin.Context) {
 			c.JSON(http.StatusOK, gin.H{
 				"message": "healthy",
 				"status":  "ok",
@@ -124,25 +133,4 @@ func createRouter() *gin.Engine {
 	})
 
 	return router
-}
-
-func LogConfig(Config configuration.Configuration) {
-
-	logger := log.New(os.Stderr, "", 0)
-
-	// log environment variables
-	logger.Print("\n================= CONFIGURATION =================\n\n")
-	logger.Println("[CONFIG] NETHVOICE_MIDDLEWARE_LISTEN_ADDRESS: " + Config.ListenAddress)
-	logger.Println("[CONFIG] NETHVOICE_MIDDLEWARE_V1_PROTOCOL: " + Config.V1Protocol)
-	logger.Println("[CONFIG] NETHVOICE_MIDDLEWARE_V1_API_ENDPOINT: " + Config.V1ApiEndpoint)
-	logger.Println("[CONFIG] NETHVOICE_MIDDLEWARE_V1_WS_ENDPOINT: " + Config.V1WsEndpoint)
-	logger.Println("[CONFIG] NETHVOICE_MIDDLEWARE_V1_API_PATH: " + Config.V1ApiPath)
-	logger.Println("[CONFIG] NETHVOICE_MIDDLEWARE_V1_WS_PATH: " + Config.V1WsPath)
-	logger.Println("[CONFIG] NETHVOICE_MIDDLEWARE_SENSITIVE_LIST: " + strings.Join(Config.SensitiveList, ","))
-	if Config.Secret_jwt != "" {
-		logger.Println("[CONFIG] NETHVOICE_MIDDLEWARE_SECRET_JWT: set")
-	} else {
-		logger.Println("[CONFIG] NETHVOICE_MIDDLEWARE_SECRET_JWT: not set")
-	}
-	logger.Print("\n=================================================\n\n")
 }

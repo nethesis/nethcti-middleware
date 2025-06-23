@@ -55,14 +55,16 @@ func Init() {
 	if os.Getenv("NETHVOICE_MIDDLEWARE_V1_API_ENDPOINT") != "" {
 		Config.V1ApiEndpoint = os.Getenv("NETHVOICE_MIDDLEWARE_V1_API_ENDPOINT")
 	} else {
-		Config.V1ApiEndpoint = "cti2.demo-heron.sf.nethserver.net"
+		logs.Log("[CRITICAL][ENV] NETHVOICE_MIDDLEWARE_V1_API_ENDPOINT variable is empty")
+		os.Exit(1)
 	}
 
 	// set V1 API endpoint
 	if os.Getenv("NETHVOICE_MIDDLEWARE_V1_WS_ENDPOINT") != "" {
 		Config.V1WsEndpoint = os.Getenv("NETHVOICE_MIDDLEWARE_V1_WS_ENDPOINT")
 	} else {
-		Config.V1WsEndpoint = "cti2.demo-heron.sf.nethserver.net"
+		logs.Log("[CRITICAL][ENV] NETHVOICE_MIDDLEWARE_V1_WS_ENDPOINT variable is empty")
+		os.Exit(1)
 	}
 
 	// set V1 API path

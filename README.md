@@ -83,7 +83,8 @@ Run the container with environment configuration:
 podman run -d -p 8080:8080 --name nethcti-container \
   --env NETHVOICE_MIDDLEWARE_LISTEN_ADDRESS=:8080 \
   --env NETHVOICE_MIDDLEWARE_SECRET_JWT=test \
-  --env NETHVOICE_MIDDLEWARE_SECRETS_DIR=/var/log \
+  --env NETHVOICE_MIDDLEWARE_SECRETS_DIR=/var/log/nethcti \
   --env NETHVOICE_MIDDLEWARE_V1_API_PATH=/webrest \
+  --volume ./data:/var/log/nethcti \
   --replace nethcti-middleware
 ```

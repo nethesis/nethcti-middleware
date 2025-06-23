@@ -66,7 +66,7 @@ func WsProxyHandler(c *gin.Context) {
 							session, sessionExists := store.UserSessions[accessKeyId]
 							if sessionExists {
 								// Extract only the token from the string "username:token"
-								tokenParts := strings.SplitN(session.NetCTIToken, ":", 2)
+								tokenParts := strings.SplitN(session.NethCTIToken, ":", 2)
 								if len(tokenParts) == 2 {
 									loginData["token"] = tokenParts[1]
 								}
