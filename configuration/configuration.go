@@ -92,8 +92,7 @@ func Init() {
 	if os.Getenv("NETHVOICE_MIDDLEWARE_SECRETS_DIR") != "" {
 		Config.SecretsDir = os.Getenv("NETHVOICE_MIDDLEWARE_SECRETS_DIR")
 	} else {
-		logs.Log("[CRITICAL][ENV] NETHVOICE_MIDDLEWARE_SECRETS_DIR variable is empty")
-		os.Exit(1)
+		Config.SecretsDir = "/var/lib/whale/secrets"
 	}
 
 	// set issuer for 2FA
