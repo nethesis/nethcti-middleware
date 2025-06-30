@@ -78,7 +78,7 @@ func ProxyV1Request(c *gin.Context, path string) {
 	// Check if the request is authenticated with an API key
 	if AuthenticateAPIKey(username, JWTToken) {
 		// If authenticated with API key, retrieve the Phone Island token
-		nethCTIToken, err = GetPhoneIslandToken(JWTToken)
+		nethCTIToken, err = GetPhoneIslandToken(JWTToken, false)
 		if err != nil {
 			logs.Log("[ERROR][AUTH] Failed to retrieve Phone Island token for API key")
 			c.JSON(http.StatusUnauthorized, gin.H{

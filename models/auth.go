@@ -18,6 +18,7 @@ type OTPJson struct {
 }
 
 type ApiKeyData struct {
+	Username         string `json:"username"`
 	APIKey           string `json:"api_key"`
 	PhoneIslandToken string `json:"phone_island_token"`
 }

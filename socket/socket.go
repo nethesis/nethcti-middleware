@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	"github.com/nethesis/nethcti-middleware/configuration"
+	"github.com/nethesis/nethcti-middleware/methods"
 	"github.com/nethesis/nethcti-middleware/store"
 )
 
@@ -64,16 +65,27 @@ func WsProxyHandler(c *gin.Context) {
 						accessKeyId, ok := loginData["accessKeyId"].(string)
 						if ok {
 							session, sessionExists := store.UserSessions[accessKeyId]
+							apiKeyExists := methods.AuthenticateAPIKey(accessKeyId, loginData["token"].(string))
+
 							if sessionExists {
 								// Extract only the token from the string "username:token"
-								tokenParts := strings.SplitN(session.NethCTIToken, ":", 2)
-								if len(tokenParts) == 2 {
-									loginData["token"] = tokenParts[1]
-								}
+								tokenParts := strings.SplitN(session.NethCTIToken, ":", 2)[1]
+								if tokenParts != "" {
+									loginData["token"] = tokenParts
 
-								// Re-encode the message
-								newPayload, _ := json.Marshal([]interface{}{payload[0], loginData})
-								msg = append([]byte("42"), newPayload...)
+									// Re-encode the message
+									newPayload, _ := json.Marshal([]interface{}{payload[0], loginData})
+									msg = append([]byte("42"), newPayload...)
+								}
+							} else if apiKeyExists {
+								phoneIslandToken, err := methods.GetPhoneIslandToken(loginData["token"].(string), true)
+								if err == nil && phoneIslandToken != "" {
+									loginData["token"] = phoneIslandToken
+
+									// Re-encode the message
+									newPayload, _ := json.Marshal([]interface{}{payload[0], loginData})
+									msg = append([]byte("42"), newPayload...)
+								}
 							}
 						}
 					}

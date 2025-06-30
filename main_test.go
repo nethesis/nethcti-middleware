@@ -8,7 +8,6 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -519,7 +518,6 @@ func TestLogin_With2FAEnabled_Required(t *testing.T) {
 	assert.Equal(t, 3, len(parts), "JWT should have 3 parts")
 
 	payload, err := utils.DecodeJWTPart(parts[1])
-	fmt.Println("Decoded payload:", string(payload))
 	assert.NoError(t, err)
 	var claims map[string]interface{}
 	err = json.Unmarshal(payload, &claims)

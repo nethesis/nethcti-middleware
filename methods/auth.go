@@ -630,7 +630,7 @@ func generateAPIKey(username string) (string, error) {
 }
 
 // Save API key for a user
-func saveAPIKey(username, apiKey, phoneIslandToken string) error {
+func saveAPIKey(username string, apiKey string, phoneIslandToken string) error {
 	dir := configuration.Config.SecretsDir + "/" + username
 	if _, err := os.Stat(dir); os.IsNotExist(err) {
 		if err := os.MkdirAll(dir, 0700); err != nil {
@@ -639,8 +639,9 @@ func saveAPIKey(username, apiKey, phoneIslandToken string) error {
 	}
 
 	data := models.ApiKeyData{
+		Username:         username,
 		APIKey:           apiKey,
-		PhoneIslandToken: username + ":" + phoneIslandToken,
+		PhoneIslandToken: phoneIslandToken,
 	}
 
 	jsonBytes, err := json.Marshal(data)
@@ -688,7 +689,7 @@ func AuthenticateAPIKey(username, apiKey string) bool {
 }
 
 // Return the PhoneIslandToken from ApiKeyData given a JWT token string
-func GetPhoneIslandToken(jwtToken string) (string, error) {
+func GetPhoneIslandToken(jwtToken string, onlyToken bool) (string, error) {
 	// Parse the JWT token to extract the username (id)
 	token, err := jwtv4.Parse(jwtToken, func(token *jwtv4.Token) (interface{}, error) {
 		return []byte(configuration.Config.Secret_jwt), nil
@@ -721,5 +722,10 @@ func GetPhoneIslandToken(jwtToken string) (string, error) {
 		return "", err
 	}
 
-	return keyData.PhoneIslandToken, nil
+	if onlyToken {
+		return keyData.PhoneIslandToken, nil
+	} else {
+		completedToken := keyData.Username + ":" + keyData.PhoneIslandToken
+		return completedToken, nil
+	}
 }
