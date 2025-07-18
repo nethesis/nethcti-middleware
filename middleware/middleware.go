@@ -128,7 +128,7 @@ func InitJWT() *jwt.GinJWTMiddleware {
 			}
 
 			// login ok action
-			logs.Logs.Println("[INFO][AUTH] authentication success for user " + username)
+			logs.Log("[INFO][AUTH] authentication success for user " + username)
 
 			// Return user auth model
 			return store.UserSessions[username], nil
@@ -173,7 +173,7 @@ func InitJWT() *jwt.GinJWTMiddleware {
 			// Check basic authentication and 2FA/OTP verification
 			if !ok || userSession == nil || JWTToken != userSession.JWTToken || (claims["2fa"].(bool) && !userSession.OTP_Verified) {
 				if !methods.AuthenticateAPIKey(username, JWTToken) {
-					logs.Logs.Println("[ERROR][AUTH] authorization failed for user " + claims["id"].(string) + ". " + reqMethod + " " + reqURI)
+					logs.Log("[ERROR][AUTH] authorization failed for user " + claims["id"].(string) + ". " + reqMethod + " " + reqURI)
 					return false
 				}
 			}
@@ -210,7 +210,7 @@ func InitJWT() *jwt.GinJWTMiddleware {
 				reqBody = string(jsonOut)
 			}
 
-			logs.Logs.Println("[INFO][AUTH] authorization success for user " + claims["id"].(string) + ". " + reqMethod + " " + reqURI + " " + reqBody)
+			logs.Log("[INFO][AUTH] authorization success for user " + claims["id"].(string) + ". " + reqMethod + " " + reqURI + " " + reqBody)
 
 			return true
 		},
