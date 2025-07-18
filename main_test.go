@@ -8,6 +8,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -265,6 +266,7 @@ func TestOTPVerify_InvalidOTP(t *testing.T) {
 
 	// First login to get token
 	token := utils.PerformLogin(testServerURL)
+	fmt.Println(testServerURL)
 
 	// 2FA
 	otpSecret := utils.Setup2FA(testServerURL, token, t)
@@ -286,7 +288,7 @@ func TestOTPVerify_InvalidOTP(t *testing.T) {
 	var response map[string]interface{}
 	err = json.NewDecoder(resp.Body).Decode(&response)
 	assert.NoError(t, err)
-	assert.Equal(t, "validation_failed", response["message"])
+	assert.Equal(t, "invalid_otp", response["message"])
 }
 
 // Test OTP verification for a non-existent user
@@ -346,9 +348,20 @@ func TestDisable2FA(t *testing.T) {
 	otp := utils.GenerateOTP(otpSecret)
 	token = utils.Verify2FA(testServerURL, otp, token, t)
 
+	// Generate a new OTP for disabling 2FA
+	newOtp := utils.GenerateOTP(otpSecret)
+
+	// Prepare request data with username and OTP
+	disableData := map[string]string{
+		"username": "testuser",
+		"otp":      newOtp,
+	}
+	jsonData, _ := json.Marshal(disableData)
+
 	client := &http.Client{}
-	req, _ := http.NewRequest("DELETE", testServerURL+"/2fa", nil)
+	req, _ := http.NewRequest("DELETE", testServerURL+"/2fa", bytes.NewBuffer(jsonData))
 	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := client.Do(req)
 	assert.NoError(t, err)

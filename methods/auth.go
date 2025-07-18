@@ -16,7 +16,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Jeffail/gabs/v2"
 	jwt "github.com/appleboy/gin-jwt/v2"
 	"github.com/dgryski/dgoogauth"
 	"github.com/fatih/structs"
@@ -75,7 +74,8 @@ func OTPVerify(c *gin.Context) {
 	}
 
 	// get secret for the user
-	secret := GetUserSecret(jsonOTP.Username)
+	username := jsonOTP.Username
+	secret := GetUserSecret(username)
 
 	// check secret
 	if len(secret) == 0 {
@@ -99,27 +99,13 @@ func OTPVerify(c *gin.Context) {
 	if err != nil || !result {
 
 		// check if OTP is a recovery code
-		recoveryCodes := GetRecoveryCodes(jsonOTP.Username)
+		recoveryCodes := GetRecoveryCodes(username)
 
 		if !utils.Contains(jsonOTP.OTP, recoveryCodes) {
-			// compose validation error
-			jsonParsed, _ := gabs.ParseJSON([]byte(`{
-				"validation": {
-				  "errors": [
-					{
-					  "message": "invalid_otp",
-					  "parameter": "otp",
-					  "value": ""
-					}
-				  ]
-				}
-			}`))
-
-			// return validation error
 			c.JSON(http.StatusBadRequest, structs.Map(response.StatusBadRequest{
 				Code:    400,
-				Message: "validation_failed",
-				Data:    jsonParsed,
+				Message: "invalid_otp",
+				Data:    nil,
 			}))
 			return
 		}
@@ -128,7 +114,7 @@ func OTPVerify(c *gin.Context) {
 		recoveryCodes = utils.Remove(jsonOTP.OTP, recoveryCodes)
 
 		// update recovery codes file
-		if !UpdateRecoveryCodes(jsonOTP.Username, recoveryCodes) {
+		if !UpdateRecoveryCodes(username, recoveryCodes) {
 			c.JSON(http.StatusBadRequest, structs.Map(response.StatusBadRequest{
 				Code:    400,
 				Message: "OTP recovery codes not updated",
@@ -139,7 +125,7 @@ func OTPVerify(c *gin.Context) {
 	}
 
 	// enable 2FA for user
-	if !Enable2FA(jsonOTP.Username) {
+	if !Enable2FA(username) {
 		c.JSON(http.StatusBadRequest, structs.Map(response.StatusBadRequest{
 			Code:    400,
 			Message: "failed to enable 2FA",
@@ -149,11 +135,10 @@ func OTPVerify(c *gin.Context) {
 	}
 
 	// update user session to mark OTP as verified
-	store.UserSessions[jsonOTP.Username].OTP_Verified = true
+	store.UserSessions[username].OTP_Verified = true
 
 	// Regenerate JWT token with updated 2FA status
-	newUserSession, expire, err := regenerateUserToken(store.UserSessions[jsonOTP.Username])
-	store.UserSessions[jsonOTP.Username] = newUserSession
+	newUserSession, expire, err := regenerateUserToken(store.UserSessions[username])
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, structs.Map(response.StatusBadRequest{
@@ -168,7 +153,7 @@ func OTPVerify(c *gin.Context) {
 	c.JSON(http.StatusOK, structs.Map(response.StatusOK{
 		Code:    200,
 		Message: "OTP verified",
-		Data:    gin.H{"token": store.UserSessions[jsonOTP.Username].JWTToken, "expire": expire},
+		Data:    gin.H{"token": newUserSession.JWTToken, "expire": expire},
 	}))
 }
 
@@ -177,7 +162,7 @@ func QRCode(c *gin.Context) {
 	secret := make([]byte, 20)
 	_, err := rand.Read(secret)
 	if err != nil {
-		logs.Logs.Println("[ERR][2FA] Failed to generate random secret for QRCode: " + err.Error())
+		logs.Log("[ERR][2FA] Failed to generate random secret for QRCode: " + err.Error())
 	}
 
 	// convert to string
@@ -204,7 +189,7 @@ func QRCode(c *gin.Context) {
 	// define URL
 	URL, err := url.Parse("otpauth://totp")
 	if err != nil {
-		logs.Logs.Println("[ERR][2FA] Failed to parse URL for QRCode: " + err.Error())
+		logs.Log("[ERR][2FA] Failed to parse URL for QRCode: " + err.Error())
 	}
 
 	// add params
@@ -407,6 +392,28 @@ func Disable2FA(c *gin.Context) {
 	// get claims from token
 	claims := jwt.ExtractClaims(c)
 
+	// get payload for OTP verification
+	var jsonOTP models.OTPJson
+	if err := c.ShouldBindBodyWith(&jsonOTP, binding.JSON); err != nil {
+		c.JSON(http.StatusBadRequest, structs.Map(response.StatusBadRequest{
+			Code:    400,
+			Message: "request fields malformed",
+			Data:    err.Error(),
+		}))
+		return
+	}
+
+	// verify OTP before disabling 2FA
+	usernameForOTP := claims["id"].(string)
+	if !Verify2FA(usernameForOTP, jsonOTP.OTP) {
+		c.JSON(http.StatusBadRequest, structs.Map(response.StatusBadRequest{
+			Code:    400,
+			Message: "invalid_otp",
+			Data:    nil,
+		}))
+		return
+	}
+
 	// revocate secret
 	errRevocate := os.Remove(configuration.Config.SecretsDir + "/" + claims["id"].(string) + "/secret")
 	if errRevocate != nil {
@@ -452,11 +459,12 @@ func Disable2FA(c *gin.Context) {
 	// Regenerate JWT token with updated 2FA status (disabled)
 	username := claims["id"].(string)
 	userSession := store.UserSessions[username]
+
 	if userSession != nil {
 		// Reset OTP verification status
 		userSession.OTP_Verified = false
 
-		newToken, expire, err := regenerateUserToken(userSession)
+		newUserSession, expire, err := regenerateUserToken(userSession)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, structs.Map(response.StatusBadRequest{
 				Code:    500,
@@ -470,7 +478,7 @@ func Disable2FA(c *gin.Context) {
 		c.JSON(http.StatusOK, structs.Map(response.StatusOK{
 			Code:    200,
 			Message: "2FA revocate successfully",
-			Data:    gin.H{"token": newToken, "expire": expire},
+			Data:    gin.H{"token": newUserSession.JWTToken, "expire": expire},
 		}))
 		return
 	}
@@ -507,11 +515,11 @@ func DeleteExpiredTokens() {
 		// remove session if token is expired or invalid
 		if !isValid {
 			delete(store.UserSessions, username)
-			logs.Logs.Println("[INFO][JWT] Removed expired session for user: " + username)
+			logs.Log("[INFO][JWT] Removed expired session for user: " + username)
 		}
 	}
 
-	logs.Logs.Println("[INFO][JWT] Completed cleanup of expired user sessions")
+	logs.Log("[INFO][JWT] Completed cleanup of expired user sessions")
 }
 
 func PhoneIslandTokenLogin(c *gin.Context) {
