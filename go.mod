@@ -3,7 +3,6 @@ module github.com/nethesis/nethcti-middleware
 go 1.24
 
 require (
-	github.com/Jeffail/gabs/v2 v2.7.0
 	github.com/appleboy/gin-jwt/v2 v2.10.3
 	github.com/dgryski/dgoogauth v0.0.0-20190221195224-5a805980a5f3
 	github.com/fatih/structs v1.1.0

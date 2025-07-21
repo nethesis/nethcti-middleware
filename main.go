@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/fatih/structs"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-contrib/gzip"
 	"github.com/gin-gonic/gin"
@@ -19,7 +18,6 @@ import (
 	"github.com/nethesis/nethcti-middleware/logs"
 	"github.com/nethesis/nethcti-middleware/methods"
 	"github.com/nethesis/nethcti-middleware/middleware"
-	"github.com/nethesis/nethcti-middleware/response"
 	"github.com/nethesis/nethcti-middleware/socket"
 	"github.com/nethesis/nethcti-middleware/store"
 )
@@ -117,19 +115,8 @@ func createRouter() *gin.Engine {
 
 	// handle missing endpoint
 	router.NoRoute(middleware.InstanceJWT().MiddlewareFunc(), func(c *gin.Context) {
-		// Check if the requested API exists on the current server
-		if c.Request.Method == http.MethodGet || c.Request.Method == http.MethodPost {
-			// Fallback to proxy logic for legacy V1 API
-			methods.ProxyV1Request(c, c.Request.URL.Path)
-			return
-		}
-
-		// If not handled, return 404
-		c.JSON(http.StatusNotFound, structs.Map(response.StatusNotFound{
-			Code:    404,
-			Message: "API not found",
-			Data:    nil,
-		}))
+		// Fallback to proxy logic for legacy V1 API
+		methods.ProxyV1Request(c, c.Request.URL.Path)
 	})
 
 	return router

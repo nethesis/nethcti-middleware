@@ -12,10 +12,12 @@ import (
 	"time"
 
 	jwt "github.com/appleboy/gin-jwt/v2"
+	"github.com/fatih/structs"
 	"github.com/gin-gonic/gin"
 
 	"github.com/nethesis/nethcti-middleware/configuration"
 	"github.com/nethesis/nethcti-middleware/logs"
+	"github.com/nethesis/nethcti-middleware/response"
 	"github.com/nethesis/nethcti-middleware/store"
 )
 
@@ -121,6 +123,16 @@ func ProxyV1Request(c *gin.Context, path string) {
 		for _, value := range values {
 			c.Header(name, value)
 		}
+	}
+
+	// Check if V1 API returned 404 and provide a more complete response
+	if resp.StatusCode == http.StatusNotFound {
+		c.JSON(http.StatusNotFound, structs.Map(response.StatusNotFound{
+			Code:    404,
+			Message: "API not found",
+			Data:    nil,
+		}))
+		return
 	}
 
 	// Set response status code
