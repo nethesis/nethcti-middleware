@@ -87,6 +87,9 @@ func createRouter() *gin.Engine {
 		})
 	})
 
+	// define websocket endpoint (before JWT middleware)
+	api.GET("/ws/", socket.WsProxyHandler)
+
 	api.Use(middleware.InstanceJWT().MiddlewareFunc())
 	{
 		// 2FA APIs
@@ -108,10 +111,6 @@ func createRouter() *gin.Engine {
 			})
 		})
 	}
-
-	// define websocket endpoint
-	ws := router.Group(configuration.Config.V1WsPath)
-	ws.GET("/", socket.WsProxyHandler)
 
 	// handle missing endpoint
 	router.NoRoute(middleware.InstanceJWT().MiddlewareFunc(), func(c *gin.Context) {
