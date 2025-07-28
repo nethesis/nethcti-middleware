@@ -71,7 +71,7 @@ func createRouter() *gin.Engine {
 	}
 
 	// define api group
-	api := router.Group("/")
+	api := router.Group("/api")
 
 	api.POST("/login", middleware.InstanceJWT().LoginHandler)
 	api.POST("/logout", middleware.InstanceJWT().LogoutHandler)
@@ -86,6 +86,9 @@ func createRouter() *gin.Engine {
 			"status":  "ok",
 		})
 	})
+
+	// define websocket endpoint (before JWT middleware)
+	api.GET("/ws/", socket.WsProxyHandler)
 
 	api.Use(middleware.InstanceJWT().MiddlewareFunc())
 	{
@@ -108,10 +111,6 @@ func createRouter() *gin.Engine {
 			})
 		})
 	}
-
-	// define websocket endpoint
-	ws := router.Group(configuration.Config.V1WsPath)
-	ws.GET("/", socket.WsProxyHandler)
 
 	// handle missing endpoint
 	router.NoRoute(middleware.InstanceJWT().MiddlewareFunc(), func(c *gin.Context) {
