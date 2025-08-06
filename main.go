@@ -7,7 +7,6 @@ package main
 
 import (
 	"io"
-	"net/http"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-contrib/gzip"
@@ -23,34 +22,34 @@ import (
 )
 
 func main() {
-	// init logger
+	// Init logger
 	logs.Init("nethcti-middleware")
 
-	// init configuration
+	// Init configuration
 	configuration.Init()
 
-	// init store
+	// Init store
 	store.UserSessionInit()
 
-	// create router
+	// Create router
 	router := createRouter()
 
-	// create cron to run daily
+	// Create cron to run daily
 	c := cron.New()
 	c.AddFunc("@daily", methods.DeleteExpiredTokens)
 	c.Start()
 
-	// run server
+	// Run server
 	router.Run(configuration.Config.ListenAddress)
 }
 
 func createRouter() *gin.Engine {
-	// disable log to stdout when running in release mode
+	// Disable log to stdout when running in release mode
 	if gin.Mode() == gin.ReleaseMode {
 		gin.DefaultWriter = io.Discard
 	}
 
-	// init routers
+	// Init routers
 	router := gin.New()
 	router.RedirectTrailingSlash = false
 	router.Use(
@@ -58,10 +57,10 @@ func createRouter() *gin.Engine {
 		gin.Recovery(),
 	)
 
-	// add default compression
+	// Add default compression
 	router.Use(gzip.Gzip(gzip.DefaultCompression))
 
-	// cors configuration only in debug mode GIN_MODE=debug (default)
+	// Cors configuration only in debug mode GIN_MODE=debug
 	if gin.Mode() == gin.DebugMode {
 		// gin gonic cors conf
 		corsConf := cors.DefaultConfig()
@@ -70,29 +69,21 @@ func createRouter() *gin.Engine {
 		router.Use(cors.New(corsConf))
 	}
 
-	// define api group
-	api := router.Group("/")
+	// Define api group
+	api := router.Group("")
 
+	// Define public endpoints
 	api.POST("/login", middleware.InstanceJWT().LoginHandler)
-	api.POST("/logout", middleware.InstanceJWT().LogoutHandler)
-
-	// 2FA APIs
-	api.POST("/2fa/otp-verify", methods.OTPVerify)
-
-	// Test endpoint (not authenticated)
-	api.GET("/health", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{
-			"message": "healthy",
-			"status":  "ok",
-		})
-	})
-
-	// define websocket endpoint (before JWT middleware)
 	api.GET("/ws/", socket.WsProxyHandler)
 
+	// Authentication required endpoints
 	api.Use(middleware.InstanceJWT().MiddlewareFunc())
 	{
+		// Password verification endpoint
+		api.POST("/verify-password", methods.VerifyPassword)
+
 		// 2FA APIs
+		api.POST("/2fa/otp-verify", methods.OTPVerify)
 		api.GET("/2fa", methods.Get2FAStatus)
 		api.DELETE("/2fa", methods.Disable2FA)
 		api.GET("/2fa/recovery-codes", methods.Get2FARecoveryCodes)
@@ -103,16 +94,11 @@ func createRouter() *gin.Engine {
 		api.POST("/authentication/persistent_token_remove", methods.PhoneIslandTokenRemove)
 		api.GET("/authentication/phone_island_token_check", methods.PhoneIslandTokenCheck)
 
-		// Test endpoint (authenticated)
-		api.GET("/auth-health", func(c *gin.Context) {
-			c.JSON(http.StatusOK, gin.H{
-				"message": "healthy",
-				"status":  "ok",
-			})
-		})
+		// Logout endpoint
+		api.POST("/logout", middleware.InstanceJWT().LogoutHandler)
 	}
 
-	// handle missing endpoint
+	// Handle missing endpoint
 	router.NoRoute(middleware.InstanceJWT().MiddlewareFunc(), func(c *gin.Context) {
 		// Fallback to proxy logic for legacy V1 API
 		methods.ProxyV1Request(c, c.Request.URL.Path)

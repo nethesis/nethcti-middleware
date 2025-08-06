@@ -23,7 +23,6 @@ import (
 	"github.com/nethesis/nethcti-middleware/logs"
 	"github.com/nethesis/nethcti-middleware/methods"
 	"github.com/nethesis/nethcti-middleware/models"
-	"github.com/nethesis/nethcti-middleware/response"
 	"github.com/nethesis/nethcti-middleware/store"
 	"github.com/nethesis/nethcti-middleware/utils"
 )
@@ -159,21 +158,29 @@ func InitJWT() *jwt.GinJWTMiddleware {
 			return username
 		},
 		Authorizator: func(data interface{}, c *gin.Context) bool {
-			// Check if the user is logged in
+			// Extract claims and session info
 			claims := jwt.ExtractClaims(c)
-
-			username, ok := claims[identityKey].(string)
-
-			userSession := store.UserSessions[username]
-			JWTToken := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
+			username := claims[identityKey].(string)
 
 			reqMethod := c.Request.Method
 			reqURI := c.Request.RequestURI
+			JWTToken := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
+			userSession := store.UserSessions[username]
 
-			// Check basic authentication and 2FA/OTP verification
-			if !ok || userSession == nil || JWTToken != userSession.JWTToken || (claims["2fa"].(bool) && !userSession.OTP_Verified) {
+			if userSession == nil || JWTToken != userSession.JWTToken {
 				if !methods.AuthenticateAPIKey(username, JWTToken) {
-					logs.Log("[ERROR][AUTH] authorization failed for user " + claims["id"].(string) + ". " + reqMethod + " " + reqURI)
+					logs.Log("[ERROR][AUTH] authorization failed for user " + username + " (2FA required but OTP not verified). " + reqMethod + " " + reqURI)
+					return false
+				}
+			}
+
+			isOTPVerifyEndpoint := strings.Contains(c.Request.RequestURI, "/otp-verify")
+
+			if !isOTPVerifyEndpoint {
+				has2FA := claims["2fa"].(bool)
+
+				if has2FA && !userSession.OTP_Verified {
+					logs.Log("[ERROR][AUTH] authorization failed for user " + username + " (2FA required but OTP not verified). " + reqMethod + " " + reqURI)
 					return false
 				}
 			}
@@ -240,7 +247,7 @@ func InitJWT() *jwt.GinJWTMiddleware {
 			c.JSON(200, gin.H{"code": 200})
 		},
 		Unauthorized: func(c *gin.Context, code int, message string) {
-			c.JSON(code, structs.Map(response.StatusUnauthorized{
+			c.JSON(code, structs.Map(models.StatusUnauthorized{
 				Code:    code,
 				Message: message,
 				Data:    nil,

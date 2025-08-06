@@ -6,6 +6,7 @@
 package methods
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/base32"
 	"encoding/json"
@@ -26,7 +27,6 @@ import (
 	"github.com/nethesis/nethcti-middleware/configuration"
 	"github.com/nethesis/nethcti-middleware/logs"
 	"github.com/nethesis/nethcti-middleware/models"
-	"github.com/nethesis/nethcti-middleware/response"
 	"github.com/nethesis/nethcti-middleware/store"
 	"github.com/nethesis/nethcti-middleware/utils"
 )
@@ -65,7 +65,7 @@ func OTPVerify(c *gin.Context) {
 	var jsonOTP models.OTPJson
 
 	if err := c.ShouldBindBodyWith(&jsonOTP, binding.JSON); err != nil {
-		c.JSON(http.StatusBadRequest, structs.Map(response.StatusBadRequest{
+		c.JSON(http.StatusBadRequest, structs.Map(models.StatusBadRequest{
 			Code:    400,
 			Message: "request fields malformed",
 			Data:    err.Error(),
@@ -79,7 +79,7 @@ func OTPVerify(c *gin.Context) {
 
 	// check secret
 	if len(secret) == 0 {
-		c.JSON(http.StatusNotFound, structs.Map(response.StatusNotFound{
+		c.JSON(http.StatusNotFound, structs.Map(models.StatusNotFound{
 			Code:    404,
 			Message: "user secret not found",
 			Data:    "",
@@ -102,7 +102,7 @@ func OTPVerify(c *gin.Context) {
 		recoveryCodes := GetRecoveryCodes(username)
 
 		if !utils.Contains(jsonOTP.OTP, recoveryCodes) {
-			c.JSON(http.StatusBadRequest, structs.Map(response.StatusBadRequest{
+			c.JSON(http.StatusBadRequest, structs.Map(models.StatusBadRequest{
 				Code:    400,
 				Message: "invalid_otp",
 				Data:    nil,
@@ -115,7 +115,7 @@ func OTPVerify(c *gin.Context) {
 
 		// update recovery codes file
 		if !UpdateRecoveryCodes(username, recoveryCodes) {
-			c.JSON(http.StatusBadRequest, structs.Map(response.StatusBadRequest{
+			c.JSON(http.StatusBadRequest, structs.Map(models.StatusBadRequest{
 				Code:    400,
 				Message: "OTP recovery codes not updated",
 				Data:    "",
@@ -126,7 +126,7 @@ func OTPVerify(c *gin.Context) {
 
 	// enable 2FA for user
 	if !Enable2FA(username) {
-		c.JSON(http.StatusBadRequest, structs.Map(response.StatusBadRequest{
+		c.JSON(http.StatusBadRequest, structs.Map(models.StatusBadRequest{
 			Code:    400,
 			Message: "failed to enable 2FA",
 			Data:    "",
@@ -141,7 +141,7 @@ func OTPVerify(c *gin.Context) {
 	newUserSession, expire, err := regenerateUserToken(store.UserSessions[username])
 
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, structs.Map(response.StatusBadRequest{
+		c.JSON(http.StatusInternalServerError, structs.Map(models.StatusBadRequest{
 			Code:    500,
 			Message: "failed to generate new token",
 			Data:    err.Error(),
@@ -150,7 +150,7 @@ func OTPVerify(c *gin.Context) {
 	}
 
 	// response with new token
-	c.JSON(http.StatusOK, structs.Map(response.StatusOK{
+	c.JSON(http.StatusOK, structs.Map(models.StatusOK{
 		Code:    200,
 		Message: "OTP verified",
 		Data:    gin.H{"token": newUserSession.JWTToken, "expire": expire},
@@ -178,7 +178,7 @@ func QRCode(c *gin.Context) {
 	// set secret for user
 	result, setSecret := SetUserSecret(account, secretBase32)
 	if !result {
-		c.JSON(http.StatusBadRequest, structs.Map(response.StatusBadRequest{
+		c.JSON(http.StatusBadRequest, structs.Map(models.StatusBadRequest{
 			Code:    400,
 			Message: "user secret set error",
 			Data:    "",
@@ -196,7 +196,6 @@ func QRCode(c *gin.Context) {
 	URL.Path += "/" + issuer + ":" + account
 	params := url.Values{}
 	params.Add("secret", setSecret)
-	params.Add("issuer", issuer)
 	params.Add("algorithm", "SHA1")
 	params.Add("digits", "6")
 	params.Add("period", "30")
@@ -205,7 +204,7 @@ func QRCode(c *gin.Context) {
 	URL.RawQuery = params.Encode()
 
 	// response
-	c.JSON(http.StatusOK, structs.Map(response.StatusOK{
+	c.JSON(http.StatusOK, structs.Map(models.StatusOK{
 		Code:    200,
 		Message: "QR code string",
 		Data:    gin.H{"url": URL.String(), "key": setSecret},
@@ -391,33 +390,12 @@ func Enable2FA(username string) bool {
 func Disable2FA(c *gin.Context) {
 	// get claims from token
 	claims := jwt.ExtractClaims(c)
-
-	// get payload for OTP verification
-	var jsonOTP models.OTPJson
-	if err := c.ShouldBindBodyWith(&jsonOTP, binding.JSON); err != nil {
-		c.JSON(http.StatusBadRequest, structs.Map(response.StatusBadRequest{
-			Code:    400,
-			Message: "request fields malformed",
-			Data:    err.Error(),
-		}))
-		return
-	}
-
-	// verify OTP before disabling 2FA
-	usernameForOTP := claims["id"].(string)
-	if !Verify2FA(usernameForOTP, jsonOTP.OTP) {
-		c.JSON(http.StatusBadRequest, structs.Map(response.StatusBadRequest{
-			Code:    400,
-			Message: "invalid_otp",
-			Data:    nil,
-		}))
-		return
-	}
+	username := claims["id"].(string)
 
 	// revocate secret
-	errRevocate := os.Remove(configuration.Config.SecretsDir + "/" + claims["id"].(string) + "/secret")
+	errRevocate := os.Remove(configuration.Config.SecretsDir + "/" + username + "/secret")
 	if errRevocate != nil {
-		c.JSON(http.StatusBadRequest, structs.Map(response.StatusBadRequest{
+		c.JSON(http.StatusBadRequest, structs.Map(models.StatusBadRequest{
 			Code:    403,
 			Message: "error in revocate 2FA for user",
 			Data:    nil,
@@ -426,11 +404,11 @@ func Disable2FA(c *gin.Context) {
 	}
 
 	// revocate recovery codes
-	errRevocateCodes := os.Remove(configuration.Config.SecretsDir + "/" + claims["id"].(string) + "/codes")
+	errRevocateCodes := os.Remove(configuration.Config.SecretsDir + "/" + username + "/codes")
 	if errRevocateCodes != nil {
 		// if the file does not exist, it is ok, skip the error
 		if !os.IsNotExist(errRevocateCodes) {
-			c.JSON(http.StatusBadRequest, structs.Map(response.StatusBadRequest{
+			c.JSON(http.StatusBadRequest, structs.Map(models.StatusBadRequest{
 				Code:    403,
 				Message: "error in delete 2FA recovery codes",
 				Data:    nil,
@@ -440,7 +418,7 @@ func Disable2FA(c *gin.Context) {
 	}
 
 	// set 2FA to disabled
-	f, _ := os.OpenFile(configuration.Config.SecretsDir+"/"+claims["id"].(string)+"/status", os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
+	f, _ := os.OpenFile(configuration.Config.SecretsDir+"/"+username+"/status", os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
 	defer f.Close()
 
 	// write file with tokens
@@ -448,7 +426,7 @@ func Disable2FA(c *gin.Context) {
 
 	// check error
 	if err != nil {
-		c.JSON(http.StatusBadRequest, structs.Map(response.StatusBadRequest{
+		c.JSON(http.StatusBadRequest, structs.Map(models.StatusBadRequest{
 			Code:    400,
 			Message: "2FA not revocated",
 			Data:    "",
@@ -457,7 +435,6 @@ func Disable2FA(c *gin.Context) {
 	}
 
 	// Regenerate JWT token with updated 2FA status (disabled)
-	username := claims["id"].(string)
 	userSession := store.UserSessions[username]
 
 	if userSession != nil {
@@ -466,7 +443,7 @@ func Disable2FA(c *gin.Context) {
 
 		newUserSession, expire, err := regenerateUserToken(userSession)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, structs.Map(response.StatusBadRequest{
+			c.JSON(http.StatusInternalServerError, structs.Map(models.StatusBadRequest{
 				Code:    500,
 				Message: "failed to generate new token after disabling 2FA",
 				Data:    err.Error(),
@@ -475,7 +452,7 @@ func Disable2FA(c *gin.Context) {
 		}
 
 		// response with new token
-		c.JSON(http.StatusOK, structs.Map(response.StatusOK{
+		c.JSON(http.StatusOK, structs.Map(models.StatusOK{
 			Code:    200,
 			Message: "2FA revocate successfully",
 			Data:    gin.H{"token": newUserSession.JWTToken, "expire": expire},
@@ -484,7 +461,7 @@ func Disable2FA(c *gin.Context) {
 	}
 
 	// response without new token if user session not found
-	c.JSON(http.StatusOK, structs.Map(response.StatusOK{
+	c.JSON(http.StatusOK, structs.Map(models.StatusOK{
 		Code:    200,
 		Message: "2FA revocate successfully",
 		Data:    "",
@@ -618,6 +595,102 @@ func PhoneIslandTokenCheck(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"exists": exists})
+}
+
+func VerifyPassword(c *gin.Context) {
+	// get payload
+	var loginData models.LoginJson
+
+	if err := c.ShouldBindBodyWith(&loginData, binding.JSON); err != nil {
+		c.JSON(http.StatusBadRequest, structs.Map(models.StatusBadRequest{
+			Code:    400,
+			Message: "request fields malformed",
+			Data:    err.Error(),
+		}))
+		return
+	}
+
+	// validate required fields
+	if loginData.Username == "" || loginData.Password == "" {
+		c.JSON(http.StatusBadRequest, structs.Map(models.StatusBadRequest{
+			Code:    400,
+			Message: "username and password are required",
+			Data:    "",
+		}))
+		return
+	}
+
+	// verify password against NetCTI server
+	netCtiLoginURL := configuration.Config.V1Protocol + "://" + configuration.Config.V1ApiEndpoint + configuration.Config.V1ApiPath + "/authentication/login"
+	payload := map[string]string{"username": loginData.Username, "password": loginData.Password}
+	payloadBytes, _ := json.Marshal(payload)
+
+	req, err := http.NewRequest("POST", netCtiLoginURL, bytes.NewBuffer(payloadBytes))
+	if err != nil {
+		logs.Log("[AUTH] Failed to create HTTP request for password verification")
+		c.JSON(http.StatusInternalServerError, structs.Map(models.StatusInternalServerError{
+			Code:    500,
+			Message: "failed to create verification request",
+			Data:    "",
+		}))
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		logs.Log("[AUTH] Failed to send password verification request to NetCTI")
+		c.JSON(http.StatusInternalServerError, structs.Map(models.StatusInternalServerError{
+			Code:    500,
+			Message: "failed to contact authentication server",
+			Data:    "",
+		}))
+		return
+	}
+	defer resp.Body.Close()
+
+	var NethCTIToken string
+	isValidPassword := false
+
+	switch resp.StatusCode {
+	case http.StatusUnauthorized:
+		wwwAuth := resp.Header.Get("Www-Authenticate")
+		if wwwAuth != "" {
+			// Generate NethCTIToken using the www-authenticate header
+			NethCTIToken = utils.GenerateLegacyToken(resp, loginData.Username, loginData.Password)
+			if NethCTIToken != "" {
+				// Verify the generated token by making a request to /user/me
+				netCtiMeURL := configuration.Config.V1Protocol + "://" + configuration.Config.V1ApiEndpoint + configuration.Config.V1ApiPath + "/user/me"
+				req, _ := http.NewRequest("GET", netCtiMeURL, nil)
+				req.Header.Set("Authorization", NethCTIToken)
+
+				resp, err = client.Do(req)
+				if err == nil && resp.StatusCode == http.StatusOK {
+					isValidPassword = true
+				}
+				if resp != nil {
+					resp.Body.Close()
+				}
+			}
+		}
+	case http.StatusOK:
+		isValidPassword = true
+	}
+
+	if isValidPassword {
+		c.JSON(http.StatusOK, structs.Map(models.StatusOK{
+			Code:    200,
+			Message: "password verified successfully",
+			Data:    gin.H{"valid": true},
+		}))
+	} else {
+		c.JSON(http.StatusUnauthorized, structs.Map(models.StatusUnauthorized{
+			Code:    401,
+			Message: "invalid credentials",
+			Data:    gin.H{"valid": false},
+		}))
+	}
 }
 
 // Generate a random API key string

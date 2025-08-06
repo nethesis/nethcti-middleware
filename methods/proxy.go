@@ -17,7 +17,7 @@ import (
 
 	"github.com/nethesis/nethcti-middleware/configuration"
 	"github.com/nethesis/nethcti-middleware/logs"
-	"github.com/nethesis/nethcti-middleware/response"
+	"github.com/nethesis/nethcti-middleware/models"
 	"github.com/nethesis/nethcti-middleware/store"
 )
 
@@ -127,7 +127,7 @@ func ProxyV1Request(c *gin.Context, path string) {
 
 	// Check if V1 API returned 404 and provide a more complete response
 	if resp.StatusCode == http.StatusNotFound {
-		c.JSON(http.StatusNotFound, structs.Map(response.StatusNotFound{
+		c.JSON(http.StatusNotFound, structs.Map(models.StatusNotFound{
 			Code:    404,
 			Message: "API not found",
 			Data:    nil,

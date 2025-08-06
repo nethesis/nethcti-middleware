@@ -1,4 +1,4 @@
-package response
+package models
 
 type StatusOK struct {
 	Code    int         `json:"code" example:"200" structs:"code"`
@@ -27,5 +27,11 @@ type StatusNotFound struct {
 type StatusServiceUnavailable struct {
 	Code    int         `json:"code" example:"503" structs:"code"`
 	Message string      `json:"message" example:"Service unavailable" structs:"message"`
+	Data    interface{} `json:"data" structs:"data"`
+}
+
+type StatusInternalServerError struct {
+	Code    int         `json:"code" example:"500" structs:"code"`
+	Message string      `json:"message" example:"Internal server error" structs:"message"`
 	Data    interface{} `json:"data" structs:"data"`
 }
