@@ -64,7 +64,7 @@ func Verify2FA(testServerURL string, otp string, token string, t *testing.T) str
 	}
 
 	jsonData, _ := json.Marshal(otpData)
-	reqVerify, _ := http.NewRequest("POST", testServerURL+"/2fa/otp-verify", bytes.NewBuffer(jsonData))
+	reqVerify, _ := http.NewRequest("POST", testServerURL+"/2fa/verify-otp", bytes.NewBuffer(jsonData))
 	reqVerify.Header.Set("Content-Type", "application/json")
 	reqVerify.Header.Set("Authorization", "Bearer "+token)
 	respVerify, err := client.Do(reqVerify)

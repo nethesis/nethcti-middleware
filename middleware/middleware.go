@@ -174,7 +174,7 @@ func InitJWT() *jwt.GinJWTMiddleware {
 				}
 			}
 
-			isOTPVerifyEndpoint := strings.Contains(c.Request.RequestURI, "/otp-verify")
+			isOTPVerifyEndpoint := strings.Contains(c.Request.RequestURI, "/verify-otp")
 
 			if !isOTPVerifyEndpoint {
 				has2FA := claims["2fa"].(bool)
