@@ -11,13 +11,6 @@ import (
 
 var UserSessions map[string]*models.UserSession
 
-func Instance() map[string]*models.UserSession {
-	if UserSessions == nil {
-		UserSessionInit()
-	}
-	return UserSessions
-}
-
 func UserSessionInit() map[string]*models.UserSession {
 	UserSessions = make(map[string]*models.UserSession)
 	return UserSessions

@@ -83,9 +83,9 @@ func createRouter() *gin.Engine {
 		api.POST("/verify-password", methods.VerifyPassword)
 
 		// 2FA APIs
-		api.POST("/2fa/otp-verify", methods.OTPVerify)
-		api.GET("/2fa", methods.Get2FAStatus)
-		api.DELETE("/2fa", methods.Disable2FA)
+		api.DELETE("/2fa/disable", methods.Disable2FA)
+		api.POST("/2fa/verify-otp", methods.VerifyOTP)
+		api.GET("/2fa/status", methods.Get2FAStatus)
 		api.GET("/2fa/recovery-codes", methods.Get2FARecoveryCodes)
 		api.GET("/2fa/qr-code", methods.QRCode)
 
