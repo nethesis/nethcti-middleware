@@ -79,14 +79,11 @@ func createRouter() *gin.Engine {
 	// Authentication required endpoints
 	api.Use(middleware.InstanceJWT().MiddlewareFunc())
 	{
-		// Password verification endpoint
-		api.POST("/verify-password", methods.VerifyPassword)
-
 		// 2FA APIs
-		api.DELETE("/2fa/disable", methods.Disable2FA)
+		api.POST("/2fa/disable", methods.Disable2FA)
 		api.POST("/2fa/verify-otp", methods.VerifyOTP)
 		api.GET("/2fa/status", methods.Get2FAStatus)
-		api.GET("/2fa/recovery-codes", methods.Get2FARecoveryCodes)
+		api.POST("/2fa/recovery-codes", methods.Get2FARecoveryCodes)
 		api.GET("/2fa/qr-code", methods.QRCode)
 
 		// Phone Island Integration APIs

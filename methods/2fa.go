@@ -204,9 +204,42 @@ func QRCode(c *gin.Context) {
 
 // Disable2FA disables two-factor authentication for the user
 func Disable2FA(c *gin.Context) {
+	// get payload
+	var loginData models.LoginJson
+
+	if err := c.ShouldBindBodyWith(&loginData, binding.JSON); err != nil {
+		c.JSON(http.StatusBadRequest, structs.Map(models.StatusBadRequest{
+			Code:    400,
+			Message: "request fields malformed",
+			Data:    err.Error(),
+		}))
+		return
+	}
+
 	// get claims from token
 	claims := jwt.ExtractClaims(c)
 	username := claims["id"].(string)
+
+	// validate password is provided
+	if loginData.Password == "" {
+		c.JSON(http.StatusBadRequest, structs.Map(models.StatusBadRequest{
+			Code:    400,
+			Message: "password is required to disable 2FA",
+			Data:    "",
+		}))
+		return
+	}
+
+	// verify password using VerifyUserPassword from auth.go
+	isValidPassword := VerifyUserPassword(username, loginData.Password)
+	if !isValidPassword {
+		c.JSON(http.StatusUnauthorized, structs.Map(models.StatusUnauthorized{
+			Code:    401,
+			Message: "invalid password",
+			Data:    "",
+		}))
+		return
+	}
 
 	// revocate secret
 	errRevocate := os.Remove(configuration.Config.SecretsDir + "/" + username + "/secret")

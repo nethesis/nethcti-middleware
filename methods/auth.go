@@ -11,14 +11,10 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/fatih/structs"
-	"github.com/gin-gonic/gin"
-	"github.com/gin-gonic/gin/binding"
 	jwtv4 "github.com/golang-jwt/jwt/v4"
 
 	"github.com/nethesis/nethcti-middleware/configuration"
 	"github.com/nethesis/nethcti-middleware/logs"
-	"github.com/nethesis/nethcti-middleware/models"
 	"github.com/nethesis/nethcti-middleware/store"
 	"github.com/nethesis/nethcti-middleware/utils"
 )
@@ -54,43 +50,17 @@ func DeleteExpiredTokens() {
 	logs.Log("[INFO][JWT] Completed cleanup of expired user sessions")
 }
 
-func VerifyPassword(c *gin.Context) {
-	// get payload
-	var loginData models.LoginJson
-
-	if err := c.ShouldBindBodyWith(&loginData, binding.JSON); err != nil {
-		c.JSON(http.StatusBadRequest, structs.Map(models.StatusBadRequest{
-			Code:    400,
-			Message: "request fields malformed",
-			Data:    err.Error(),
-		}))
-		return
-	}
-
-	// validate required fields
-	if loginData.Username == "" || loginData.Password == "" {
-		c.JSON(http.StatusBadRequest, structs.Map(models.StatusBadRequest{
-			Code:    400,
-			Message: "username and password are required",
-			Data:    "",
-		}))
-		return
-	}
-
+// VerifyUserPassword verifies a user's password against NetCTI server
+func VerifyUserPassword(username, password string) bool {
 	// verify password against NetCTI server
 	netCtiLoginURL := configuration.Config.V1Protocol + "://" + configuration.Config.V1ApiEndpoint + configuration.Config.V1ApiPath + "/authentication/login"
-	payload := map[string]string{"username": loginData.Username, "password": loginData.Password}
+	payload := map[string]string{"username": username, "password": password}
 	payloadBytes, _ := json.Marshal(payload)
 
 	req, err := http.NewRequest("POST", netCtiLoginURL, bytes.NewBuffer(payloadBytes))
 	if err != nil {
 		logs.Log("[AUTH] Failed to create HTTP request for password verification")
-		c.JSON(http.StatusInternalServerError, structs.Map(models.StatusInternalServerError{
-			Code:    500,
-			Message: "failed to create verification request",
-			Data:    "",
-		}))
-		return
+		return false
 	}
 	req.Header.Set("Content-Type", "application/json")
 
@@ -98,12 +68,7 @@ func VerifyPassword(c *gin.Context) {
 	resp, err := client.Do(req)
 	if err != nil {
 		logs.Log("[AUTH] Failed to send password verification request to NetCTI")
-		c.JSON(http.StatusInternalServerError, structs.Map(models.StatusInternalServerError{
-			Code:    500,
-			Message: "failed to contact authentication server",
-			Data:    "",
-		}))
-		return
+		return false
 	}
 	defer resp.Body.Close()
 
@@ -115,7 +80,7 @@ func VerifyPassword(c *gin.Context) {
 		wwwAuth := resp.Header.Get("Www-Authenticate")
 		if wwwAuth != "" {
 			// Generate NethCTIToken using the www-authenticate header
-			NethCTIToken = utils.GenerateLegacyToken(resp, loginData.Username, loginData.Password)
+			NethCTIToken = utils.GenerateLegacyToken(resp, username, password)
 			if NethCTIToken != "" {
 				// Verify the generated token by making a request to /user/me
 				netCtiMeURL := configuration.Config.V1Protocol + "://" + configuration.Config.V1ApiEndpoint + configuration.Config.V1ApiPath + "/user/me"
@@ -135,17 +100,5 @@ func VerifyPassword(c *gin.Context) {
 		isValidPassword = true
 	}
 
-	if isValidPassword {
-		c.JSON(http.StatusOK, structs.Map(models.StatusOK{
-			Code:    200,
-			Message: "password verified successfully",
-			Data:    gin.H{"valid": true},
-		}))
-	} else {
-		c.JSON(http.StatusUnauthorized, structs.Map(models.StatusUnauthorized{
-			Code:    401,
-			Message: "invalid credentials",
-			Data:    gin.H{"valid": false},
-		}))
-	}
+	return isValidPassword
 }

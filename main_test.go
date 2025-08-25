@@ -157,38 +157,6 @@ func TestLogin(t *testing.T) {
 	assert.NotEmpty(t, response["token"])
 }
 
-// Test password verification endpoint
-func TestVerifyPassword(t *testing.T) {
-	resetTestState()
-
-	// First login to get token
-	token := utils.PerformLogin(testServerURL)
-
-	passwordData := map[string]string{
-		"username": "testuser",
-		"password": "testpass",
-	}
-	jsonData, _ := json.Marshal(passwordData)
-
-	client := &http.Client{}
-	req, _ := http.NewRequest("POST", testServerURL+"/verify-password", bytes.NewBuffer(jsonData))
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := client.Do(req)
-	assert.NoError(t, err)
-	defer resp.Body.Close()
-
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-
-	var response map[string]interface{}
-	err = json.NewDecoder(resp.Body).Decode(&response)
-	assert.NoError(t, err)
-	assert.Equal(t, float64(200), response["code"])
-	data := response["data"].(map[string]interface{})
-	assert.True(t, data["valid"].(bool))
-}
-
 // Test logout endpoint
 func TestLogout(t *testing.T) {
 	resetTestState()
@@ -288,8 +256,13 @@ func TestRecoveryCodes(t *testing.T) {
 	otp := utils.GenerateOTP(otpSecret)
 	token = utils.Verify2FA(testServerURL, otp, token, t)
 
+	recoveryCodes := map[string]string{
+		"password": "testpass",
+	}
+	jsonData, _ := json.Marshal(recoveryCodes)
+
 	client := &http.Client{}
-	req, _ := http.NewRequest("GET", testServerURL+"/2fa/recovery-codes", nil)
+	req, _ := http.NewRequest("POST", testServerURL+"/2fa/recovery-codes", bytes.NewBuffer(jsonData))
 	req.Header.Set("Authorization", "Bearer "+token)
 
 	resp, err := client.Do(req)
@@ -315,15 +288,13 @@ func TestDisable2FA(t *testing.T) {
 	otp := utils.GenerateOTP(otpSecret)
 	token = utils.Verify2FA(testServerURL, otp, token, t)
 
-	newOtp := utils.GenerateOTP(otpSecret)
 	disableData := map[string]string{
-		"username": "testuser",
-		"otp":      newOtp,
+		"password": "testpass",
 	}
 	jsonData, _ := json.Marshal(disableData)
 
 	client := &http.Client{}
-	req, _ := http.NewRequest("DELETE", testServerURL+"/2fa/disable", bytes.NewBuffer(jsonData))
+	req, _ := http.NewRequest("POST", testServerURL+"/2fa/disable", bytes.NewBuffer(jsonData))
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 
