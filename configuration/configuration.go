@@ -108,11 +108,11 @@ func Init() {
 		Config.FreePBXAPIs = strings.Split(os.Getenv("NETHVOICE_MIDDLEWARE_FREEPBX_APIS"), ",")
 	} else {
 		Config.FreePBXAPIs = []string{
-			"/api/dbconn/test",
-			"/api/custcard/preview",
-			"/api/user/endpoints/all",
-			"/api/astproxy/extensions",
-			"/api/astproxy/trunks",
+			"/dbconn/test",
+			"/custcard/preview",
+			"/user/endpoints/all",
+			"/astproxy/extensions",
+			"/astproxy/trunks",
 		}
 	}
 }
