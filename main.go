@@ -96,9 +96,36 @@ func createRouter() *gin.Engine {
 	}
 
 	// Handle missing endpoint
-	router.NoRoute(middleware.InstanceJWT().MiddlewareFunc(), func(c *gin.Context) {
-		// Fallback to proxy logic for legacy V1 API
-		methods.ProxyV1Request(c, c.Request.URL.Path)
+	router.NoRoute(func(c *gin.Context) {
+		path := c.Request.URL.Path
+
+		// Check if this is a FreePBX admin transparent API call
+		userHeader := c.GetHeader("User")
+		secretKeyHeader := c.GetHeader("Secretkey")
+		isFreePBXAdmin := userHeader == "admin" && secretKeyHeader != ""
+
+		// Check if the API is in the FreePBX API list (exact match)
+		isFreePBXAPI := false
+		for _, freepbxPath := range configuration.Config.FreePBXAPIs {
+			if path == freepbxPath {
+				isFreePBXAPI = true
+				break
+			}
+		}
+
+		if isFreePBXAdmin && isFreePBXAPI {
+			// Handle FreePBX API call - add authorization_user header and forward directly
+			c.Request.Header.Set("Authorization-User", "admin")
+			methods.ProxyV1Request(c, path)
+		} else {
+			// Apply JWT middleware for regular APIs
+			middleware.InstanceJWT().MiddlewareFunc()(c)
+			if c.IsAborted() {
+				return
+			}
+			// Fallback to proxy logic for legacy V1 API
+			methods.ProxyV1Request(c, path)
+		}
 	})
 
 	return router

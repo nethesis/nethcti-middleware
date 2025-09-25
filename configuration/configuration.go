@@ -22,6 +22,7 @@ type Configuration struct {
 	V1ApiPath     string   `json:"v1_api_path"`
 	V1WsPath      string   `json:"v1_ws_path"`
 	SensitiveList []string `json:"sensitive_list"`
+	FreePBXAPIs   []string `json:"freepbx_apis"`
 
 	SecretsDir string `json:"secrets_dir"`
 	Issuer2FA  string `json:"issuer_2fa"`
@@ -100,5 +101,18 @@ func Init() {
 		Config.Issuer2FA = os.Getenv("NETHVOICE_MIDDLEWARE_ISSUER_2FA")
 	} else {
 		Config.Issuer2FA = "NethVoice"
+	}
+
+	// set FreePBX APIs (FreePBX admin APIs that bypass JWT)
+	if os.Getenv("NETHVOICE_MIDDLEWARE_FREEPBX_APIS") != "" {
+		Config.FreePBXAPIs = strings.Split(os.Getenv("NETHVOICE_MIDDLEWARE_FREEPBX_APIS"), ",")
+	} else {
+		Config.FreePBXAPIs = []string{
+			"/api/dbconn/test",
+			"/api/custcard/preview",
+			"/api/user/endpoints/all",
+			"/api/astproxy/extensions",
+			"/api/astproxy/trunks",
+		}
 	}
 }

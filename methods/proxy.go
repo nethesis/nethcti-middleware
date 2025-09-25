@@ -62,41 +62,50 @@ func ProxyV1Request(c *gin.Context, path string) {
 		}
 	}
 
-	// Retrieve the UserSession associated with the current JWT token
-	JWTToken := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
-	if JWTToken == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"code":    401,
-			"message": "Authorization token not provided",
-		})
-		return
-	}
+	// Check if this is a FreePBX API call (has Authorization-User header)
+	authorizationUser := c.GetHeader("Authorization-User")
+	isFreePBXCall := authorizationUser != ""
 
-	// Extract claims from the JWT token
-	claims := jwt.ExtractClaims(c)
-	username := claims["id"].(string)
-	nethCTIToken := ""
-
-	// Check if the request is authenticated with an API key
-	if AuthenticateAPIKey(username, JWTToken) {
-		// If authenticated with API key, retrieve the Phone Island token
-		nethCTIToken, err = GetPhoneIslandToken(JWTToken, false)
-		if err != nil {
-			logs.Log("[ERROR][AUTH] Failed to retrieve Phone Island token for API key")
+	if isFreePBXCall {
+		// For FreePBX calls, don't add Authorization header - the Authorization-User header is enough
+		logs.Log("[INFO][PROXY] FreePBX API call for user: " + authorizationUser)
+	} else {
+		// Regular JWT-based authentication flow
+		JWTToken := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
+		if JWTToken == "" {
 			c.JSON(http.StatusUnauthorized, gin.H{
 				"code":    401,
-				"message": "Failed to retrieve Phone Island token",
+				"message": "Authorization token not provided",
 			})
 			return
 		}
-	} else {
-		// If not authenticated with API key, use the NethCTI token from the user session
-		userSession := store.UserSessions[username]
-		nethCTIToken = userSession.NethCTIToken
-	}
 
-	// Add the NetCTI token to the request headers
-	req.Header.Set("Authorization", nethCTIToken)
+		// Extract claims from the JWT token
+		claims := jwt.ExtractClaims(c)
+		username := claims["id"].(string)
+		nethCTIToken := ""
+
+		// Check if the request is authenticated with an API key
+		if AuthenticateAPIKey(username, JWTToken) {
+			// If authenticated with API key, retrieve the Phone Island token
+			nethCTIToken, err = GetPhoneIslandToken(JWTToken, false)
+			if err != nil {
+				logs.Log("[ERROR][AUTH] Failed to retrieve Phone Island token for API key")
+				c.JSON(http.StatusUnauthorized, gin.H{
+					"code":    401,
+					"message": "Failed to retrieve Phone Island token",
+				})
+				return
+			}
+		} else {
+			// If not authenticated with API key, use the NethCTI token from the user session
+			userSession := store.UserSessions[username]
+			nethCTIToken = userSession.NethCTIToken
+		}
+
+		// Add the NetCTI token to the request headers
+		req.Header.Set("Authorization", nethCTIToken)
+	}
 
 	// Copy query parameters
 	req.URL.RawQuery = c.Request.URL.RawQuery
