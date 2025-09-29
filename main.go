@@ -17,12 +17,13 @@ import (
 	"github.com/nethesis/nethcti-middleware/logs"
 	"github.com/nethesis/nethcti-middleware/methods"
 	"github.com/nethesis/nethcti-middleware/middleware"
+	"github.com/nethesis/nethcti-middleware/mqtt"
 	"github.com/nethesis/nethcti-middleware/socket"
 	"github.com/nethesis/nethcti-middleware/store"
 )
 
 func main() {
-	// Init logger
+	// Init logger first
 	logs.Init("nethcti-middleware")
 
 	// Init configuration
@@ -30,6 +31,16 @@ func main() {
 
 	// Init store
 	store.UserSessionInit()
+
+	// Init MQTT and setup transcription subscription
+	mqttCh := mqtt.Init()
+	if mqttCh != nil {
+		socket.SetMQTTChannel(mqttCh)
+		err := mqtt.InitTranscriptionSubscription()
+		if err != nil {
+			logs.Log("[WARNING][MQTT] Failed to subscribe to transcription topic: " + err.Error())
+		}
+	}
 
 	// Create router
 	router := createRouter()

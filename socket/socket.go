@@ -2,6 +2,7 @@ package socket
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -9,9 +10,27 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	"github.com/nethesis/nethcti-middleware/configuration"
+	"github.com/nethesis/nethcti-middleware/logs"
 	"github.com/nethesis/nethcti-middleware/methods"
+	"github.com/nethesis/nethcti-middleware/mqtt"
 	"github.com/nethesis/nethcti-middleware/store"
 )
+
+var mqttChannel chan mqtt.WebSocketMessage
+
+// SetMQTTChannel sets the MQTT channel for forwarding messages to WebSocket clients
+func SetMQTTChannel(ch chan mqtt.WebSocketMessage) {
+	mqttChannel = ch
+	// Start global MQTT message handler
+	go handleMQTTMessages()
+}
+
+// handleMQTTMessages processes MQTT messages and broadcasts them to authorized connections
+func handleMQTTMessages() {
+	for mqttMsg := range mqttChannel {
+		connManager.BroadcastMQTTMessage(mqttMsg.Type, mqttMsg.Data)
+	}
+}
 
 func WsProxyHandler(c *gin.Context) {
 	protocol := "wss"
@@ -29,6 +48,7 @@ func WsProxyHandler(c *gin.Context) {
 		return
 	}
 	defer clientConn.Close()
+	defer connManager.RemoveConnection(clientConn)
 
 	// Connect to backend
 	backendURL := url.URL{
@@ -44,7 +64,7 @@ func WsProxyHandler(c *gin.Context) {
 	}
 	defer backendConn.Close()
 
-	errc := make(chan error, 2)
+	errc := make(chan error, 3)
 
 	// Client → Backend
 	go func() {
@@ -73,6 +93,27 @@ func WsProxyHandler(c *gin.Context) {
 								if tokenParts != "" {
 									loginData["token"] = tokenParts
 
+									// Get real user info from API
+									userInfo, err := methods.GetUserInfo(session.NethCTIToken)
+									displayName := session.Username
+									phoneNumbers := []string{}
+
+									if err == nil && userInfo != nil {
+										displayName = userInfo.DisplayName
+										phoneNumbers = userInfo.PhoneNumbers
+									} else {
+										logs.Log(fmt.Sprintf("[ERROR][WS] Failed to get user info for %s: %v", session.Username, err))
+									}
+
+									// Register the connection with user data
+									user := &UserConnection{
+										Username:     session.Username,
+										AccessKeyId:  accessKeyId,
+										DisplayName:  displayName,
+										PhoneNumbers: phoneNumbers,
+									}
+									connManager.AddConnection(clientConn, user)
+
 									// Re-encode the message
 									newPayload, _ := json.Marshal([]interface{}{payload[0], loginData})
 									msg = append([]byte("42"), newPayload...)
@@ -81,6 +122,32 @@ func WsProxyHandler(c *gin.Context) {
 								phoneIslandToken, err := methods.GetPhoneIslandToken(loginData["token"].(string), true)
 								if err == nil && phoneIslandToken != "" {
 									loginData["token"] = phoneIslandToken
+
+									// For API key users, try to get user info using the phone island token
+									// Create a temporary token in the format expected by GetUserInfo
+									tempToken := fmt.Sprintf("api_user:%s", phoneIslandToken)
+									userInfo, err := methods.GetUserInfo(tempToken)
+
+									username := "api_user"
+									displayName := "api_user"
+									phoneNumbers := []string{}
+
+									if err == nil && userInfo != nil {
+										username = userInfo.Username
+										displayName = userInfo.DisplayName
+										phoneNumbers = userInfo.PhoneNumbers
+									} else {
+										logs.Log(fmt.Sprintf("[ERROR][WS] Failed to get API key user info: %v", err))
+									}
+
+									// Register the connection with API key user data
+									user := &UserConnection{
+										Username:     username,
+										AccessKeyId:  accessKeyId,
+										DisplayName:  displayName,
+										PhoneNumbers: phoneNumbers,
+									}
+									connManager.AddConnection(clientConn, user)
 
 									// Re-encode the message
 									newPayload, _ := json.Marshal([]interface{}{payload[0], loginData})
