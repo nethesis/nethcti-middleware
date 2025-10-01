@@ -119,17 +119,28 @@ func WsProxyHandler(c *gin.Context) {
 									msg = append([]byte("42"), newPayload...)
 								}
 							} else if apiKeyExists {
-								phoneIslandToken, err := methods.GetPhoneIslandToken(loginData["token"].(string), true)
-								if err == nil && phoneIslandToken != "" {
+								// Get the full phone island token (username:token format)
+								phoneIslandTokenFull, err := methods.GetPhoneIslandToken(loginData["token"].(string), false)
+
+								if err == nil && phoneIslandTokenFull != "" {
+									// Extract username and token
+									parts := strings.SplitN(phoneIslandTokenFull, ":", 2)
+									username := "api_user"
+									phoneIslandToken := phoneIslandTokenFull
+
+									if len(parts) == 2 {
+										username = parts[0]
+										phoneIslandToken = parts[1]
+									} else {
+										logs.Log(fmt.Sprintf("[WARNING][WS] Could not extract username from phone island token, using api_user"))
+									}
+
 									loginData["token"] = phoneIslandToken
 
 									// For API key users, try to get user info using the phone island token
-									// Create a temporary token in the format expected by GetUserInfo
-									tempToken := fmt.Sprintf("api_user:%s", phoneIslandToken)
-									userInfo, err := methods.GetUserInfo(tempToken)
+									userInfo, err := methods.GetUserInfo(phoneIslandTokenFull)
 
-									username := "api_user"
-									displayName := "api_user"
+									displayName := username
 									phoneNumbers := []string{}
 
 									if err == nil && userInfo != nil {
@@ -152,6 +163,8 @@ func WsProxyHandler(c *gin.Context) {
 									// Re-encode the message
 									newPayload, _ := json.Marshal([]interface{}{payload[0], loginData})
 									msg = append([]byte("42"), newPayload...)
+								} else {
+									logs.Log(fmt.Sprintf("[ERROR][WS] Failed to get phone island token: %v", err))
 								}
 							}
 						}
