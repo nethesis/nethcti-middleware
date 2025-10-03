@@ -75,6 +75,27 @@ func WsProxyHandler(c *gin.Context) {
 				return
 			}
 
+			// Intercept transcription control messages
+			if msgType == websocket.TextMessage {
+				msgStr := string(msg)
+
+				if strings.HasPrefix(msgStr, "42[\"start_transcription\"") {
+					if user, exists := connManager.GetConnection(clientConn); exists {
+						user.TranscriptionEnabled = true
+						logs.Log(fmt.Sprintf("[INFO][WS] Transcription enabled for user %s", user.Username))
+					}
+					continue // Don't forward to backend
+				}
+
+				if strings.HasPrefix(msgStr, "42[\"stop_transcription\"") {
+					if user, exists := connManager.GetConnection(clientConn); exists {
+						user.TranscriptionEnabled = false
+						logs.Log(fmt.Sprintf("[INFO][WS] Transcription disabled for user %s", user.Username))
+					}
+					continue // Don't forward to backend
+				}
+			}
+
 			// Intercept socket.io login message type: 42["login", {...}]
 			if msgType == websocket.TextMessage && strings.HasPrefix(string(msg), "42[\"login\"") {
 				var payload []interface{}
@@ -107,10 +128,11 @@ func WsProxyHandler(c *gin.Context) {
 
 									// Register the connection with user data
 									user := &UserConnection{
-										Username:     session.Username,
-										AccessKeyId:  accessKeyId,
-										DisplayName:  displayName,
-										PhoneNumbers: phoneNumbers,
+										Username:             session.Username,
+										AccessKeyId:          accessKeyId,
+										DisplayName:          displayName,
+										PhoneNumbers:         phoneNumbers,
+										TranscriptionEnabled: false,
 									}
 									connManager.AddConnection(clientConn, user)
 
@@ -153,10 +175,11 @@ func WsProxyHandler(c *gin.Context) {
 
 									// Register the connection with API key user data
 									user := &UserConnection{
-										Username:     username,
-										AccessKeyId:  accessKeyId,
-										DisplayName:  displayName,
-										PhoneNumbers: phoneNumbers,
+										Username:             username,
+										AccessKeyId:          accessKeyId,
+										DisplayName:          displayName,
+										PhoneNumbers:         phoneNumbers,
+										TranscriptionEnabled: false,
 									}
 									connManager.AddConnection(clientConn, user)
 

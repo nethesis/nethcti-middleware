@@ -17,11 +17,12 @@ import (
 
 // UserConnection represents a WebSocket connection with user data
 type UserConnection struct {
-	Conn         *websocket.Conn
-	Username     string
-	DisplayName  string
-	PhoneNumbers []string
-	AccessKeyId  string
+	Conn                 *websocket.Conn
+	Username             string
+	DisplayName          string
+	PhoneNumbers         []string
+	AccessKeyId          string
+	TranscriptionEnabled bool
 }
 
 // ConnectionManager manages all active WebSocket connections
@@ -108,6 +109,11 @@ func (cm *ConnectionManager) BroadcastMQTTMessage(messageType string, data inter
 	for conn, user := range cm.connections {
 		// Check authorization for transcription messages
 		if messageType == "satellite/transcription" {
+			// Skip if transcription is not enabled for this user
+			if !user.TranscriptionEnabled {
+				continue
+			}
+
 			// Try to parse as different types
 			if transcriptionMsg, ok := data.(mqtt.TranscriptionMessage); ok {
 				speakerName := transcriptionMsg.SpeakerName
