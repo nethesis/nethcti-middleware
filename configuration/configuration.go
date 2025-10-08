@@ -26,7 +26,14 @@ type Configuration struct {
 
 	SecretsDir string `json:"secrets_dir"`
 	Issuer2FA  string `json:"issuer_2fa"`
+
+	RTPProxyAddr string
+	RTPProxyPort string
+
+	StaticJitterBuffer bool
+	JitterBufferPlaybackRate string
 }
+
 
 var Config = Configuration{}
 
@@ -115,4 +122,25 @@ func Init() {
 			"/astproxy/trunks",
 		}
 	}
+
+	if os.Getenv("RTP_PROXY_ADDR") != "" {
+		Config.RTPProxyAddr = os.Getenv("RTP_PROXY_ADDR")
+	} else {
+		Config.RTPProxyAddr = "127.0.0.1"
+	}
+
+	if os.Getenv("RTP_PROXY_PORT") != "" {
+		Config.RTPProxyPort = os.Getenv("RTP_PROXY_PORT")
+	} else {
+		Config.RTPProxyPort = "5004"
+	}
+
+	if os.Getenv("JITTER_BUFFER") != "" && os.Getenv("JITTER_BUFFER") == "on"{
+		Config.StaticJitterBuffer = true
+	}
+
+	if os.Getenv("PLAYBACK_RATE") != "" {
+		Config.JitterBufferPlaybackRate = os.Getenv("PLAYBACK_RATE")
+	}
+
 }
