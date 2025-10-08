@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"encoding/json"
 	"strings"
+	"slices"
 )
 
 const basePrefix string = "job"
@@ -74,6 +75,7 @@ func (r *Broadcaster) HandleBroadcast(c *gin.Context) {
 			err := r.subHandler.registerSubscriberAndJob(jobId, ctiMessage.PubAddr, rtpStreamMailBox)
 			if err != nil {
 				close(rtpStreamMailBox)
+				r.deleteJob(jobId)
 				r.nack(conn, err)
 				continue
 			}
@@ -119,6 +121,22 @@ func (r *Broadcaster) createNewJob() string {
 	go r.appendJob(b.String())
 
 	return b.String()
+}
+
+func (r *Broadcaster) deleteJob(jobId string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	var exitIndex int
+
+	for jobIndex := range r.jobs {
+		if r.jobs[jobIndex] == jobId {
+			exitIndex = jobIndex
+			break
+		}
+	}
+
+	r.jobs = slices.Delete(r.jobs, exitIndex, exitIndex + 1)
 }
 
 func (r *Broadcaster) appendJob(job string) {
