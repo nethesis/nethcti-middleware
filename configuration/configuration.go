@@ -26,6 +26,13 @@ type Configuration struct {
 
 	SecretsDir string `json:"secrets_dir"`
 	Issuer2FA  string `json:"issuer_2fa"`
+
+	// MQTT Configuration for satellite transcriptions
+	MQTTHost     string `json:"mqtt_host"`
+	MQTTPort     string `json:"mqtt_port"`
+	MQTTUsername string `json:"mqtt_username"`
+	MQTTPassword string `json:"mqtt_password"`
+	MQTTEnabled  bool   `json:"mqtt_enabled"`
 }
 
 var Config = Configuration{}
@@ -115,4 +122,30 @@ func Init() {
 			"/astproxy/trunks",
 		}
 	}
+
+	// set MQTT configuration for satellite transcriptions
+	if os.Getenv("SATELLITE_MQTT_HOST") != "" {
+		Config.MQTTHost = os.Getenv("SATELLITE_MQTT_HOST")
+	} else {
+		Config.MQTTHost = "127.0.0.1"
+	}
+
+	if os.Getenv("SATELLITE_MQTT_PORT") != "" {
+		Config.MQTTPort = os.Getenv("SATELLITE_MQTT_PORT")
+	} else {
+		Config.MQTTPort = "1883"
+	}
+
+	if os.Getenv("SATELLITE_MQTT_USERNAME") != "" {
+		Config.MQTTUsername = os.Getenv("SATELLITE_MQTT_USERNAME")
+	} else {
+		Config.MQTTUsername = "satellite"
+	}
+
+	if os.Getenv("SATELLITE_MQTT_PASSWORD") != "" {
+		Config.MQTTPassword = os.Getenv("SATELLITE_MQTT_PASSWORD")
+	}
+
+	// Enable MQTT only if we have at least username and password
+	Config.MQTTEnabled = Config.MQTTUsername != "" && Config.MQTTPassword != ""
 }
