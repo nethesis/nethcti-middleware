@@ -6,13 +6,15 @@
 package proxy
 
 import (
-	"time"
-	"sync"
-	"slices"
 	"cmp"
-	"github.com/nethesis/nethcti-middleware/configuration"
-	"strconv"
 	"context"
+	"slices"
+	"strconv"
+	"sync"
+	"time"
+
+	"github.com/nethesis/nethcti-middleware/configuration"
+	"github.com/nethesis/nethcti-middleware/logs"
 )
 
 const defaultBufferMaxCapacity = 20
@@ -24,9 +26,9 @@ type (
 	}
 
 	packetQueue struct {
-		size             int
-		maxCapacity      int
-		queue            []node
+		size        int
+		maxCapacity int
+		queue       []node
 	}
 
 	node struct {
@@ -36,27 +38,27 @@ type (
 
 	// static jitter buffer
 	jitterBuffer struct {
-		
+
 		// primary queue
-		buffer         *packetQueue
-		
+		buffer *packetQueue
+
 		// Backup queue used only when the primary buffer is full
-		packetOverflow  *overflowPacketQueue
-		playbackRate    int
-		tick            *time.Ticker
-		playbackBus     chan []byte
-		mu              sync.Mutex
+		packetOverflow *overflowPacketQueue
+		playbackRate   int
+		tick           *time.Ticker
+		playbackBus    chan []byte
+		mu             sync.Mutex
 	}
 )
 
 func newJitterBuffer() *jitterBuffer {
 	jb := &jitterBuffer{
-		buffer:        newPacketQueue(),
+		buffer:         newPacketQueue(),
 		packetOverflow: newOverflowPacketQueue(),
-		playbackBus:   make(chan []byte),
+		playbackBus:    make(chan []byte),
 	}
 
-	ctx, _ := context.WithTimeout(context.Background(), time.Duration(10) * time.Minute)
+	ctx, _ := context.WithTimeout(context.Background(), time.Duration(10)*time.Minute)
 	go jb.pop(ctx)
 	return jb
 }
@@ -65,7 +67,6 @@ func (j *jitterBuffer) push(payload []byte, sequenceNumber uint16) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 
-	
 	if j.buffer.isQueueOverloaded() {
 		j.packetOverflow.insertPacket(payload, sequenceNumber)
 		return
@@ -78,7 +79,7 @@ func (j *jitterBuffer) pop(ctx context.Context) {
 	var (
 		err error
 		n   node
-		ok  bool 
+		ok  bool
 	)
 
 	j.playbackRate, err = strconv.Atoi(configuration.Config.JitterBufferPlaybackRate)
@@ -87,11 +88,11 @@ func (j *jitterBuffer) pop(ctx context.Context) {
 	if err != nil {
 		j.playbackRate = 20
 	}
-	
+
 	j.tick = time.NewTicker(time.Duration(j.playbackRate) * time.Millisecond)
 	defer j.tick.Stop()
 	defer close(j.playbackBus)
-	
+
 	for range j.tick.C {
 		if ctx.Err() != nil {
 			return
@@ -112,6 +113,9 @@ func (j *jitterBuffer) pop(ctx context.Context) {
 
 		j.mu.Unlock()
 	}
+
+	logs.Log("[RTP-PROXY][JITTER-BUFFER] jitter buffer reader dropped due to a connection timeout")
+
 }
 
 func newPacketQueue() *packetQueue {
@@ -133,7 +137,7 @@ func (p *packetQueue) enqueue(payload []byte, sequenceNumber uint16) {
 }
 
 func (p *packetQueue) dequeue(locationIndex int) {
-	p.queue = slices.Delete(p.queue, locationIndex, locationIndex + 1)
+	p.queue = slices.Delete(p.queue, locationIndex, locationIndex+1)
 	p.size -= 1
 }
 
