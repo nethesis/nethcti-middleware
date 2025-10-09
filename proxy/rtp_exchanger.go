@@ -9,7 +9,6 @@ import (
 	"errors"
 	"net"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/nethesis/nethcti-middleware/configuration"
@@ -135,10 +134,14 @@ func (e *Exchanger) sendToMailBoxes(routingKey *net.UDPAddr, data []byte, seqNum
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
-	_, err := e.routeByKey(routingKey)
+	pub, err := e.routeByKey(routingKey)
 	if err != nil {
 		logs.Log("[RTP-PROXY][EXCHANGER] Failed to route RTP packet: " + err.Error())
 		return err
+	}
+
+	if pub != nil {
+		pub.timestamp = time.Now()
 	}
 
 	subs, ok := e.subsRoutingTable[routingKey.String()]
@@ -226,7 +229,6 @@ func (e *Exchanger) routeByKey(pubAddr *net.UDPAddr) (*publisher, error) {
 	}
 
 	pub := e.pubs[locationIndex]
-	pub.activeStatus.Store(true)
 	if pub.addr.String() == "" {
 		return nil, indexPublishErr
 	}
@@ -250,11 +252,19 @@ func (e *Exchanger) startGarbageCollector() {
 	gcTick := time.NewTicker(e.gcRounds * time.Second)
 	defer gcTick.Stop()
 
+	var (
+		gcTimestamp        time.Time
+		pubLatestTimestamp time.Time
+		timeout            = time.Duration(5) * time.Minute
+	)
+
 	for range gcTick.C {
 		e.mu.Lock()
+
+		gcTimestamp = time.Now()
 		for pIndex := range e.pubs {
-			result := e.pubs[pIndex].activeStatus.CompareAndSwap(true, false)
-			if !result {
+			pubLatestTimestamp = e.pubs[pIndex].timestamp
+			if gcTimestamp.Sub(pubLatestTimestamp) > timeout {
 				delete(e.pubsRoutingTable, e.pubs[pIndex].addr.String())
 				delete(e.pubsJitterBuffers, e.pubs[pIndex].addr.String())
 			}
@@ -264,8 +274,8 @@ func (e *Exchanger) startGarbageCollector() {
 }
 
 type publisher struct {
-	addr         *net.UDPAddr
-	activeStatus atomic.Bool
+	addr      *net.UDPAddr
+	timestamp time.Time
 }
 
 func newPublisher(address string) *publisher {
@@ -277,7 +287,7 @@ func newPublisher(address string) *publisher {
 	p := &publisher{
 		addr: resolvedAddr,
 	}
-	p.activeStatus.Store(true)
+
 	return p
 }
 
