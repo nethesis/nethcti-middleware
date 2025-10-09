@@ -55,7 +55,7 @@ func newJitterBuffer() *jitterBuffer {
 	jb := &jitterBuffer{
 		buffer:         newPacketQueue(),
 		packetOverflow: newOverflowPacketQueue(),
-		playbackBus:    make(chan []byte),
+		playbackBus:    make(chan []byte, 10),
 	}
 
 	ctx, _ := context.WithTimeout(context.Background(), time.Duration(10)*time.Minute)

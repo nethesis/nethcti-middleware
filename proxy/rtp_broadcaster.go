@@ -74,7 +74,7 @@ func (r *Broadcaster) HandleBroadcast(c *gin.Context) {
 			}
 
 			jobId = r.createNewJob()
-			rtpStreamMailBox = make(chan []byte)
+			rtpStreamMailBox = make(chan []byte, 10)
 			err := r.subHandler.registerSubscriberAndJob(jobId, ctiMessage.PubAddr, rtpStreamMailBox)
 			if err != nil {
 				close(rtpStreamMailBox)
