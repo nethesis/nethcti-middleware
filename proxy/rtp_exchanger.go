@@ -254,9 +254,11 @@ func newPublisher(address string) *publisher {
 		return nil
 	}
 
-	return &publisher{
+	p := &publisher{
 		addr: resolvedAddr,
 	}
+	p.activeStatus.Store(true)
+	return p
 }
 
 type subscriber struct {
