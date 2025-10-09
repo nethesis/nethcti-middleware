@@ -1,36 +1,37 @@
 /*
  * Copyright (C) 2025 Nethesis S.r.l.
  * SPDX-License-Identifier: GPL-3.0-or-later
-*/
+ */
 
 package proxy
 
 import (
+	"encoding/json"
+	"net/http"
+	"slices"
+	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
+
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
-	"github.com/nethesis/nethcti-middleware/models"
 	"github.com/nethesis/nethcti-middleware/logs"
-	"net/http"
-	"sync/atomic"
-	"sync"
-	"strconv"
-	"encoding/json"
-	"strings"
-	"slices"
+	"github.com/nethesis/nethcti-middleware/models"
 )
 
 const basePrefix string = "job"
 
 type Broadcaster struct {
-	jobs []string
-	subHandler *Exchanger
-	mu sync.Mutex
+	jobs        []string
+	subHandler  *Exchanger
+	mu          sync.Mutex
 	jobsCounter atomic.Uint32
 }
 
 func NewBroadcaster(exc *Exchanger) *Broadcaster {
 	return &Broadcaster{
-		jobs: make([]string, 0),
+		jobs:       make([]string, 0),
 		subHandler: exc,
 	}
 }
@@ -39,13 +40,14 @@ func NewBroadcaster(exc *Exchanger) *Broadcaster {
 // some CTI clients might not receive the same set of delivered messages
 func (r *Broadcaster) HandleBroadcast(c *gin.Context) {
 	var (
-		messageType int
-		data []byte
-		err error
-		ctiMessage models.SubscribeProxy
+		messageType      int
+		data             []byte
+		err              error
+		ctiMessage       models.SubscribeProxy
 		rtpStreamMailBox chan []byte
-		conn *websocket.Conn
-		wg sync.WaitGroup
+		conn             *websocket.Conn
+		wg               sync.WaitGroup
+		jobId            string
 	)
 
 	conn, err = r.makeWebSocketConnection(c)
@@ -70,7 +72,7 @@ func (r *Broadcaster) HandleBroadcast(c *gin.Context) {
 				continue
 			}
 
-			jobId := r.createNewJob()
+			jobId = r.createNewJob()
 			rtpStreamMailBox = make(chan []byte)
 			err := r.subHandler.registerSubscriberAndJob(jobId, ctiMessage.PubAddr, rtpStreamMailBox)
 			if err != nil {
@@ -86,10 +88,11 @@ func (r *Broadcaster) HandleBroadcast(c *gin.Context) {
 
 	wg.Wait()
 	for {
-		streamingPacket := <- rtpStreamMailBox
+		streamingPacket := <-rtpStreamMailBox
 		err = conn.WriteMessage(websocket.BinaryMessage, streamingPacket)
 		if err != nil {
 			logs.Log("[RTP-PROXY][CLIENT] Broadcaster dropped due to following error: " + err.Error())
+			r.deleteJob(jobId)
 			break
 		}
 	}
@@ -136,7 +139,7 @@ func (r *Broadcaster) deleteJob(jobId string) {
 		}
 	}
 
-	r.jobs = slices.Delete(r.jobs, exitIndex, exitIndex + 1)
+	r.jobs = slices.Delete(r.jobs, exitIndex, exitIndex+1)
 }
 
 func (r *Broadcaster) appendJob(job string) {
@@ -153,7 +156,7 @@ func (r *Broadcaster) nack(conn *websocket.Conn, err error) {
 	}
 
 	conn.WriteMessage(websocket.TextMessage, []byte("An error occurred while processing the message"))
-} 
+}
 
 func (r *Broadcaster) ack(conn *websocket.Conn) {
 	conn.WriteMessage(websocket.TextMessage, []byte("Subscription executed successfully"))
