@@ -101,7 +101,11 @@ func (e *Exchanger) registerSubscriberAndJob(jobId, pubAddr string, c chan []byt
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	resolved, _ := net.ResolveUDPAddr("udp", pubAddr)
+	resolved, resolveErr := net.ResolveUDPAddr("udp", pubAddr)
+	if resolveErr != nil {
+		return resolveErr
+	}
+
 	_, err := e.routeByKey(resolved)
 	if err != nil {
 		return err
@@ -121,6 +125,7 @@ func (e *Exchanger) registerSubscriberAndJob(jobId, pubAddr string, c chan []byt
 	}
 
 	interestedSubs = append(interestedSubs, sub)
+	e.subsRoutingTable[pubAddr] = interestedSubs
 	return nil
 }
 
@@ -155,13 +160,14 @@ func (e *Exchanger) sendToMailBoxes(routingKey *net.UDPAddr, data []byte, seqNum
 	}
 
 	for _, sub := range subs {
-		go func(sub subscriber) {
-			mailBox, ok := e.mailBoxesHolder[sub.jobId]
-			if !ok {
-				return
-			}
+		mailBox, ok := e.mailBoxesHolder[sub.jobId]
+		if !ok {
+			break
+		}
+
+		func(m chan<- []byte) {
 			mailBox <- data
-		}(sub)
+		}(mailBox)
 	}
 
 	return nil
