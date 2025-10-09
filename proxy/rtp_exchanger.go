@@ -151,7 +151,10 @@ func (e *Exchanger) sendToMailBoxes(routingKey *net.UDPAddr, data []byte, seqNum
 
 	for _, sub := range subs {
 		go func() {
-			mailBox, _ := e.mailBoxesHolder[sub.jobId]
+			mailBox, ok := e.mailBoxesHolder[sub.jobId]
+			if !ok {
+				return
+			}
 			mailBox <- data
 		}()
 	}
@@ -194,7 +197,10 @@ func (e *Exchanger) forwardFromJitterBuffer(routingKey string) {
 			}
 
 			for _, sub := range subs {
-				mailBox, _ = e.mailBoxesHolder[sub.jobId]
+				mailBox, ok = e.mailBoxesHolder[sub.jobId]
+				if !ok {
+					return
+				}
 				mailBox <- packet
 			}
 		}
