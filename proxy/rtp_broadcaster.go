@@ -100,6 +100,7 @@ func (r *Broadcaster) HandleBroadcast(c *gin.Context) {
 		if err != nil {
 			logs.Log("[RTP-PROXY][CLIENT] Broadcaster dropped due to following error: " + err.Error())
 			r.deleteJob(jobId)
+			r.subHandler.deleteMailBoxRegistration(jobId)
 			break
 		}
 	}

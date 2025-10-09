@@ -172,7 +172,10 @@ func (e *Exchanger) forwardFromJitterBuffer(routingKey string) {
 		jb      *jitterBuffer
 	)
 
+	e.mu.RLock()
 	jb, ok = e.pubsJitterBuffers[routingKey]
+	e.mu.RUnlock()
+
 	if !ok {
 		logs.Log("[RTP-PROXY][EXCHANGER] Failed to run the packet reaper due to absent jitter buffer")
 		return
@@ -197,7 +200,9 @@ func (e *Exchanger) forwardFromJitterBuffer(routingKey string) {
 			}
 
 			for _, sub := range subs {
+				e.mu.RLock()
 				mailBox, ok = e.mailBoxesHolder[sub.jobId]
+				e.mu.RUnlock()
 				if !ok {
 					return
 				}
@@ -225,6 +230,18 @@ func (e *Exchanger) routeByKey(pubAddr *net.UDPAddr) (*publisher, error) {
 	return pub, nil
 }
 
+func (e *Exchanger) deleteMailBoxRegistration(jobId string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	mailBox, ok := e.mailBoxesHolder[jobId]
+	if !ok {
+		return
+	}
+
+	close(mailBox)
+	delete(e.mailBoxesHolder, jobId)
+}
+
 func (e *Exchanger) startGarbageCollector() {
 	gcTick := time.NewTicker(e.gcRounds * time.Second)
 	defer gcTick.Stop()
@@ -238,7 +255,10 @@ func (e *Exchanger) startGarbageCollector() {
 				delete(e.pubsJitterBuffers, e.pubs[pIndex].addr.String())
 				subs := e.subsRoutingTable[e.pubs[pIndex].addr.String()]
 				for _, sub := range subs {
-					mailBox := e.mailBoxesHolder[sub.jobId]
+					mailBox, ok := e.mailBoxesHolder[sub.jobId]
+					if !ok {
+						continue
+					}
 					close(mailBox)
 					delete(e.mailBoxesHolder, sub.jobId)
 				}
