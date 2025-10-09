@@ -226,11 +226,11 @@ func (e *Exchanger) routeByKey(pubAddr *net.UDPAddr) (*publisher, error) {
 	}
 
 	pub := e.pubs[locationIndex]
+	pub.activeStatus.Store(true)
 	if pub.addr.String() == "" {
 		return nil, indexPublishErr
 	}
 
-	pub.activeStatus.Store(true)
 	return pub, nil
 }
 
@@ -257,16 +257,6 @@ func (e *Exchanger) startGarbageCollector() {
 			if !result {
 				delete(e.pubsRoutingTable, e.pubs[pIndex].addr.String())
 				delete(e.pubsJitterBuffers, e.pubs[pIndex].addr.String())
-				subs := e.subsRoutingTable[e.pubs[pIndex].addr.String()]
-				for _, sub := range subs {
-					mailBox, ok := e.mailBoxesHolder[sub.jobId]
-					if !ok {
-						continue
-					}
-					close(mailBox)
-					delete(e.mailBoxesHolder, sub.jobId)
-				}
-				delete(e.subsRoutingTable, e.pubs[pIndex].addr.String())
 			}
 		}
 		e.mu.Unlock()
