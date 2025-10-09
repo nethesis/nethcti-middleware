@@ -76,6 +76,11 @@ func (e *Exchanger) addPublisher(address string) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
+	_, ok := e.pubsRoutingTable[address]
+	if ok {
+		return publishErr
+	}
+
 	pub := newPublisher(address)
 	if pub.addr.String() == "" {
 		return publishErr
@@ -150,13 +155,13 @@ func (e *Exchanger) sendToMailBoxes(routingKey *net.UDPAddr, data []byte, seqNum
 	}
 
 	for _, sub := range subs {
-		go func() {
+		go func(sub subscriber) {
 			mailBox, ok := e.mailBoxesHolder[sub.jobId]
 			if !ok {
 				return
 			}
 			mailBox <- data
-		}()
+		}(sub)
 	}
 
 	return nil
