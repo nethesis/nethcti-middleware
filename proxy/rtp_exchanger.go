@@ -6,11 +6,14 @@
 package proxy
 
 import (
+	"errors"
 	"net"
 	"sync"
-	"github.com/nethesis/nethcti-middleware/logs"
+	"sync/atomic"
+	"time"
+
 	"github.com/nethesis/nethcti-middleware/configuration"
-	"errors"
+	"github.com/nethesis/nethcti-middleware/logs"
 )
 
 var (
@@ -24,39 +27,43 @@ var (
 // all RTP packets and relaying them to the
 // appropriate CTI clients.
 type Exchanger struct {
-	pubs             []publisher
-	
+	pubs []*publisher
+
 	// This field maps the publisher's UDP addresses (as keys)
 	// to their corresponding subscribers (as values).
-	subsRoutingTable map[string][]subscriber         
+	subsRoutingTable map[string][]subscriber
 
 	// This field provides a simple lookup optimization
 	// for finding publishers, with O(1) complexity.
 	pubsRoutingTable map[string]int
-	
+
 	// This field stores, for each WebSocket connection (i.e., job ID),
 	// a shared communication channel between publisher and subscribers
 	// (also referred to as mailboxes).
-	mailBoxesHolder  map[string]chan []byte
-	size             int
-	waitForPlayback  bool
-	
+	mailBoxesHolder map[string]chan []byte
+	size            int
+	waitForPlayback bool
+
 	// This field stores a dedicated jitter buffer for each publisher,
 	// ensuring that each buffer handles packets from a single source.
 	pubsJitterBuffers map[string]*jitterBuffer
-	mu               sync.RWMutex
+
+	gcRounds time.Duration
+	mu       sync.RWMutex
 }
 
 func NewExchanger() *Exchanger {
 	e := &Exchanger{
-		pubs: make([]publisher, 0),
+		pubs:              make([]*publisher, 0),
 		subsRoutingTable:  make(map[string][]subscriber),
 		pubsRoutingTable:  make(map[string]int),
 		mailBoxesHolder:   make(map[string]chan []byte),
 		pubsJitterBuffers: make(map[string]*jitterBuffer),
 		waitForPlayback:   false,
 		size:              0,
+		gcRounds:          time.Duration(3),
 	}
+	go e.startGarbageCollector()
 
 	if configuration.Config.StaticJitterBuffer {
 		e.waitForPlayback = true
@@ -70,10 +77,9 @@ func (e *Exchanger) addPublisher(address string) error {
 	defer e.mu.Unlock()
 
 	pub := newPublisher(address)
-	if pub.addr.String() ==  "" {
+	if pub.addr.String() == "" {
 		return publishErr
 	}
-
 
 	e.pubs = append(e.pubs, pub)
 	e.pubsRoutingTable[pub.addr.String()] = e.size
@@ -139,7 +145,7 @@ func (e *Exchanger) sendToMailBoxes(routingKey *net.UDPAddr, data []byte, seqNum
 			logs.Log("[RTP-PROXY][EXCHANGER] RTP packet dropped due to absent jitter buffer")
 			return nil
 		}
-		jb.push(data, seqNumber)	
+		jb.push(data, seqNumber)
 		return nil
 	}
 
@@ -149,7 +155,7 @@ func (e *Exchanger) sendToMailBoxes(routingKey *net.UDPAddr, data []byte, seqNum
 			mailBox <- data
 		}()
 	}
-	
+
 	return nil
 }
 
@@ -171,7 +177,7 @@ func (e *Exchanger) forwardFromJitterBuffer(routingKey string) {
 
 	for {
 		select {
-		case packet, ok := <- jb.playbackBus:
+		case packet, ok := <-jb.playbackBus:
 			if !ok {
 				// channel is closed only when a communication
 				// Timeout occurred (generally after 10 minutes)
@@ -184,7 +190,7 @@ func (e *Exchanger) forwardFromJitterBuffer(routingKey string) {
 
 			if !ok {
 				logs.Log("[RTP-PROXY][EXCHANGER] " + subSearchErr.Error())
-				continue 
+				continue
 			}
 
 			for _, sub := range subs {
@@ -197,45 +203,70 @@ func (e *Exchanger) forwardFromJitterBuffer(routingKey string) {
 
 // This function returns the publisher instance by
 // looking it up in the pubsRoutingTable.
-func (e *Exchanger) routeByKey(pubAddr *net.UDPAddr) (publisher, error) {
+func (e *Exchanger) routeByKey(pubAddr *net.UDPAddr) (*publisher, error) {
 	locationIndex, ok := e.pubsRoutingTable[pubAddr.String()]
-	
+
 	if !ok {
-		return publisher{}, routePublishErr
+		return nil, routePublishErr
 	}
 
 	pub := e.pubs[locationIndex]
 	if pub.addr.String() == "" {
-		return publisher{}, indexPublishErr
+		return nil, indexPublishErr
 	}
 
+	pub.activeStatus.Store(true)
 	return pub, nil
 }
 
-type publisher struct {
-	addr *net.UDPAddr
+func (e *Exchanger) startGarbageCollector() {
+	gcTick := time.NewTicker(e.gcRounds * time.Second)
+	defer gcTick.Stop()
+
+	for range gcTick.C {
+		e.mu.Lock()
+		for pIndex := range e.pubs {
+			result := e.pubs[pIndex].activeStatus.CompareAndSwap(true, false)
+			if !result {
+				delete(e.pubsRoutingTable, e.pubs[pIndex].addr.String())
+				delete(e.pubsJitterBuffers, e.pubs[pIndex].addr.String())
+				subs := e.subsRoutingTable[e.pubs[pIndex].addr.String()]
+				for _, sub := range subs {
+					mailBox := e.mailBoxesHolder[sub.jobId]
+					close(mailBox)
+					delete(e.mailBoxesHolder, sub.jobId)
+				}
+				delete(e.subsRoutingTable, e.pubs[pIndex].addr.String())
+			}
+		}
+		e.mu.Unlock()
+	}
 }
 
-func newPublisher(address string) publisher {
+type publisher struct {
+	addr         *net.UDPAddr
+	activeStatus atomic.Bool
+}
+
+func newPublisher(address string) *publisher {
 	resolvedAddr, err := net.ResolveUDPAddr("udp", address)
 	if err != nil {
-		return publisher{}
+		return nil
 	}
 
-	return publisher{
+	return &publisher{
 		addr: resolvedAddr,
 	}
 }
 
-
 type subscriber struct {
-	jobId string
+	jobId         string
 	publisherAddr string
 }
 
 func newSubscriber(jobNumber, publisherAddr string) subscriber {
 	return subscriber{
-		jobId: jobNumber,
+		jobId:         jobNumber,
 		publisherAddr: publisherAddr,
 	}
 }

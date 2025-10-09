@@ -7,6 +7,7 @@ package proxy
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"slices"
 	"strconv"
@@ -88,7 +89,13 @@ func (r *Broadcaster) HandleBroadcast(c *gin.Context) {
 
 	wg.Wait()
 	for {
-		streamingPacket := <-rtpStreamMailBox
+		streamingPacket, ok := <-rtpStreamMailBox
+		if !ok {
+			r.deleteJob(jobId)
+			r.nack(conn, errors.New("Mail Box closed due to an idle publisher"))
+			break
+		}
+
 		err = conn.WriteMessage(websocket.BinaryMessage, streamingPacket)
 		if err != nil {
 			logs.Log("[RTP-PROXY][CLIENT] Broadcaster dropped due to following error: " + err.Error())
