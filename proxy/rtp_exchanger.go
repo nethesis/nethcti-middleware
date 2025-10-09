@@ -176,15 +176,8 @@ func (e *Exchanger) sendToMailBoxes(routingKey *net.UDPAddr, data []byte, seqNum
 // This method takes packets from the jitter buffer
 // and forwards them to the appropriate subscribers.
 func (e *Exchanger) forwardFromJitterBuffer(routingKey string) {
-	var (
-		subs    []subscriber
-		ok      bool
-		mailBox chan []byte
-		jb      *jitterBuffer
-	)
-
 	e.mu.RLock()
-	jb, ok = e.pubsJitterBuffers[routingKey]
+	jb, ok := e.pubsJitterBuffers[routingKey]
 	e.mu.RUnlock()
 
 	if !ok {
@@ -202,7 +195,7 @@ func (e *Exchanger) forwardFromJitterBuffer(routingKey string) {
 			}
 
 			e.mu.RLock()
-			subs, ok = e.subsRoutingTable[routingKey]
+			subs, ok := e.subsRoutingTable[routingKey]
 			e.mu.RUnlock()
 
 			if !ok {
@@ -212,7 +205,7 @@ func (e *Exchanger) forwardFromJitterBuffer(routingKey string) {
 
 			for _, sub := range subs {
 				e.mu.RLock()
-				mailBox, ok = e.mailBoxesHolder[sub.jobId]
+				mailBox, ok := e.mailBoxesHolder[sub.jobId]
 				e.mu.RUnlock()
 				if !ok {
 					return
