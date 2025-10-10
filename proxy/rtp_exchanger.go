@@ -188,13 +188,14 @@ func (e *Exchanger) forwardFromJitterBuffer(routingKey string) {
 		return
 	}
 
+reaper_loop:
 	for {
 		select {
 		case packet, ok := <-jb.playbackBus:
 			if !ok {
 				// channel is closed only when a communication
 				// Timeout occurred (generally after 10 minutes)
-				return
+				break reaper_loop
 			}
 
 			e.mu.RLock()
@@ -217,6 +218,8 @@ func (e *Exchanger) forwardFromJitterBuffer(routingKey string) {
 			e.mu.RUnlock()
 		}
 	}
+
+	go e.deleteJitterBuffer(routingKey)
 }
 
 // This function returns the publisher instance by
@@ -246,6 +249,13 @@ func (e *Exchanger) deleteMailBoxRegistration(jobId string) {
 
 	close(mailBox)
 	delete(e.mailBoxesHolder, jobId)
+}
+
+func (e *Exchanger) deleteJitterBuffer(pubAddr string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	delete(e.pubsJitterBuffers, pubAddr)
 }
 
 func (e *Exchanger) startGarbageCollector() {
