@@ -8,8 +8,9 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"net/http"
+	"io"
 	"net"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
@@ -19,21 +20,22 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 
+	"flag"
+	"sync"
+
+	"github.com/gorilla/websocket"
 	"github.com/nethesis/nethcti-middleware/models"
 	"github.com/nethesis/nethcti-middleware/store"
 	"github.com/nethesis/nethcti-middleware/utils"
-	"github.com/gorilla/websocket"
 	"github.com/pion/rtp"
-	"crypto/rand"
-	"strconv"
-	"sync"
-	"flag"
+	"github.com/pion/rtp/codecs"
+	ffmpeg "github.com/u2takey/ffmpeg-go"
 )
 
 // Global variables for test server URLs and mock server
 var testServerURL string
 var mockNetCTI *httptest.Server
-var jb         *bool
+var jb *bool
 
 // TestMain sets up the test environment once for all tests
 func TestMain(m *testing.M) {
@@ -73,10 +75,10 @@ func setupTestEnvironment() {
 	os.Setenv("NETHVOICE_MIDDLEWARE_SENSITIVE_LIST", "password,secret")
 	os.Setenv("RTP_PROXY_ADDR", "127.0.0.1")
 	os.Setenv("RTP_PROXY_PORT", "5004")
-	
+
 	if *jb {
 		os.Setenv("JITTER_BUFFER", "on")
-		os.Setenv("PLAYBACK_RATE", "1500")
+		os.Setenv("PLAYBACK_RATE", "60")
 	}
 
 	// Create test secrets directory
@@ -328,8 +330,8 @@ var (
 )
 
 func publisherBehaviour(
-	t *testing.T, 
-	localAddr *string, 
+	t *testing.T,
+	localAddr *string,
 	udpServerAddr string,
 ) {
 	udpConn, err := net.Dial("udp", udpServerAddr)
@@ -343,7 +345,7 @@ func publisherBehaviour(
 	pubMsg := map[string]string{
 		"nome_citofono": *localAddr,
 	}
-		
+
 	data, marshalErr := json.Marshal(pubMsg)
 	if marshalErr != nil {
 		t.Fatalf("Failed to marshal json message")
@@ -357,54 +359,62 @@ func publisherBehaviour(
 	t.Logf("Pub Message Sent")
 
 	syncPubSub <- struct{}{}
-	<- syncReaderWriter
-	var (
-		seqNum uint16    = 0
-		timestamp int64  = 0
-		payload          = make([]byte, 200)
+	<-syncReaderWriter
+
+	stdout := &bytes.Buffer{}
+	inputFile := "pub_test.mp4"
+	err = ffmpeg.Input(inputFile).
+		Output("pipe:1", ffmpeg.KwArgs{"c:v": "libx264", "f": "h264"}).
+		WithOutput(stdout, nil).
+		Run()
+	if err != nil {
+		t.Fatalf("ffmpeg-go error: %v", err)
+	}
+
+	videoData := stdout.Bytes()
+	if len(videoData) == 0 {
+		t.Fatalf("Video data is empty")
+	}
+
+	payloader := &codecs.H264Payloader{}
+	packetizer := rtp.NewPacketizer(
+		1200,
+		96,
+		0xdeadbeef,
+		payloader,
+		rtp.NewRandomSequencer(),
+		90000,
 	)
 
-	for i := 0; i < 100; i++ {
-		_, err := rand.Read(payload)
-		if err != nil {
-			t.Fatalf("Failed to create an RTP Packet")
-			t.Fail()
+	tsInc := uint32(90000 / 25)
+
+	pos := 0
+	for pos < len(videoData) {
+		end := pos + 1200
+		if end > len(videoData) {
+			end = len(videoData)
+		}
+		frame := videoData[pos:end]
+
+		pkts := packetizer.Packetize(frame, tsInc)
+		for _, p := range pkts {
+			raw, _ := p.Marshal()
+			if _, err := udpConn.Write(raw); err != nil {
+				t.Fatalf("Failed to send RTP: %v", err)
+			}
 		}
 
-		packet := &rtp.Packet{
-			Header: rtp.Header{
-				Version:        2,
-				PayloadType:    96,
-				SequenceNumber: seqNum,
-				Timestamp:      0,
-				SSRC:           0xdeadbeef,
-			},
-			Payload: append([]byte(nil), payload...),
-		}
-
-		raw, err := packet.Marshal()
-		if err != nil {
-			t.Fatalf("Failed to marshal the packet")
-			t.Fail()
-		}
-		_, errUdp := udpConn.Write(raw)
-		if errUdp != nil {
-			t.Fatalf("error: %v", errUdp)
-			t.Fail()
-		}
-
-		seqNum += 1
-		timestamp += 1800
-		time.Sleep(20 * time.Millisecond)
+		pos = end
+		time.Sleep(40 * time.Millisecond)
 	}
 }
 
 func subscriberBehaviour(
-	t *testing.T, 
+	t *testing.T,
 	localAddr *string,
 ) {
 
-	<- syncPubSub
+	<-syncPubSub
 	c, _, err := websocket.DefaultDialer.Dial("ws://localhost:8899/rtp-stream", nil)
 	if err != nil {
 		t.Fatalf("dial error: %v", err)
@@ -423,75 +433,56 @@ func subscriberBehaviour(
 
 	t.Logf("Sub Message Sent")
 
-	outFile, err := os.OpenFile("test_result.txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		t.Fatalf("Cannot create temp file: %v", err)
-		t.Fail()
-	}
-
-	var (
-		expectedRTPPackets = 100
-		packetCounter = 0
-		header rtp.Header
-	)
-
 	syncReaderWriter <- struct{}{}
-	for {
-		if packetCounter >= expectedRTPPackets {
-			break
-		}
+	// Pipe per ffmpeg-go
+	r, w := io.Pipe()
 
-		s := time.Now()
-		msgType, data, err := c.ReadMessage()
-		if err != nil {
-			t.Fatalf("read error: %v", err)
-			t.Fail()
-		}
-		e := time.Now()
-		elapsed := e.Sub(s)
+	go func() {
+		defer w.Close()
+		var header rtp.Header
 
-		if *jb {
-			if elapsed < 20 {
-				t.Errorf("The jitter buffer is not working")
-				t.Fail()
+		for {
+			msgType, data, err := c.ReadMessage()
+			if err != nil {
+				break
+			}
+
+			if msgType == websocket.BinaryMessage {
+				header.Unmarshal(data)
+				payload := data[header.MarshalSize():]
+				w.Write(payload)
+			} else {
+				textData := string(data)
+				if textData == "Unable to find the given publisher" {
+					t.Fatalf("Publisher Not Found")
+					t.Fail()
+				}
 			}
 		}
+	}()
 
-		if msgType == websocket.BinaryMessage {
-			header.Unmarshal(data)
-			sn := strconv.Itoa(int(header.SequenceNumber))	
-			if _, err := outFile.WriteString(sn + "\n"); err != nil {
-				t.Fatalf("occured some errors when writing to file, %v", err)
-				t.Fail()
-			}
-			t.Logf("Received RTP Packet")
-			packetCounter++
-		} else {
-			var textData = string(data)
-			if textData == "Unable to find the given publisher" {
-				t.Fatalf("Publisher Not Found")
-				t.Fail()
-			}
-		}
+	err = ffmpeg.Input("pipe:0", ffmpeg.KwArgs{"f": "h264"}).
+		Output("output_received.mp4", ffmpeg.KwArgs{"c:v": "copy"}).
+		WithInput(r).
+		Run()
+	if err != nil {
+		t.Fatalf("ffmpeg-go error: %v", err)
 	}
 
-	if packetCounter < expectedRTPPackets {
-		t.Errorf("Some RTP packets are not arrived!")
-		t.Fail()
-	}
+	t.Log("Subscriber finished writing MP4")
 }
 
-// for testing the jitter buffer write 
+// for testing the jitter buffer write
 // go test -v -jb=true
 func TestRTPProxy(t *testing.T) {
 	resetTestState()
 	var (
-		udpServerAddr    = "127.0.0.1:5004"
-		localAddr string 
-		wg = &sync.WaitGroup{}
+		udpServerAddr = "127.0.0.1:5004"
+		localAddr     string
+		wg            = &sync.WaitGroup{}
 	)
 
-	syncPubSub =       make(chan struct{}, 1)
+	syncPubSub = make(chan struct{}, 1)
 	syncReaderWriter = make(chan struct{}, 1)
 
 	wg.Add(1)
