@@ -165,7 +165,7 @@ func (e *Exchanger) sendToMailBoxes(routingKey *net.UDPAddr, data []byte, seqNum
 	for _, sub := range subs {
 		mailBox, ok := e.mailBoxesHolder[sub.jobId]
 		if !ok {
-			break
+			continue
 		}
 
 		func(m chan<- []byte) {
@@ -199,22 +199,22 @@ func (e *Exchanger) forwardFromJitterBuffer(routingKey string) {
 
 			e.mu.RLock()
 			subs, ok := e.subsRoutingTable[routingKey]
-			e.mu.RUnlock()
 
 			if !ok {
 				logs.Log("[RTP-PROXY][EXCHANGER] " + subSearchErr.Error())
-				continue
-			}
+			} else {
+				for _, sub := range subs {
+					mailBox, ok := e.mailBoxesHolder[sub.jobId]
+					if !ok {
+						continue
+					}
 
-			for _, sub := range subs {
-				e.mu.RLock()
-				mailBox, ok := e.mailBoxesHolder[sub.jobId]
-				e.mu.RUnlock()
-				if !ok {
-					return
+					func(c chan<- []byte) {
+						c <- packet
+					}(mailBox)
 				}
-				mailBox <- packet
 			}
+			e.mu.RUnlock()
 		}
 	}
 }
