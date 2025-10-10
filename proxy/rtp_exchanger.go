@@ -62,7 +62,7 @@ func NewExchanger() *Exchanger {
 		size:              0,
 		gcRounds:          time.Duration(3),
 	}
-	go e.startGarbageCollector()
+	go e.detectIdlePublishers()
 
 	if configuration.Config.StaticJitterBuffer {
 		e.waitForPlayback = true
@@ -219,7 +219,7 @@ reaper_loop:
 		}
 	}
 
-	go e.deleteJitterBuffer(routingKey)
+	go e.deletePublisherJitterBuffer(routingKey)
 }
 
 // This function returns the publisher instance by
@@ -251,14 +251,14 @@ func (e *Exchanger) deleteMailBoxRegistration(jobId string) {
 	delete(e.mailBoxesHolder, jobId)
 }
 
-func (e *Exchanger) deleteJitterBuffer(pubAddr string) {
+func (e *Exchanger) deletePublisherJitterBuffer(pubAddr string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
 	delete(e.pubsJitterBuffers, pubAddr)
 }
 
-func (e *Exchanger) startGarbageCollector() {
+func (e *Exchanger) detectIdlePublishers() {
 	gcTick := time.NewTicker(e.gcRounds * time.Second)
 	defer gcTick.Stop()
 
