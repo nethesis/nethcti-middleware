@@ -8,6 +8,7 @@ package proxy
 import (
 	"errors"
 	"net"
+	"slices"
 	"sync"
 	"time"
 
@@ -266,17 +267,25 @@ func (e *Exchanger) detectIdlePublishers() {
 		gcTimestamp        time.Time
 		pubLatestTimestamp time.Time
 		timeout            = time.Duration(5) * time.Minute
+		asyncDeleter       chan int
 	)
 
 	for range gcTick.C {
 		e.mu.Lock()
+		asyncDeleter = make(chan int, len(e.pubs))
 
 		gcTimestamp = time.Now()
 		for pIndex := range e.pubs {
 			pubLatestTimestamp = e.pubs[pIndex].timestamp
 			if gcTimestamp.Sub(pubLatestTimestamp) > timeout {
 				delete(e.pubsRoutingTable, e.pubs[pIndex].addr.String())
+				delete(e.subsRoutingTable, e.pubs[pIndex].addr.String())
+				asyncDeleter <- pIndex
 			}
+		}
+		close(asyncDeleter)
+		for pubToEvict := range asyncDeleter {
+			e.pubs = slices.Delete(e.pubs, pubToEvict, pubToEvict+1)
 		}
 		e.mu.Unlock()
 	}
