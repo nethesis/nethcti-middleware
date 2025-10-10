@@ -266,7 +266,6 @@ func (e *Exchanger) startGarbageCollector() {
 			pubLatestTimestamp = e.pubs[pIndex].timestamp
 			if gcTimestamp.Sub(pubLatestTimestamp) > timeout {
 				delete(e.pubsRoutingTable, e.pubs[pIndex].addr.String())
-				delete(e.pubsJitterBuffers, e.pubs[pIndex].addr.String())
 			}
 		}
 		e.mu.Unlock()
