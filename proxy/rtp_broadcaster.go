@@ -98,7 +98,7 @@ func (r *Broadcaster) HandleBroadcast(c *gin.Context) {
 
 		err = conn.WriteMessage(websocket.BinaryMessage, streamingPacket)
 		if err != nil {
-			logs.Log("[RTP-PROXY][CLIENT] Broadcaster dropped due to following error: " + err.Error())
+			logs.Log("[ERROR][RTP-PROXY] Broadcaster dropped due to following error: " + err.Error())
 			r.deleteJob(jobId)
 			r.subHandler.deleteMailBoxRegistration(jobId)
 			break

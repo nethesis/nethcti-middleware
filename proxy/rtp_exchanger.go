@@ -137,7 +137,7 @@ func (e *Exchanger) sendToMailBoxes(routingKey *net.UDPAddr, data []byte, seqNum
 
 	pub, err := e.routeByKey(routingKey)
 	if err != nil {
-		logs.Log("[RTP-PROXY][EXCHANGER] Failed to route RTP packet: " + err.Error())
+		logs.Log("[ERROR][RTP-PROXY] Failed to route RTP packet: " + err.Error())
 		return err
 	}
 
@@ -147,7 +147,7 @@ func (e *Exchanger) sendToMailBoxes(routingKey *net.UDPAddr, data []byte, seqNum
 
 	subs, ok := e.subsRoutingTable[routingKey.String()]
 	if !ok {
-		logs.Log("[RTP-PROXY][EXCHANGER] RTP packet dropped due to absent CTI clients")
+		logs.Log("[ERROR][RTP-PROXY] RTP packet dropped due to absent CTI clients")
 		return subSearchErr
 	}
 
@@ -156,7 +156,7 @@ func (e *Exchanger) sendToMailBoxes(routingKey *net.UDPAddr, data []byte, seqNum
 	if e.waitForPlayback {
 		jb, ok := e.pubsJitterBuffers[routingKey.String()]
 		if !ok {
-			logs.Log("[RTP-PROXY][EXCHANGER] RTP packet dropped due to absent jitter buffer")
+			logs.Log("[ERROR][RTP-PROXY] RTP packet dropped due to absent jitter buffer")
 			return nil
 		}
 		jb.push(data, seqNumber)
@@ -185,7 +185,7 @@ func (e *Exchanger) forwardFromJitterBuffer(routingKey string) {
 	e.mu.RUnlock()
 
 	if !ok {
-		logs.Log("[RTP-PROXY][EXCHANGER] Failed to run the packet reaper due to absent jitter buffer")
+		logs.Log("[ERROR][RTP-PROXY] Failed to run the packet reaper due to absent jitter buffer")
 		return
 	}
 
@@ -203,7 +203,7 @@ reaper_loop:
 			subs, ok := e.subsRoutingTable[routingKey]
 
 			if !ok {
-				logs.Log("[RTP-PROXY][EXCHANGER] " + subSearchErr.Error())
+				logs.Log("[ERROR][RTP-PROXY] " + subSearchErr.Error())
 			} else {
 				for _, sub := range subs {
 					mailBox, ok := e.mailBoxesHolder[sub.jobId]

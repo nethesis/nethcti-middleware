@@ -45,7 +45,7 @@ func (p *Proxy) StartListener() {
 		return
 	}
 
-	logs.Log("[RTP-PROXY][SERVER] UDP listener run at " + p.addr.String())
+	logs.Log("[INFO][RTP-PROXY] UDP listener run at " + p.addr.String())
 	p.configureProxy()
 	for {
 		// maybe can be optimized
@@ -53,7 +53,7 @@ func (p *Proxy) StartListener() {
 		n, remoteAddr, err := p.listener.ReadFromUDP(datagram)
 		if err != nil {
 			p.listenerDone <- struct{}{}
-			logs.Log("[RTP-PROXY][SERVER] Occured " + err.Error() + " while listening UDP connections")
+			logs.Log("[ERROR][RTP-PROXY] Occured " + err.Error() + " while listening UDP connections")
 			break
 		}
 
@@ -64,7 +64,7 @@ func (p *Proxy) StartListener() {
 func (p *Proxy) WaitForShutdown() {
 	<- p.listenerDone
 	p.listener.Close()
-	logs.Log("[RTP-PROXY][SERVER] UDP server dropped")
+	logs.Log("[ERROR][RTP-PROXY] UDP server dropped")
 }
 
 func (p *Proxy) handleDatagram(datagram []byte, n int, remoteAddr *net.UDPAddr) {
@@ -106,7 +106,7 @@ func (p *Proxy) handleDatagram(datagram []byte, n int, remoteAddr *net.UDPAddr) 
 
 	select {
 	case <- ctx.Done():
-		logs.Log("[RTP-PROXY][SERVER] timeout occured while handling UDP connection")
+		logs.Log("[ERROR][RTP-PROXY] timeout occured while handling UDP connection")
 		ctx.Err()
 	case <- done:
 		return

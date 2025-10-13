@@ -26,14 +26,14 @@ func handleMessage(msg any, exc *Exchanger, remoteAddr *net.UDPAddr, listener *n
 
 		if err != nil {
 			if _, err := listener.WriteToUDP([]byte("nack"), remoteAddr); err != nil {
-				logs.Log("[RTP-PROXY][FUNC] Occured " + err.Error() + " while writing NACK message to " + remoteAddr.String())
+				logs.Log("[WARNING][RTP-PROXY] Occured " + err.Error() + " while writing NACK message to " + remoteAddr.String())
 				return
 			}
 		}
 
 		_, err = listener.WriteToUDP([]byte("ack"), remoteAddr)
 		if err != nil {
-			logs.Log("[RTP-PROXY][FUNC] Occured " + err.Error() + " while writing ACK message to " + remoteAddr.String())
+			logs.Log("[WARNING][RTP-PROXY] Occured " + err.Error() + " while writing ACK message to " + remoteAddr.String())
 		}
 	}
 }

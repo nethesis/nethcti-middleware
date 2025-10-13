@@ -114,7 +114,7 @@ func (j *jitterBuffer) pop(ctx context.Context) {
 		j.mu.Unlock()
 	}
 
-	logs.Log("[RTP-PROXY][JITTER-BUFFER] jitter buffer reader dropped due to a connection timeout")
+	logs.Log("[INFO][RTP-PROXY] jitter buffer reader dropped due to a connection timeout")
 
 }
 
