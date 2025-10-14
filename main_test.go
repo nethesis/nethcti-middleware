@@ -144,6 +144,10 @@ func cleanupTestEnvironment() {
 	os.Unsetenv("NETHVOICE_MIDDLEWARE_SECRETS_DIR")
 	os.Unsetenv("NETHVOICE_MIDDLEWARE_ISSUER_2FA")
 	os.Unsetenv("NETHVOICE_MIDDLEWARE_SENSITIVE_LIST")
+	os.Unsetenv("RTP_PROXY_ADDR")
+	os.Unsetenv("RTP_PROXY_PORT")
+	os.Unsetenv("JITTER_BUFFER")
+	os.Unsetenv("PLAYBACK_RATE")
 }
 
 // Helper function to reset test state between tests
@@ -408,9 +412,12 @@ func subscriberBehaviour(t *testing.T, localAddr *string) {
 	go func() {
 		defer wg.Done()
 		cmd := exec.Command("ffmpeg",
-			"-protocol_whitelist", "file,udp,rtp",
-		    "-i", "stream.sdp", 
-			"output_received.mp4",
+		    "-protocol_whitelist", "file,udp,rtp",
+    		"-fflags", "+genpts",
+    		"-i", "stream.sdp",
+    		"-c:v", "mpeg4",
+    		"-q:v", "5",
+    		"output_received.ts",
 		)
 
 		cmd.Stdout = os.Stdout
@@ -425,7 +432,8 @@ func subscriberBehaviour(t *testing.T, localAddr *string) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		var pkt = &rtp.Packet{}
+		var pkt rtp.Packet
+		var header rtp.Header
 
 		conn, err := net.Dial("udp", "127.0.0.1:5006")
 		if err != nil {
@@ -439,6 +447,11 @@ func subscriberBehaviour(t *testing.T, localAddr *string) {
 				break
 			}
 			if msgType == websocket.BinaryMessage {
+				_, errH := header.Unmarshal(data)
+				if errH != nil {
+					t.Fatalf("Error while reading RTP header")
+				}
+
 				err := pkt.Unmarshal(data)
 				if err != nil {
 					t.Fatalf("Error while reading RTP packet")
