@@ -27,11 +27,11 @@ type Configuration struct {
 	SecretsDir string `json:"secrets_dir"`
 	Issuer2FA  string `json:"issuer_2fa"`
 
-	RTPProxyAddr string
-	RTPProxyPort string
+	RTPProxyAddr string `json:"rtp_proxy_addr"`
+	RTPProxyPort string `json:"rtp_proxy_port"`
 
-	StaticJitterBuffer bool
-	JitterBufferPlaybackRate string
+	StaticJitterBuffer       bool    `json:"jitter_buffer"`  
+	JitterBufferPlaybackRate string  `json:"playback_rate"`
 }
 
 
