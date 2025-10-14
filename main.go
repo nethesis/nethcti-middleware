@@ -7,6 +7,8 @@ package main
 
 import (
 	"io"
+	"regexp"
+	"strings"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-contrib/gzip"
@@ -115,12 +117,22 @@ func createRouter() *gin.Engine {
 		secretKeyHeader := c.GetHeader("Secretkey")
 		isFreePBXAdmin := userHeader == "admin" && secretKeyHeader != ""
 
-		// Check if the API is in the FreePBX API list (exact match)
+		// Check if the API is in the FreePBX API list (prefix match with validation)
 		isFreePBXAPI := false
 		for _, freepbxPath := range configuration.Config.FreePBXAPIs {
 			if path == freepbxPath {
+				// Exact match
 				isFreePBXAPI = true
 				break
+			} else if strings.HasPrefix(path, freepbxPath+"/") {
+				// Prefix match - validate the remainder contains only numeric ID or safe paths
+				remainder := path[len(freepbxPath)+1:]
+				// Allow only numeric IDs (extensions/trunks) - no path traversal or additional paths
+				matched, _ := regexp.MatchString(`^\d+$`, remainder)
+				if matched {
+					isFreePBXAPI = true
+					break
+				}
 			}
 		}
 
