@@ -8,7 +8,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"io"
+	_ "io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -32,7 +32,7 @@ import (
 	"github.com/nethesis/nethcti-middleware/utils"
 	"github.com/pion/rtp"
 	_ "github.com/pion/rtp/codecs"
-	ffmpeg "github.com/u2takey/ffmpeg-go"
+	_ "github.com/u2takey/ffmpeg-go"
 )
 
 // Global variables for test server URLs and mock server
@@ -369,8 +369,11 @@ func publisherBehaviour(
 		"-c:v", "copy",
 		"-an",
 		"-f", "rtp",
-		"udp://127.0.0.1:5004?" + "localport="  + port,
+		"udp://127.0.0.1:5004?localport=" + port,
 	)
+
+	cmd.Stdout = os.Stdout
+    cmd.Stderr = os.Stderr
 
 	cmdErr := cmd.Start()
 	if cmdErr != nil {
@@ -398,10 +401,37 @@ func subscriberBehaviour(t *testing.T, localAddr *string) {
 
 	syncReaderWriter <- struct{}{}
 
-	r, w := io.Pipe()
+	var wg sync.WaitGroup
+
+
+	wg.Add(1)
 	go func() {
-		defer w.Close()
+		defer wg.Done()
+		cmd := exec.Command("ffmpeg",
+			"-protocol_whitelist", "file,udp,rtp",
+		    "-i", "stream.sdp", 
+			"output_received.mp4",
+		)
+
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+
+		if err := cmd.Start(); err != nil {
+			t.Fatalf("FFmpeg start error: %v", err)
+		}
+		defer cmd.Wait()
+	}()
+	
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
 		var pkt = &rtp.Packet{}
+
+		conn, err := net.Dial("udp", "127.0.0.1:5006")
+		if err != nil {
+			t.Fatalf("Error: %v", err)
+			return
+		}
 
 		for {
 			msgType, data, err := c.ReadMessage()
@@ -414,20 +444,14 @@ func subscriberBehaviour(t *testing.T, localAddr *string) {
 					t.Fatalf("Error while reading RTP packet")
 				}
 				t.Logf("Received RTP Packet!")
-				w.Write(pkt.Payload)
+				conn.Write(data)
 			} else if string(data) == "Unable to find the given publisher" {
 				t.Fatalf("Publisher Not Found")
 			}
 		}
 	}()
 
-	errFFmpeg := ffmpeg.Input("pipe:0", ffmpeg.KwArgs{"f": "mpegts",
-				"i": "pipe:0",
-				}).Output("output_received.ts", ffmpeg.KwArgs{"c:v": "copy"}).WithInput(r).WithOutput(os.Stdout).Run()
-
-	if errFFmpeg != nil {
-		t.Fatalf("ffmpeg-go error: %v", errFFmpeg)
-	}
+	wg.Wait()
 	t.Log("Subscriber finished writing MP4")
 }
 
