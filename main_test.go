@@ -362,17 +362,20 @@ func publisherBehaviour(
 	syncPubSub <- struct{}{}
 	<-syncReaderWriter
 
-	cmd := exec.Command("cvlc", 
-		"pub_test.mp4",
-		"--sout", "#rtp{dst=127.0.0.1,port=5004,mux=ts}",
-	    "--no-sout-rtp-sap",
-	    "--no-sout-standard-sap",
-	    "--ttl=1",
-		"--sout-keep")
+	_, port, _ := net.SplitHostPort(*localAddr)
+	cmd := exec.Command("ffmpeg",
+		"-re",
+		"-i", "pub_test.mp4",
+		"-c:v", "copy",
+		"-an",
+		"-f", "rtp",
+		"udp://127.0.0.1:5004?" + "localport="  + port,
+	)
 
 	cmdErr := cmd.Start()
 	if cmdErr != nil {
-		t.Fatalf("VLC Error: %v", cmdErr)
+		t.Fatalf("FFmpeg error: %v", cmdErr)
+		t.Fail()
 	}
 }
 
@@ -398,7 +401,7 @@ func subscriberBehaviour(t *testing.T, localAddr *string) {
 	r, w := io.Pipe()
 	go func() {
 		defer w.Close()
-		var header rtp.Header
+		var pkt = &rtp.Packet{}
 
 		for {
 			msgType, data, err := c.ReadMessage()
@@ -406,22 +409,24 @@ func subscriberBehaviour(t *testing.T, localAddr *string) {
 				break
 			}
 			if msgType == websocket.BinaryMessage {
-				header.Unmarshal(data)
-				payload := data[header.MarshalSize():]
+				err := pkt.Unmarshal(data)
+				if err != nil {
+					t.Fatalf("Error while reading RTP packet")
+				}
 				t.Logf("Received RTP Packet!")
-				w.Write(payload)
+				w.Write(pkt.Payload)
 			} else if string(data) == "Unable to find the given publisher" {
 				t.Fatalf("Publisher Not Found")
 			}
 		}
 	}()
 
-	err = ffmpeg.Input("pipe:0", ffmpeg.KwArgs{"f": "h264"}).
-		Output("output_received.mp4", ffmpeg.KwArgs{"c:v": "copy"}).
-		WithInput(r).
-		Run()
-	if err != nil {
-		t.Fatalf("ffmpeg-go error: %v", err)
+	errFFmpeg := ffmpeg.Input("pipe:0", ffmpeg.KwArgs{"f": "mpegts",
+				"i": "pipe:0",
+				}).Output("output_received.ts", ffmpeg.KwArgs{"c:v": "copy"}).WithInput(r).WithOutput(os.Stdout).Run()
+
+	if errFFmpeg != nil {
+		t.Fatalf("ffmpeg-go error: %v", errFFmpeg)
 	}
 	t.Log("Subscriber finished writing MP4")
 }
