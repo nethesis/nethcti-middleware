@@ -410,19 +410,20 @@ func subscriberBehaviour(t *testing.T, localAddr *string) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		cmd := exec.Command("nice", "-n", "10", "ffmpeg",
-    			"-y",
-    			"-protocol_whitelist", "file,udp,rtp",
-    			"-fflags", "+genpts",
-    			"-buffer_size", "1000000",
-    			"-max_delay", "500000",
-    			"-i", "stream.sdp",
-    			"-c:v", "h264",
-    			"-preset", "veryfast",
-    			"-loglevel", "debug",
-    			"-f", "flv",
-    			"output_received.flv",
-		)
+		cmd := exec.Command("ffmpeg",
+			"-y",
+	        "-protocol_whitelist", "file,udp,rtp",
+ 	  	    "-i", "stream.sdp",
+  	      	"-fflags", "+genpts+discardcorrupt",
+   	     	"-err_detect", "ignore_err+crccheck",
+        	"-buffer_size", "10000000",
+        	"-max_delay", "5000000",
+        	"-c:v", "mpeg4",
+        	"-f", "matroska",
+        	"output.mkv",
+        	"-loglevel", "debug",
+    	)
+
 
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
