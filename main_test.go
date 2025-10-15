@@ -411,7 +411,7 @@ func subscriberBehaviour(t *testing.T, localAddr *string) {
 	go func() {
 		defer wg.Done()
 		cmd := exec.Command("ffmpeg",
-			"-y",
+		    "-y",
 	        "-protocol_whitelist", "file,udp,rtp",
  	  	    "-i", "stream.sdp",
   	      	"-fflags", "+genpts+discardcorrupt",
@@ -446,7 +446,7 @@ func subscriberBehaviour(t *testing.T, localAddr *string) {
 			return
 		}
 
-		c.SetReadDeadline(time.Now().Add(50 * time.Second))
+		c.SetReadDeadline(time.Now().Add(45 * time.Second))
 		for {
 			msgType, data, err := c.ReadMessage()
 			if err != nil {
