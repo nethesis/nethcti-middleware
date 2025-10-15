@@ -81,7 +81,7 @@ func setupTestEnvironment() {
 
 	if *jb {
 		os.Setenv("JITTER_BUFFER", "on")
-		os.Setenv("PLAYBACK_RATE", "60")
+		os.Setenv("PLAYBACK_RATE", "20")
 	}
 
 	// Create test secrets directory
@@ -371,6 +371,7 @@ func publisherBehaviour(
           "-re", 
           "-i", "pub_test.mp4",
          "-an", 
+		 "-c:v", "mpeg4",
          "-f", "rtp",
 	     "udp://127.0.0.1:5004?localport=" + port,
    )
@@ -406,7 +407,6 @@ func subscriberBehaviour(t *testing.T, localAddr *string) {
 
 	var wg sync.WaitGroup
 
-
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -418,12 +418,11 @@ func subscriberBehaviour(t *testing.T, localAddr *string) {
    	     	"-err_detect", "ignore_err+crccheck",
         	"-buffer_size", "10000000",
         	"-max_delay", "5000000",
-        	"-c:v", "mpeg4",
+        	"-c:v", "copy",
         	"-f", "matroska",
         	"output.mkv",
         	"-loglevel", "debug",
     	)
-
 
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
@@ -431,7 +430,8 @@ func subscriberBehaviour(t *testing.T, localAddr *string) {
 		if err := cmd.Start(); err != nil {
 			t.Fatalf("FFmpeg start error: %v", err)
 		}
-		defer cmd.Wait()
+
+		cmd.Wait()
 	}()
 	
 	wg.Add(1)
@@ -446,6 +446,7 @@ func subscriberBehaviour(t *testing.T, localAddr *string) {
 			return
 		}
 
+		c.SetReadDeadline(time.Now().Add(50 * time.Second))
 		for {
 			msgType, data, err := c.ReadMessage()
 			if err != nil {
@@ -472,7 +473,6 @@ func subscriberBehaviour(t *testing.T, localAddr *string) {
 	}()
 
 	wg.Wait()
-	t.Log("Subscriber finished writing MP4")
 }
 
 func TestRTPProxy(t *testing.T) {
