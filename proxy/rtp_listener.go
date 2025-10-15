@@ -49,7 +49,7 @@ func (p *Proxy) StartListener() {
 	p.configureProxy()
 	for {
 		// maybe can be optimized
-		datagram := make([]byte, 1024)
+		datagram := make([]byte, 2048)
 		n, remoteAddr, err := p.listener.ReadFromUDP(datagram)
 		if err != nil {
 			p.listenerDone <- struct{}{}
@@ -115,6 +115,6 @@ func (p *Proxy) handleDatagram(datagram []byte, n int, remoteAddr *net.UDPAddr) 
 
 // lean proxy configuration
 func (p *Proxy) configureProxy() {
-	p.listener.SetWriteBuffer(4096)
-	p.listener.SetReadBuffer(4096)	
+	p.listener.SetWriteBuffer(1024 * 1024)
+	p.listener.SetReadBuffer(1024 * 1024)	
 }
