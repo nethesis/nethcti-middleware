@@ -95,8 +95,6 @@ func (e *Exchanger) addPublisher(address string) error {
 		go e.forwardFromJitterBuffer(pub.addr.String())
 	}
 
-	logs.Log("[INFO][RTP-PROXY] publisher address: " + address)
-
 	return nil
 }
 
