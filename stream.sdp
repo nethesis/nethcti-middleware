@@ -4,6 +4,4 @@ s=H264 Stream
 c=IN IP4 127.0.0.1
 t=0 0
 m=video 5006 RTP/AVP 96
-a=rtpmap:96 H264/90000
-a=fmtp:96 packetization-mode=1; sprop-parameter-sets=Z0IAH5WoFAFuQA==,aM4BqA==
-a=control:*
+a=rtpmap:96 MP4V-ES/90000

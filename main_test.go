@@ -368,13 +368,12 @@ func publisherBehaviour(
 
 	_, port, _ := net.SplitHostPort(*localAddr)
 	cmd := exec.Command("ffmpeg",
-		"-re",
-		"-i", "pub_test.mp4",
-		"-c:v", "copy",
-		"-an",
-		"-f", "rtp",
-		"udp://127.0.0.1:5004?localport=" + port,
-	)
+          "-re", 
+          "-i", "pub_test.mp4",
+         "-an", 
+         "-f", "rtp",
+	     "udp://127.0.0.1:5004?localport=" + port,
+   )
 
 	cmd.Stdout = os.Stdout
     cmd.Stderr = os.Stderr
@@ -411,13 +410,18 @@ func subscriberBehaviour(t *testing.T, localAddr *string) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		cmd := exec.Command("ffmpeg",
-		    "-protocol_whitelist", "file,udp,rtp",
-    		"-fflags", "+genpts",
-    		"-i", "stream.sdp",
-    		"-c:v", "mpeg4",
-    		"-q:v", "5",
-    		"output_received.ts",
+		cmd := exec.Command("nice", "-n", "10", "ffmpeg",
+    			"-y",
+    			"-protocol_whitelist", "file,udp,rtp",
+    			"-fflags", "+genpts",
+    			"-buffer_size", "1000000",
+    			"-max_delay", "500000",
+    			"-i", "stream.sdp",
+    			"-c:v", "h264",
+    			"-preset", "veryfast",
+    			"-loglevel", "debug",
+    			"-f", "flv",
+    			"output_received.flv",
 		)
 
 		cmd.Stdout = os.Stdout
@@ -450,16 +454,18 @@ func subscriberBehaviour(t *testing.T, localAddr *string) {
 				_, errH := header.Unmarshal(data)
 				if errH != nil {
 					t.Fatalf("Error while reading RTP header")
+					t.Fail()
 				}
 
 				err := pkt.Unmarshal(data)
 				if err != nil {
 					t.Fatalf("Error while reading RTP packet")
+					t.Fail()
 				}
-				t.Logf("Received RTP Packet!")
 				conn.Write(data)
 			} else if string(data) == "Unable to find the given publisher" {
 				t.Fatalf("Publisher Not Found")
+				t.Fail()
 			}
 		}
 	}()
