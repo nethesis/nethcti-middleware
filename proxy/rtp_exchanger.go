@@ -94,6 +94,9 @@ func (e *Exchanger) addPublisher(address string) error {
 		e.pubsJitterBuffers[pub.addr.String()] = newJitterBuffer()
 		go e.forwardFromJitterBuffer(pub.addr.String())
 	}
+
+	logs.Log("[INFO][RTP-PROXY] publisher address: " + address)
+
 	return nil
 }
 
@@ -225,8 +228,8 @@ reaper_loop:
 
 // This function returns the publisher instance by
 // looking it up in the pubsRoutingTable.
-func (e *Exchanger) routeByKey(pubAddr *net.UDPAddr) (*publisher, error) {
-	locationIndex, ok := e.pubsRoutingTable[pubAddr.String()]
+func (e *Exchanger) routeByKey(addr *net.UDPAddr) (*publisher, error) {
+	locationIndex, ok := e.pubsRoutingTable[addr.String()]
 
 	if !ok {
 		return nil, routePublishErr
@@ -277,7 +280,8 @@ func (e *Exchanger) detectIdlePublishers() {
 		gcTimestamp = time.Now()
 		for pIndex := range e.pubs {
 			pubLatestTimestamp = e.pubs[pIndex].timestamp
-			if gcTimestamp.Sub(pubLatestTimestamp) > timeout {
+			clock := gcTimestamp.Sub(pubLatestTimestamp)
+			if clock > timeout {
 				delete(e.pubsRoutingTable, e.pubs[pIndex].addr.String())
 				delete(e.subsRoutingTable, e.pubs[pIndex].addr.String())
 				asyncDeleter <- pIndex

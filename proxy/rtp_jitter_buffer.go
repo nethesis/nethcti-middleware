@@ -17,12 +17,13 @@ import (
 	"github.com/nethesis/nethcti-middleware/logs"
 )
 
-const defaultBufferMaxCapacity = 20
+const defaultBufferMaxCapacity = 100
 
 type (
 	overflowPacketQueue struct {
 		// FIFO queue used for temporarily storing packets
-		oQueue []node
+		oQueue              []node
+		recentInsertionFlag bool
 	}
 
 	packetQueue struct {
@@ -100,13 +101,24 @@ func (j *jitterBuffer) pop(ctx context.Context) {
 
 		j.mu.Lock()
 
-		// Perform packet migration if the primary buffer has available space and the backup queue contains packets
-		if !j.buffer.isQueueOverloaded() && j.packetOverflow.hasElements() {
-			overflow := j.packetOverflow.popFirstPacket()
-			j.buffer.enqueue(overflow.payload, overflow.rtpSequenceNumber)
+		// Perform packet migration if the backup queue contains packets
+		if j.packetOverflow.hasElements() {
+			if n, ok := j.buffer.peekWithoutDeletion(); ok {
+				if j.packetOverflow.recentInsertionFlag {
+					j.packetOverflow.sortOverflowQueue()
+					j.packetOverflow.recentInsertionFlag = false
+				}
+
+				packet := j.packetOverflow.popWithoutDeletion()
+				if packet.rtpSequenceNumber < n.rtpSequenceNumber {
+					j.playbackBus <- packet.payload
+					j.packetOverflow.popFirstPacket()
+					j.mu.Unlock()
+					continue
+				}
+			}
 		}
 
-		// The buffer can now access the recently migrated packets
 		if n, ok = j.buffer.peek(); ok {
 			j.playbackBus <- n.payload
 		}
@@ -115,7 +127,6 @@ func (j *jitterBuffer) pop(ctx context.Context) {
 	}
 
 	logs.Log("[INFO][RTP-PROXY] jitter buffer reader dropped due to a connection timeout")
-
 }
 
 func newPacketQueue() *packetQueue {
@@ -152,6 +163,14 @@ func (p *packetQueue) peek() (node, bool) {
 	return n, true
 }
 
+func (p *packetQueue) peekWithoutDeletion() (node, bool) {
+	if p.size == 0 {
+		return node{}, false
+	}
+
+	return p.queue[0], true
+}
+
 func (p *packetQueue) isQueueOverloaded() bool {
 	if p.size >= p.maxCapacity {
 		return true
@@ -178,6 +197,7 @@ func newOverflowPacketQueue() *overflowPacketQueue {
 func (o *overflowPacketQueue) insertPacket(payload []byte, sequenceNumber uint16) {
 	node := newNode(payload, sequenceNumber)
 	o.oQueue = append(o.oQueue, node)
+	o.recentInsertionFlag = true
 }
 
 // FIFO retrieval
@@ -185,6 +205,16 @@ func (o *overflowPacketQueue) popFirstPacket() node {
 	packet := o.oQueue[0]
 	o.oQueue = slices.Delete(o.oQueue, 0, 1)
 	return packet
+}
+
+func (o *overflowPacketQueue) sortOverflowQueue() {
+	slices.SortFunc(o.oQueue, func(a, b node) int {
+		return cmp.Compare(a.rtpSequenceNumber, b.rtpSequenceNumber)
+	})
+}
+
+func (o *overflowPacketQueue) popWithoutDeletion() node {
+	return o.oQueue[0]
 }
 
 func (o *overflowPacketQueue) hasElements() bool {
