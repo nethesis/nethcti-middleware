@@ -373,6 +373,7 @@ func publisherBehaviour(
 		"-i", "pub_test.mp4",
 		"-an",
 		"-c:v", "mpeg4",
+		"-b:v", "10M",
 		"-f", "rtp",
 		"udp://127.0.0.1:5004?localport="+port,
 	)
