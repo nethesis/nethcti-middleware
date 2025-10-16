@@ -8,6 +8,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	_ "io"
 	"net"
 	"net/http"
@@ -21,10 +22,10 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 
-	"flag"
-	"sync"
 	_ "crypto/rand"
+	"flag"
 	_ "strconv"
+	"sync"
 
 	"github.com/gorilla/websocket"
 	"github.com/nethesis/nethcti-middleware/models"
@@ -368,21 +369,20 @@ func publisherBehaviour(
 
 	_, port, _ := net.SplitHostPort(*localAddr)
 	cmd := exec.Command("ffmpeg",
-          "-re", 
-          "-i", "pub_test.mp4",
-         "-an", 
-		 "-c:v", "mpeg4",
-         "-f", "rtp",
-	     "udp://127.0.0.1:5004?localport=" + port,
-   )
+		"-re",
+		"-i", "pub_test.mp4",
+		"-an",
+		"-c:v", "mpeg4",
+		"-f", "rtp",
+		"udp://127.0.0.1:5004?localport="+port,
+	)
 
 	cmd.Stdout = os.Stdout
-    cmd.Stderr = os.Stderr
+	cmd.Stderr = os.Stderr
 
 	cmdErr := cmd.Start()
 	if cmdErr != nil {
 		t.Fatalf("FFmpeg error: %v", cmdErr)
-		t.Fail()
 	}
 }
 
@@ -405,35 +405,42 @@ func subscriberBehaviour(t *testing.T, localAddr *string) {
 
 	syncReaderWriter <- struct{}{}
 
-	var wg sync.WaitGroup
+	var (
+		wg         sync.WaitGroup
+		ffmpegErr  error
+		udpDialErr error
+		rtpErr     error
+		subErr     error
+	)
 
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		cmd := exec.Command("ffmpeg",
-		    "-y",
-	        "-protocol_whitelist", "file,udp,rtp",
- 	  	    "-i", "stream.sdp",
-  	      	"-fflags", "+genpts+discardcorrupt",
-   	     	"-err_detect", "ignore_err+crccheck",
-        	"-buffer_size", "10000000",
-        	"-max_delay", "5000000",
-        	"-c:v", "copy",
-        	"-f", "matroska",
-        	"output.mkv",
-        	"-loglevel", "debug",
-    	)
+			"-y",
+			"-protocol_whitelist", "file,udp,rtp",
+			"-i", "stream.sdp",
+			"-fflags", "+genpts+discardcorrupt",
+			"-err_detect", "ignore_err+crccheck",
+			"-buffer_size", "10000000",
+			"-max_delay", "5000000",
+			"-c:v", "copy",
+			"-f", "matroska",
+			"output.mkv",
+			"-loglevel", "debug",
+		)
+		defer cmd.Wait()
 
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 
 		if err := cmd.Start(); err != nil {
-			t.Fatalf("FFmpeg start error: %v", err)
+			ffmpegErr = err
+			return
 		}
 
-		cmd.Wait()
 	}()
-	
+
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -442,7 +449,7 @@ func subscriberBehaviour(t *testing.T, localAddr *string) {
 
 		conn, err := net.Dial("udp", "127.0.0.1:5006")
 		if err != nil {
-			t.Fatalf("Error: %v", err)
+			udpDialErr = err
 			return
 		}
 
@@ -455,24 +462,40 @@ func subscriberBehaviour(t *testing.T, localAddr *string) {
 			if msgType == websocket.BinaryMessage {
 				_, errH := header.Unmarshal(data)
 				if errH != nil {
-					t.Fatalf("Error while reading RTP header")
-					t.Fail()
+					rtpErr = errH
+					break
 				}
 
 				err := pkt.Unmarshal(data)
 				if err != nil {
-					t.Fatalf("Error while reading RTP packet")
-					t.Fail()
+					rtpErr = err
+					break
 				}
 				conn.Write(data)
 			} else if string(data) == "Unable to find the given publisher" {
-				t.Fatalf("Publisher Not Found")
-				t.Fail()
+				subErr = errors.New("unable to find the given publisher")
+				break
 			}
 		}
 	}()
 
 	wg.Wait()
+
+	if ffmpegErr != nil {
+		t.Fatalf("FFMPEG error: %v", ffmpegErr)
+	}
+
+	if udpDialErr != nil {
+		t.Fatalf("UDP error: %v", udpDialErr)
+	}
+
+	if rtpErr != nil {
+		t.Fatalf("RTP error: %v", rtpErr)
+	}
+
+	if subErr != nil {
+		t.Fatalf("SUB error: %v", subErr)
+	}
 }
 
 func TestRTPProxy(t *testing.T) {
