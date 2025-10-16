@@ -351,7 +351,7 @@ func publisherBehaviour(
 	*localAddr = udpConn.LocalAddr().String()
 
 	pubMsg := map[string]string{
-		"nome_citofono": *localAddr,
+		"intercom_name": *localAddr,
 	}
 
 	data, err := json.Marshal(pubMsg)
