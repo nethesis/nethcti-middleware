@@ -172,11 +172,7 @@ func (p *packetQueue) peekWithoutDeletion() (node, bool) {
 }
 
 func (p *packetQueue) isQueueOverloaded() bool {
-	if p.size >= p.maxCapacity {
-		return true
-	}
-
-	return false
+	return p.size >= p.maxCapacity
 }
 
 func newNode(payload []byte, sequenceNumber uint16) node {

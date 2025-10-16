@@ -17,10 +17,10 @@ import (
 )
 
 var (
-	publishErr      = errors.New("Unable to create a new publisher")
-	routePublishErr = errors.New("Unable to find the given publisher")
-	indexPublishErr = errors.New("Unable to find the given publisher due to a corrupted location index")
-	subSearchErr    = errors.New("Unable to find subscribers for the given routing key")
+	errPublish      = errors.New("unable to create a new publisher")
+	errRoutePublish = errors.New("unable to find the given publisher")
+	errIndexPublish = errors.New("unable to find the given publisher due to a corrupted location index")
+	errSubSearch    = errors.New("unable to find subscribers for the given routing key")
 )
 
 // The exchanger is responsible for buffering
@@ -78,12 +78,12 @@ func (e *Exchanger) addPublisher(address string) error {
 
 	_, ok := e.pubsRoutingTable[address]
 	if ok {
-		return publishErr
+		return errPublish
 	}
 
 	pub := newPublisher(address)
 	if pub.addr.String() == "" {
-		return publishErr
+		return errPublish
 	}
 
 	e.pubs = append(e.pubs, pub)
@@ -149,7 +149,7 @@ func (e *Exchanger) sendToMailBoxes(routingKey *net.UDPAddr, data []byte, seqNum
 	subs, ok := e.subsRoutingTable[routingKey.String()]
 	if !ok {
 		logs.Log("[ERROR][RTP-PROXY] RTP packet dropped due to absent CTI clients")
-		return subSearchErr
+		return errSubSearch
 	}
 
 	// if the jitter buffer is required each publisher
@@ -204,7 +204,7 @@ reaper_loop:
 			subs, ok := e.subsRoutingTable[routingKey]
 
 			if !ok {
-				logs.Log("[ERROR][RTP-PROXY] " + subSearchErr.Error())
+				logs.Log("[ERROR][RTP-PROXY] " + errSubSearch.Error())
 			} else {
 				for _, sub := range subs {
 					mailBox, ok := e.mailBoxesHolder[sub.jobId]
@@ -218,6 +218,8 @@ reaper_loop:
 				}
 			}
 			e.mu.RUnlock()
+		default:
+			continue
 		}
 	}
 
@@ -230,12 +232,12 @@ func (e *Exchanger) routeByKey(addr *net.UDPAddr) (*publisher, error) {
 	locationIndex, ok := e.pubsRoutingTable[addr.String()]
 
 	if !ok {
-		return nil, routePublishErr
+		return nil, errRoutePublish
 	}
 
 	pub := e.pubs[locationIndex]
 	if pub.addr.String() == "" {
-		return nil, indexPublishErr
+		return nil, errIndexPublish
 	}
 
 	return pub, nil

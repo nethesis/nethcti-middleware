@@ -92,7 +92,7 @@ func (r *Broadcaster) HandleBroadcast(c *gin.Context) {
 		streamingPacket, ok := <-rtpStreamMailBox
 		if !ok {
 			r.deleteJob(jobId)
-			r.nack(conn, errors.New("Mail Box closed due to an idle publisher"))
+			r.nack(conn, errors.New("mail box closed due to an idle publisher"))
 			break
 		}
 

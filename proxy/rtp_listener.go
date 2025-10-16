@@ -6,20 +6,21 @@
 package proxy
 
 import (
-	"net"
 	"context"
-	"time"
-	"github.com/pion/rtp"
-	"github.com/nethesis/nethcti-middleware/models"
-	"github.com/nethesis/nethcti-middleware/logs"
 	"encoding/json"
-) 
+	"net"
+	"time"
+
+	"github.com/nethesis/nethcti-middleware/logs"
+	"github.com/nethesis/nethcti-middleware/models"
+	"github.com/pion/rtp"
+)
 
 type Proxy struct {
-	listener       *net.UDPConn
-    addr           *net.UDPAddr
-	streamHandler  *Exchanger
-	listenerDone chan struct{}
+	listener           *net.UDPConn
+	addr               *net.UDPAddr
+	streamHandler      *Exchanger
+	listenerDone       chan struct{}
 	proxyGlobalContext context.Context
 }
 
@@ -30,9 +31,9 @@ func NewProxy(host, listenPort string, router *Exchanger) *Proxy {
 	}
 
 	return &Proxy{
-		addr: addr,
-		streamHandler: router,
-		listenerDone: make(chan struct{}),
+		addr:               addr,
+		streamHandler:      router,
+		listenerDone:       make(chan struct{}),
 		proxyGlobalContext: context.Background(),
 	}
 }
@@ -48,7 +49,6 @@ func (p *Proxy) StartListener() {
 	logs.Log("[INFO][RTP-PROXY] UDP listener run at " + p.addr.String())
 	p.configureProxy()
 	for {
-		// maybe can be optimized
 		datagram := make([]byte, 2048)
 		n, remoteAddr, err := p.listener.ReadFromUDP(datagram)
 		if err != nil {
@@ -62,27 +62,27 @@ func (p *Proxy) StartListener() {
 }
 
 func (p *Proxy) WaitForShutdown() {
-	<- p.listenerDone
+	<-p.listenerDone
 	p.listener.Close()
 	logs.Log("[ERROR][RTP-PROXY] UDP server dropped")
 }
 
 func (p *Proxy) handleDatagram(datagram []byte, n int, remoteAddr *net.UDPAddr) {
 	var (
-		pkt        rtp.Packet	
+		pkt        rtp.Packet
 		header     rtp.Header
 		err        error
 		pubMessage models.PublishProxy
-		done =     make(chan struct{}, 1)
+		done       = make(chan struct{}, 1)
 	)
 
 	defer close(done)
 
-	ctx, cancel := context.WithDeadline(p.proxyGlobalContext, time.Now().Add(4 * time.Second))
+	ctx, cancel := context.WithDeadline(p.proxyGlobalContext, time.Now().Add(4*time.Second))
 	defer cancel()
 
 	go func() {
-		defer func() { done <- struct{}{}}()
+		defer func() { done <- struct{}{} }()
 
 		err = json.Unmarshal(datagram[:n], &pubMessage)
 		// if the datagram is encoded in json
@@ -96,19 +96,19 @@ func (p *Proxy) handleDatagram(datagram []byte, n int, remoteAddr *net.UDPAddr) 
 			return
 		}
 
-		err  = pkt.Unmarshal(datagram[:n])
+		err = pkt.Unmarshal(datagram[:n])
 		if err != nil {
 			return
 		}
-	
+
 		handleMessage(datagram[:n], p.streamHandler, remoteAddr, p.listener, header.SequenceNumber)()
 	}()
 
 	select {
-	case <- ctx.Done():
+	case <-ctx.Done():
 		logs.Log("[ERROR][RTP-PROXY] timeout occured while handling UDP connection")
 		ctx.Err()
-	case <- done:
+	case <-done:
 		return
 	}
 }
@@ -116,5 +116,5 @@ func (p *Proxy) handleDatagram(datagram []byte, n int, remoteAddr *net.UDPAddr) 
 // lean proxy configuration
 func (p *Proxy) configureProxy() {
 	p.listener.SetWriteBuffer(1024 * 1024)
-	p.listener.SetReadBuffer(1024 * 1024)	
+	p.listener.SetReadBuffer(1024 * 1024)
 }
