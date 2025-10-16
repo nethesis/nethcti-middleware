@@ -406,11 +406,12 @@ func subscriberBehaviour(t *testing.T, localAddr *string) {
 	syncReaderWriter <- struct{}{}
 
 	var (
-		wg         sync.WaitGroup
-		ffmpegErr  error
-		udpDialErr error
-		rtpErr     error
-		subErr     error
+		wg           sync.WaitGroup
+		ffmpegErr    error
+		udpDialErr   error
+		rtpErr       error
+		subErr       error
+		deadlineTime time.Time
 	)
 
 	wg.Add(1)
@@ -429,7 +430,6 @@ func subscriberBehaviour(t *testing.T, localAddr *string) {
 			"output.mkv",
 			"-loglevel", "debug",
 		)
-		defer cmd.Wait()
 
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
@@ -439,6 +439,7 @@ func subscriberBehaviour(t *testing.T, localAddr *string) {
 			return
 		}
 
+		cmd.Wait()
 	}()
 
 	wg.Add(1)
@@ -453,7 +454,12 @@ func subscriberBehaviour(t *testing.T, localAddr *string) {
 			return
 		}
 
-		c.SetReadDeadline(time.Now().Add(45 * time.Second))
+		if *jb {
+			deadlineTime = time.Now().Add(52 * time.Second)
+		} else {
+			deadlineTime = time.Now().Add(10 * time.Second)
+		}
+		c.SetReadDeadline(deadlineTime)
 		for {
 			msgType, data, err := c.ReadMessage()
 			if err != nil {
