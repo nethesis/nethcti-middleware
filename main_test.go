@@ -22,9 +22,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 
-	_ "crypto/rand"
 	"flag"
-	_ "strconv"
 	"sync"
 
 	"github.com/gorilla/websocket"
@@ -32,8 +30,6 @@ import (
 	"github.com/nethesis/nethcti-middleware/store"
 	"github.com/nethesis/nethcti-middleware/utils"
 	"github.com/pion/rtp"
-	_ "github.com/pion/rtp/codecs"
-	_ "github.com/u2takey/ffmpeg-go"
 )
 
 // Global variables for test server URLs and mock server
