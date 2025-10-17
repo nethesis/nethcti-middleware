@@ -308,6 +308,7 @@ func newPublisher(address string) *publisher {
 
 	p := &publisher{
 		addr: resolvedAddr,
+		timestamp: time.Now(),
 	}
 
 	return p
