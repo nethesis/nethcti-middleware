@@ -147,7 +147,7 @@ func (r *Broadcaster) deleteJob(jobId string) {
 		}
 	}
 
-	r.jobs = slices.Delete(r.jobs, exitIndex, exitIndex+1)
+	r.jobs = slices.Delete(r.jobs, exitIndex, exitIndex)
 }
 
 func (r *Broadcaster) appendJob(job string) {
