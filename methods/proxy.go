@@ -53,12 +53,16 @@ func ProxyV1Request(c *gin.Context, path string) {
 
 	// Copy headers from the original request
 	for name, values := range c.Request.Header {
-		// Skip the Host header to avoid conflicts
-		if strings.ToLower(name) == "host" {
-			continue
-		}
 		for _, value := range values {
 			req.Header.Add(name, value)
+
+			// Set Host header with X-Forwarded-Host only for Tancredi routes
+			// This allows nethcti-server to proxy correctly to Tancredi
+			// This is a workaround, remove when Tancredi is routed internally in
+			// middleware
+			if strings.HasPrefix(path, "/tancredi") && name == "X-Forwarded-Host" {
+				req.Host = value
+			}
 		}
 	}
 
