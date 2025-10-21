@@ -114,6 +114,14 @@ func VerifyOTP(c *gin.Context) {
 		}
 	}
 
+	// Check if this is initial 2FA setup (not login OTP verification)
+	// If the current token has 2fa:false, it means user is setting up 2FA for the first time
+	claims := jwt.ExtractClaims(c)
+	currentHas2FA := false
+	if val, exists := claims["2fa"]; exists {
+		currentHas2FA = val.(bool)
+	}
+
 	// enable 2FA for user
 	if !enable2FA(username) {
 		c.JSON(http.StatusBadRequest, structs.Map(models.StatusBadRequest{
@@ -124,11 +132,25 @@ func VerifyOTP(c *gin.Context) {
 		return
 	}
 
+	// Extract the JWT token being used for this request
+	currentJWTToken := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
+
+	// If this is initial 2FA setup (2fa was false before), invalidate all other tokens
+	// to force all other clients to re-login with the new 2FA requirement
+	if !currentHas2FA {
+		userSession := store.UserSessions[username]
+		if userSession != nil {
+			// Keep only the current token, remove all others
+			userSession.JWTTokens = []string{currentJWTToken}
+			logs.Log("[INFO][2FA] All other JWT tokens invalidated for user " + username + " after enabling 2FA")
+		}
+	}
+
 	// update user session to mark OTP as verified
 	store.UserSessions[username].OTP_Verified = true
 
-	// Regenerate JWT token with updated 2FA status
-	newUserSession, expire, err := regenerateUserToken(store.UserSessions[username])
+	// Regenerate JWT token with updated 2FA status, replacing the current token
+	_, newToken, expire, err := regenerateUserToken(store.UserSessions[username], currentJWTToken)
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, structs.Map(models.StatusBadRequest{
@@ -139,11 +161,11 @@ func VerifyOTP(c *gin.Context) {
 		return
 	}
 
-	// response with new token
+	// response with new token (the regenerated one that replaces currentJWTToken)
 	c.JSON(http.StatusOK, structs.Map(models.StatusOK{
 		Code:    200,
 		Message: "OTP verified",
-		Data:    gin.H{"token": newUserSession.JWTToken, "expire": expire},
+		Data:    gin.H{"token": newToken, "expire": expire},
 	}))
 }
 
@@ -283,28 +305,23 @@ func Disable2FA(c *gin.Context) {
 		return
 	}
 
-	// Regenerate JWT token with updated 2FA status (disabled)
+	// Invalidate ALL tokens for this user when 2FA is disabled
+	// This ensures that all clients (web, desktop, mobile) must re-authenticate
 	userSession := store.UserSessions[username]
 
 	if userSession != nil {
-		// Reset OTP verification status
+		// Clear all existing tokens - force all clients to re-login
+		userSession.JWTTokens = []string{}
 		userSession.OTP_Verified = false
 
-		newUserSession, expire, err := regenerateUserToken(userSession)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, structs.Map(models.StatusBadRequest{
-				Code:    500,
-				Message: "failed to generate new token after disabling 2FA",
-				Data:    err.Error(),
-			}))
-			return
-		}
+		logs.Log("[INFO][2FA] All JWT tokens invalidated for user " + username + " after disabling 2FA")
 
-		// response with new token
+		// Don't generate a new token - return success without token
+		// The client will need to login again
 		c.JSON(http.StatusOK, structs.Map(models.StatusOK{
 			Code:    200,
-			Message: "2FA revocate successfully",
-			Data:    gin.H{"token": newUserSession.JWTToken, "expire": expire},
+			Message: "2FA revocate successfully - all sessions invalidated, please login again",
+			Data:    gin.H{"must_relogin": true},
 		}))
 		return
 	}
@@ -345,8 +362,8 @@ func enable2FA(username string) bool {
 	return err == nil
 }
 
-// regenerateUserToken creates a new JWT token for an existing user session
-func regenerateUserToken(userSession *models.UserSession) (*models.UserSession, time.Time, error) {
+// regenerateUserToken creates a new JWT token for an existing user session, replacing the old token
+func regenerateUserToken(userSession *models.UserSession, oldToken string) (*models.UserSession, string, time.Time, error) {
 	// Create new JWT payload with updated 2FA status
 	status, _ := GetUserStatus(userSession.Username)
 
@@ -354,10 +371,11 @@ func regenerateUserToken(userSession *models.UserSession) (*models.UserSession, 
 	expire := now.Add(time.Hour * 24 * 14) // 2 weeks
 
 	claims := jwtv4.MapClaims{
-		"id":  userSession.Username,
-		"2fa": status == "1",
-		"exp": expire.Unix(),
-		"iat": now.Unix(),
+		"id":           userSession.Username,
+		"2fa":          status == "1",
+		"otp_verified": userSession.OTP_Verified, // Use the session's OTP verification status
+		"exp":          expire.Unix(),
+		"iat":          now.Unix(),
 	}
 
 	// Create and sign token using github.com/golang-jwt/jwt/v4
@@ -365,13 +383,18 @@ func regenerateUserToken(userSession *models.UserSession) (*models.UserSession, 
 	tokenString, err := token.SignedString([]byte(configuration.Config.Secret_jwt))
 
 	if err != nil {
-		return nil, time.Time{}, err
+		return nil, "", time.Time{}, err
 	}
 
-	// Update user session with new token
-	userSession.JWTToken = tokenString
+	// Find and replace the old token in the array
+	for i, t := range userSession.JWTTokens {
+		if t == oldToken {
+			userSession.JWTTokens[i] = tokenString
+			break
+		}
+	}
 
-	return userSession, expire, nil
+	return userSession, tokenString, expire, nil
 }
 
 // getUserSecret retrieves the secret for the user

@@ -23,27 +23,30 @@ func DeleteExpiredTokens() {
 	// iterate through all user sessions
 	for username, userSession := range store.UserSessions {
 		// parse JWT token to check expiration
-		token, err := jwtv4.Parse(userSession.JWTToken, func(token *jwtv4.Token) (interface{}, error) {
-			return []byte(configuration.Config.Secret_jwt), nil
-		})
+		for _, tokenRaw := range userSession.JWTTokens {
 
-		// check if token is valid and not expired
-		isValid := false
-		if err == nil && token.Valid {
-			if claims, ok := token.Claims.(jwtv4.MapClaims); ok {
-				if exp, ok := claims["exp"].(float64); ok {
-					// check if token is not expired
-					if time.Now().Unix() < int64(exp) {
-						isValid = true
+			token, err := jwtv4.Parse(tokenRaw, func(token *jwtv4.Token) (interface{}, error) {
+				return []byte(configuration.Config.Secret_jwt), nil
+			})
+
+			// check if token is valid and not expired
+			isValid := false
+			if err == nil && token.Valid {
+				if claims, ok := token.Claims.(jwtv4.MapClaims); ok {
+					if exp, ok := claims["exp"].(float64); ok {
+						// check if token is not expired
+						if time.Now().Unix() < int64(exp) {
+							isValid = true
+						}
 					}
 				}
 			}
-		}
 
-		// remove session if token is expired or invalid
-		if !isValid {
-			delete(store.UserSessions, username)
-			logs.Log("[INFO][JWT] Removed expired session for user: " + username)
+			// remove session if token is expired or invalid
+			if !isValid {
+				delete(store.UserSessions, username)
+				logs.Log("[INFO][JWT] Removed expired session for user: " + username)
+			}
 		}
 	}
 

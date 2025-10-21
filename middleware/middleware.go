@@ -8,6 +8,7 @@ package middleware
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -118,19 +119,26 @@ func InitJWT() *jwt.GinJWTMiddleware {
 			}
 
 			// Login is successful. Middleware returns a JWT.
-			// Create a new user session object
-			store.UserSessions[username] = &models.UserSession{
-				Username:     username,
-				JWTToken:     "",
-				NethCTIToken: NethCTIToken,
-				OTP_Verified: false,
+			// Check if user session already exists (multi-session support)
+			existingSession, sessionExists := store.UserSessions[username]
+
+			if sessionExists {
+				// Reuse existing session (keep existing tokens, update NethCTIToken)
+				// Note: New login does NOT inherit OTP_Verified status - each JWT token will be verified independently
+				existingSession.NethCTIToken = NethCTIToken
+				logs.Log("[INFO][AUTH] authentication success for user " + username + " (reusing existing session with " + fmt.Sprint(len(existingSession.JWTTokens)) + " existing tokens)")
+				return existingSession, nil
+			} else {
+				// Create a new user session object
+				store.UserSessions[username] = &models.UserSession{
+					Username:     username,
+					JWTTokens:    nil,
+					NethCTIToken: NethCTIToken,
+					OTP_Verified: false,
+				}
+				logs.Log("[INFO][AUTH] authentication success for user " + username + " (new session created)")
+				return store.UserSessions[username], nil
 			}
-
-			// login ok action
-			logs.Log("[INFO][AUTH] authentication success for user " + username)
-
-			// Return user auth model
-			return store.UserSessions[username], nil
 		},
 		PayloadFunc: func(data interface{}) jwt.MapClaims {
 			// read current user
@@ -139,9 +147,12 @@ func InitJWT() *jwt.GinJWTMiddleware {
 				status, _ := methods.GetUserStatus(userSession.Username)
 
 				// create claims map
+				// Note: otp_verified is always false on initial login
+				// It will be set to true only after OTP verification via regenerateUserToken
 				return jwt.MapClaims{
-					identityKey: userSession.Username,
-					"2fa":       status == "1",
+					identityKey:    userSession.Username,
+					"2fa":          status == "1",
+					"otp_verified": false,
 				}
 			}
 
@@ -167,20 +178,29 @@ func InitJWT() *jwt.GinJWTMiddleware {
 			JWTToken := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
 			userSession := store.UserSessions[username]
 
-			if userSession == nil || JWTToken != userSession.JWTToken {
+			// Check if session exists and token is valid
+			if userSession == nil || !utils.Contains(JWTToken, userSession.JWTTokens) {
+				// Try API key authentication as fallback
 				if !methods.AuthenticateAPIKey(username, JWTToken) {
-					logs.Log("[ERROR][AUTH] authorization failed for user " + username + " (2FA required but OTP not verified). " + reqMethod + " " + reqURI)
+					logs.Log("[ERROR][AUTH] authorization failed for user " + username + " (session not found or invalid token). " + reqMethod + " " + reqURI)
 					return false
 				}
+				// API key auth succeeded, skip 2FA checks
+				logs.Log("[INFO][AUTH] API key authentication success for user " + username)
+				return true
 			}
 
 			isOTPVerifyEndpoint := strings.Contains(c.Request.RequestURI, "/verify-otp")
 
+			// Check 2FA requirement (only for JWT token authentication, not API key)
+			// Use the otp_verified claim from the JWT token (not from session)
 			if !isOTPVerifyEndpoint {
-				has2FA := claims["2fa"].(bool)
+				has2FA, has2FAExists := claims["2fa"].(bool)
+				otpVerified, otpVerifiedExists := claims["otp_verified"].(bool)
 
-				if has2FA && !userSession.OTP_Verified {
-					logs.Log("[ERROR][AUTH] authorization failed for user " + username + " (2FA required but OTP not verified). " + reqMethod + " " + reqURI)
+				// If 2FA is enabled but OTP claim doesn't exist or is false, deny access
+				if has2FAExists && has2FA && (!otpVerifiedExists || !otpVerified) {
+					logs.Log("[ERROR][AUTH] authorization failed for user " + username + " (2FA required but OTP not verified in token). " + reqMethod + " " + reqURI)
 					return false
 				}
 			}
@@ -227,7 +247,7 @@ func InitJWT() *jwt.GinJWTMiddleware {
 			claims := jwt.ExtractClaimsFromToken(tokenObj)
 
 			// Store the JWT token in the UserSession
-			store.UserSessions[claims[identityKey].(string)].JWTToken = token
+			store.UserSessions[claims[identityKey].(string)].JWTTokens = append(store.UserSessions[claims[identityKey].(string)].JWTTokens, token)
 			c.JSON(200, gin.H{"code": 200, "expire": t, "token": token})
 		},
 		LogoutResponse: func(c *gin.Context, code int) {
@@ -235,12 +255,21 @@ func InitJWT() *jwt.GinJWTMiddleware {
 			JWTToken := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
 			tokenObj, _ := InstanceJWT().ParseTokenString(JWTToken)
 			claims := jwt.ExtractClaimsFromToken(tokenObj)
+			username := claims[identityKey].(string)
 
-			userSession := store.UserSessions[claims[identityKey].(string)]
+			userSession := store.UserSessions[username]
 
 			if userSession != nil {
-				if JWTToken == userSession.JWTToken {
-					delete(store.UserSessions, claims[identityKey].(string))
+				// Remove only this specific token from the user's token array
+				if utils.Contains(JWTToken, userSession.JWTTokens) {
+					userSession.JWTTokens = utils.Remove(JWTToken, userSession.JWTTokens)
+					logs.Log("[INFO][AUTH] Logged out token for user " + username)
+
+					// If no more tokens, delete the entire session
+					if len(userSession.JWTTokens) == 0 {
+						delete(store.UserSessions, username)
+						logs.Log("[INFO][AUTH] Deleted session for user " + username + " (no more active tokens)")
+					}
 				}
 			}
 
