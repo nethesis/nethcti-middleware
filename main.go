@@ -7,6 +7,8 @@ package main
 
 import (
 	"io"
+	"regexp"
+	"strings"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-contrib/gzip"
@@ -17,13 +19,14 @@ import (
 	"github.com/nethesis/nethcti-middleware/logs"
 	"github.com/nethesis/nethcti-middleware/methods"
 	"github.com/nethesis/nethcti-middleware/middleware"
+	"github.com/nethesis/nethcti-middleware/mqtt"
 	"github.com/nethesis/nethcti-middleware/socket"
 	"github.com/nethesis/nethcti-middleware/store"
 	"github.com/nethesis/nethcti-middleware/proxy"
 )
 
 func main() {
-	// Init logger
+	// Init logger first
 	logs.Init("nethcti-middleware")
 
 	// Init configuration
@@ -31,6 +34,16 @@ func main() {
 
 	// Init store
 	store.UserSessionInit()
+
+	// Init MQTT and setup transcription subscription
+	mqttCh := mqtt.Init()
+	if mqttCh != nil {
+		socket.SetMQTTChannel(mqttCh)
+		err := mqtt.InitTranscriptionSubscription()
+		if err != nil {
+			logs.Log("[WARNING][MQTT] Failed to subscribe to transcription topic: " + err.Error())
+		}
+	}
 
 	// Create router
 	router := createRouter()
@@ -116,12 +129,22 @@ func createRouter() *gin.Engine {
 		secretKeyHeader := c.GetHeader("Secretkey")
 		isFreePBXAdmin := userHeader == "admin" && secretKeyHeader != ""
 
-		// Check if the API is in the FreePBX API list (exact match)
+		// Check if the API is in the FreePBX API list (prefix match with validation)
 		isFreePBXAPI := false
 		for _, freepbxPath := range configuration.Config.FreePBXAPIs {
 			if path == freepbxPath {
+				// Exact match
 				isFreePBXAPI = true
 				break
+			} else if strings.HasPrefix(path, freepbxPath+"/") {
+				// Prefix match - validate the remainder contains only numeric ID or safe paths
+				remainder := path[len(freepbxPath)+1:]
+				// Allow only numeric IDs (extensions/trunks) - no path traversal or additional paths
+				matched, _ := regexp.MatchString(`^\d+$`, remainder)
+				if matched {
+					isFreePBXAPI = true
+					break
+				}
 			}
 		}
 

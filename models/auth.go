@@ -7,7 +7,7 @@ package models
 
 type UserSession struct {
 	Username     string
-	JWTToken     string
+	JWTTokens    []string
 	NethCTIToken string
 	OTP_Verified bool
 }

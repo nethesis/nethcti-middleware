@@ -32,6 +32,12 @@ type Configuration struct {
 
 	StaticJitterBuffer       bool    `json:"jitter_buffer"`  
 	JitterBufferPlaybackRate string  `json:"playback_rate"`
+	// MQTT Configuration for satellite transcriptions
+	MQTTHost     string `json:"mqtt_host"`
+	MQTTPort     string `json:"mqtt_port"`
+	MQTTUsername string `json:"mqtt_username"`
+	MQTTPassword string `json:"mqtt_password"`
+	MQTTEnabled  bool   `json:"mqtt_enabled"`
 }
 
 
@@ -118,7 +124,9 @@ func Init() {
 			"/dbconn/test",
 			"/custcard/preview",
 			"/user/endpoints/all",
+			"/astproxy/extension",
 			"/astproxy/extensions",
+			"/astproxy/trunk",
 			"/astproxy/trunks",
 		}
 	}
@@ -143,4 +151,29 @@ func Init() {
 		Config.JitterBufferPlaybackRate = os.Getenv("PLAYBACK_RATE")
 	}
 
+	// set MQTT configuration for satellite transcriptions
+	if os.Getenv("SATELLITE_MQTT_HOST") != "" {
+		Config.MQTTHost = os.Getenv("SATELLITE_MQTT_HOST")
+	} else {
+		Config.MQTTHost = "127.0.0.1"
+	}
+
+	if os.Getenv("SATELLITE_MQTT_PORT") != "" {
+		Config.MQTTPort = os.Getenv("SATELLITE_MQTT_PORT")
+	} else {
+		Config.MQTTPort = "1883"
+	}
+
+	if os.Getenv("SATELLITE_MQTT_USERNAME") != "" {
+		Config.MQTTUsername = os.Getenv("SATELLITE_MQTT_USERNAME")
+	} else {
+		Config.MQTTUsername = "satellite"
+	}
+
+	if os.Getenv("SATELLITE_MQTT_PASSWORD") != "" {
+		Config.MQTTPassword = os.Getenv("SATELLITE_MQTT_PASSWORD")
+	}
+
+	// Enable MQTT only if we have at least username and password
+	Config.MQTTEnabled = Config.MQTTUsername != "" && Config.MQTTPassword != ""
 }
