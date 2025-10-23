@@ -21,6 +21,7 @@ type ApiKeyData struct {
 	Username         string `json:"username"`
 	APIKey           string `json:"api_key"`
 	PhoneIslandToken string `json:"phone_island_token"`
+	Subtype          string `json:"subtype"`
 }
 
 type LoginJson struct {

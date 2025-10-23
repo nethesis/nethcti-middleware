@@ -30,46 +30,69 @@ func PhoneIslandTokenLogin(c *gin.Context) {
 		return
 	}
 
-	// Get token from CTI Server
-	userSession := store.UserSessions[username]
-	nethctiToken := userSession.NethCTIToken
-
-	req, err := http.NewRequest("POST", configuration.Config.V1Protocol+"://"+configuration.Config.V1ApiEndpoint+configuration.Config.V1ApiPath+"/authentication/phone_island_token_login", nil)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"message": "failed to create request"})
-		return
+	// Read subtype from request body
+	var requestBody struct {
+		Subtype string `json:"subtype"`
 	}
-	req.Header.Set("Authorization", nethctiToken)
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"message": "failed to contact server v1"})
-		return
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		c.JSON(http.StatusBadGateway, gin.H{"message": "server v1 returned error", "status": resp.StatusCode})
+	if err := c.ShouldBindJSON(&requestBody); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "invalid request body"})
 		return
 	}
 
-	var v1Resp struct {
-		Token string `json:"token"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&v1Resp); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"message": "failed to parse server v1 response"})
-		return
+	subtype := requestBody.Subtype
+	if subtype == "" {
+		subtype = "web"
 	}
 
-	phoneIslandToken := v1Resp.Token
+	// Check if a phone_island_token already exists for any other subtype
+	// If it does, reuse it to avoid invalidating existing sessions
+	var phoneIslandToken string
+	existingToken, err := getExistingPhoneIslandToken(username)
+	if err == nil && existingToken != "" {
+		// Reuse existing token from another subtype
+		phoneIslandToken = existingToken
+	} else {
+		// Get new token from CTI Server
+		userSession := store.UserSessions[username]
+		nethctiToken := userSession.NethCTIToken
+
+		req, err := http.NewRequest("POST", configuration.Config.V1Protocol+"://"+configuration.Config.V1ApiEndpoint+configuration.Config.V1ApiPath+"/authentication/phone_island_token_login", nil)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"message": "failed to create request"})
+			return
+		}
+		req.Header.Set("Authorization", nethctiToken)
+
+		client := &http.Client{Timeout: 10 * time.Second}
+		resp, err := client.Do(req)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"message": "failed to contact server v1"})
+			return
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			c.JSON(http.StatusBadGateway, gin.H{"message": "server v1 returned error", "status": resp.StatusCode})
+			return
+		}
+
+		var v1Resp struct {
+			Token string `json:"token"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&v1Resp); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"message": "failed to parse server v1 response"})
+			return
+		}
+
+		phoneIslandToken = v1Resp.Token
+	}
 
 	apiKey, err := generateAPIKey(username)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"message": "failed to generate api key"})
 		return
 	}
-	if err := saveAPIKey(username, apiKey, phoneIslandToken); err != nil {
+	if err := saveAPIKey(username, apiKey, phoneIslandToken, subtype); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"message": "failed to save api key"})
 		return
 	}
@@ -89,13 +112,20 @@ func PhoneIslandTokenRemove(c *gin.Context) {
 		return
 	}
 
-	err := os.Remove(configuration.Config.SecretsDir + "/" + username + "/phone_island_api_key.json")
-	if err != nil {
-		if os.IsNotExist(err) {
-			c.JSON(http.StatusOK, gin.H{"removed": false, "message": "api key not found"})
-			return
+	dir := configuration.Config.SecretsDir + "/" + username
+	removed := false
+	subtypes := []string{"web", "nethlink"}
+
+	for _, subtype := range subtypes {
+		filePath := dir + "/phone_island_api_key_" + subtype + ".json"
+		err := os.Remove(filePath)
+		if err == nil {
+			removed = true
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"removed": false, "message": "failed to remove api key"})
+	}
+
+	if !removed {
+		c.JSON(http.StatusOK, gin.H{"removed": false, "message": "api key not found"})
 		return
 	}
 
@@ -111,12 +141,19 @@ func PhoneIslandTokenCheck(c *gin.Context) {
 		return
 	}
 
+	dir := configuration.Config.SecretsDir + "/" + username
 	exists := false
-	if _, err := os.Stat(configuration.Config.SecretsDir + "/" + username + "/phone_island_api_key.json"); err == nil {
-		exists = true
-	} else if !os.IsNotExist(err) {
-		c.JSON(http.StatusInternalServerError, gin.H{"message": "failed to check api key"})
-		return
+	subtypes := []string{"web", "nethlink"}
+
+	for _, subtype := range subtypes {
+		filePath := dir + "/phone_island_api_key_" + subtype + ".json"
+		if _, err := os.Stat(filePath); err == nil {
+			exists = true
+			break
+		} else if !os.IsNotExist(err) {
+			c.JSON(http.StatusInternalServerError, gin.H{"message": "failed to check api key"})
+			return
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{"exists": exists})
@@ -125,26 +162,33 @@ func PhoneIslandTokenCheck(c *gin.Context) {
 // AuthenticateAPIKey returns true if the API key matches the stored key for the user, false otherwise
 func AuthenticateAPIKey(username, apiKey string) bool {
 	dir := configuration.Config.SecretsDir + "/" + username
-	filePath := dir + "/phone_island_api_key.json"
 
 	// Check if directory exists
 	if _, err := os.Stat(dir); os.IsNotExist(err) {
 		return false
 	}
 
-	// Check if file exists
-	data, err := os.ReadFile(filePath)
-	if err != nil {
-		return false
+	// Try to find the API key in any subtype file
+	subtypes := []string{"web", "nethlink"}
+	for _, subtype := range subtypes {
+		filePath := dir + "/phone_island_api_key_" + subtype + ".json"
+
+		data, err := os.ReadFile(filePath)
+		if err != nil {
+			continue
+		}
+
+		var keyData models.ApiKeyData
+		if err := json.Unmarshal(data, &keyData); err != nil {
+			continue
+		}
+
+		if keyData.APIKey == apiKey {
+			return true
+		}
 	}
 
-	// Unmarshal the JSON data
-	var keyData models.ApiKeyData
-	if err := json.Unmarshal(data, &keyData); err != nil {
-		return false
-	}
-
-	return keyData.APIKey == apiKey
+	return false
 }
 
 // Return the PhoneIslandToken from ApiKeyData given a JWT token string
@@ -168,25 +212,34 @@ func GetPhoneIslandToken(jwtToken string, onlyToken bool) (string, error) {
 	}
 
 	dir := configuration.Config.SecretsDir + "/" + username
-	filePath := dir + "/phone_island_api_key.json"
 
-	// Check if file exists
-	data, err := os.ReadFile(filePath)
-	if err != nil {
-		return "", err
+	// Try to find the Phone Island token in any subtype file
+	subtypes := []string{"web", "nethlink"}
+	for _, subtype := range subtypes {
+		filePath := dir + "/phone_island_api_key_" + subtype + ".json"
+
+		data, err := os.ReadFile(filePath)
+		if err != nil {
+			continue
+		}
+
+		var keyData models.ApiKeyData
+		if err := json.Unmarshal(data, &keyData); err != nil {
+			continue
+		}
+
+		// Check if this API key matches the JWT token
+		if keyData.APIKey == jwtToken {
+			if onlyToken {
+				return keyData.PhoneIslandToken, nil
+			} else {
+				completedToken := keyData.Username + ":" + keyData.PhoneIslandToken
+				return completedToken, nil
+			}
+		}
 	}
 
-	var keyData models.ApiKeyData
-	if err := json.Unmarshal(data, &keyData); err != nil {
-		return "", err
-	}
-
-	if onlyToken {
-		return keyData.PhoneIslandToken, nil
-	} else {
-		completedToken := keyData.Username + ":" + keyData.PhoneIslandToken
-		return completedToken, nil
-	}
+	return "", os.ErrNotExist
 }
 
 // -------------------------------- private methods --------------------------------
@@ -208,8 +261,36 @@ func generateAPIKey(username string) (string, error) {
 	return tokenString, nil
 }
 
+// getExistingPhoneIslandToken checks if a phone_island_token already exists for the user
+// in any subtype file and returns it. This prevents invalidating existing sessions.
+func getExistingPhoneIslandToken(username string) (string, error) {
+	dir := configuration.Config.SecretsDir + "/" + username
+	subtypes := []string{"web", "nethlink"}
+
+	for _, subtype := range subtypes {
+		filePath := dir + "/phone_island_api_key_" + subtype + ".json"
+
+		data, err := os.ReadFile(filePath)
+		if err != nil {
+			continue
+		}
+
+		var keyData models.ApiKeyData
+		if err := json.Unmarshal(data, &keyData); err != nil {
+			continue
+		}
+
+		// Return the first valid phone_island_token we find
+		if keyData.PhoneIslandToken != "" {
+			return keyData.PhoneIslandToken, nil
+		}
+	}
+
+	return "", os.ErrNotExist
+}
+
 // saveAPIKey saves the API key and Phone Island token to a file for the user
-func saveAPIKey(username string, apiKey string, phoneIslandToken string) error {
+func saveAPIKey(username string, apiKey string, phoneIslandToken string, subtype string) error {
 	dir := configuration.Config.SecretsDir + "/" + username
 	if _, err := os.Stat(dir); os.IsNotExist(err) {
 		if err := os.MkdirAll(dir, 0700); err != nil {
@@ -221,6 +302,7 @@ func saveAPIKey(username string, apiKey string, phoneIslandToken string) error {
 		Username:         username,
 		APIKey:           apiKey,
 		PhoneIslandToken: phoneIslandToken,
+		Subtype:          subtype,
 	}
 
 	jsonBytes, err := json.Marshal(data)
@@ -228,7 +310,8 @@ func saveAPIKey(username string, apiKey string, phoneIslandToken string) error {
 		return err
 	}
 
-	f, err := os.OpenFile(dir+"/phone_island_api_key.json", os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	filename := dir + "/phone_island_api_key_" + subtype + ".json"
+	f, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
 		return err
 	}
