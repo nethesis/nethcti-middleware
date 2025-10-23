@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>WebCodecs + WebSocket MJPEG Parser</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #1e1e1e;
+      color: #fff;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 20px;
+    }
+
+    canvas {
+      background: black;
+      width: 640px;
+      height: 480px;
+      margin-top: 20px;
+    }
+
+    .controls {
+      margin-top: 20px;
+    }
+
+    input[type="text"] {
+      padding: 8px;
+      font-size: 16px;
+      width: 200px;
+      border-radius: 4px;
+      border: 1px solid #ccc;
+    }
+
+    button {
+      padding: 8px 16px;
+      font-size: 16px;
+      margin-left: 10px;
+      background: #28a745;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+
+    button:hover {
+      background: #218838;
+    }
+  </style>
+</head>
+<body>
+  <h2>Real-Time Streaming</h2>
+
+  <div class="controls">
+    <input type="text" id="udpAddr" placeholder="intercome ip address" />
+    <button onclick="joinVideoStream()">Join Stream</button>
+  </div>
+
+  <canvas id="videoCanvas" width="640" height="480"></canvas>
+  <script>
+  const canvas = document.getElementById('videoCanvas');
+  const ctx = canvas.getContext('2d');
+
+  let jpegByteChunks = [];
+
+  const socket = new WebSocket("ws://localhost:8080/rtp-stream");
+  socket.binaryType = "arraybuffer";
+
+  socket.onopen = () => {
+    console.log("WebSocket connected");
+  };
+
+  socket.onerror = (err) => {
+    console.error("WebSocket error:", err);
+  };
+
+  socket.onmessage = (event) => {
+    let uint8;
+
+    console.log("[debug] received a new message!!!")
+    if (event.data instanceof Blob) {
+      const reader = new FileReader();
+      reader.onload = () => {
+        uint8 = new Uint8Array(reader.result);
+        processRTP(uint8);
+      };
+      reader.readAsArrayBuffer(event.data);
+    } else if (event.data instanceof ArrayBuffer) {
+      uint8 = new Uint8Array(event.data);
+      processRTP(uint8);
+    } else {
+      console.warn("Unsupported data type received");
+    }
+  };
+
+  function processRTP(packet) {
+    if (packet.length < 12) {
+      console.warn("Invalid RTP packet size");
+      return;
+    }
+
+    // RTP header parsing 
+    const version = (packet[0] & 0b11000000) >> 6;
+    const csrcCount = (packet[0] & 0b00001111);
+    const marker = (packet[1] & 0b10000000) >> 7;
+
+    let payloadOffset = 12 + csrcCount * 4;
+
+    // Skip RTP header extension if present
+    if ((packet[0] & 0x10) !== 0) {
+      const extHeaderLength = (packet[payloadOffset + 2] << 8) | packet[payloadOffset + 3];
+      payloadOffset += 4 + extHeaderLength * 4;
+    }
+
+    if (payloadOffset >= packet.length) {
+      console.warn("Invalid payload offset in RTP packet");
+      return;
+    }
+
+    const payload = packet.subarray(payloadOffset);
+    jpegByteChunks.push(...payload);
+
+    // if marker bit is present
+    if (marker === 1) {
+      console.log(jpegByteChunks.values)
+      console.log("[debug] completed jpeg packet")
+      const jpegData = new Uint8Array(jpegByteChunks);
+      const jpegBlob = new Blob([jpegData], { type: "image/jpeg" });
+      drawJpeg(jpegBlob);
+      jpegByteChunks = [];
+    }
+  }
+
+  function drawJpeg(blob) {
+    createImageBitmap(blob)
+    .then((bitmap) => {
+      ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      bitmap.close(); 
+    })
+    .catch((err) => {
+      console.error("[ERROR] drawing image via createImageBitmap:", err);
+    });
+  }
+
+  function joinVideoStream() {
+    const ipAddress = document.getElementById('udpAddr').value;
+    const payload = { publisher: ipAddress };
+
+    if (socket.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify(payload));
+      console.log("Sent to server:", payload);
+    } else {
+      console.error("WebSocket not open.");
+    }
+  }
+</script>
+
+</body>
+</html>

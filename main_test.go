@@ -8,9 +8,13 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	_ "io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -18,17 +22,25 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 
+	"flag"
+	"sync"
+
+	"github.com/gorilla/websocket"
 	"github.com/nethesis/nethcti-middleware/models"
 	"github.com/nethesis/nethcti-middleware/store"
 	"github.com/nethesis/nethcti-middleware/utils"
+	"github.com/pion/rtp"
 )
 
 // Global variables for test server URLs and mock server
 var testServerURL string
 var mockNetCTI *httptest.Server
+var jb *bool
 
 // TestMain sets up the test environment once for all tests
 func TestMain(m *testing.M) {
+	jb = flag.Bool("jb", false, "jitter buffer test")
+	flag.Parse()
 	// Setup test environment and dependencies
 	setupTestEnvironment()
 
@@ -61,6 +73,13 @@ func setupTestEnvironment() {
 	os.Setenv("NETHVOICE_MIDDLEWARE_SECRETS_DIR", "/tmp/test-secrets/nethcti")
 	os.Setenv("NETHVOICE_MIDDLEWARE_ISSUER_2FA", "NetCTI-Test")
 	os.Setenv("NETHVOICE_MIDDLEWARE_SENSITIVE_LIST", "password,secret")
+	os.Setenv("RTP_PROXY_ADDR", "127.0.0.1")
+	os.Setenv("RTP_PROXY_PORT", "5004")
+
+	if *jb {
+		os.Setenv("JITTER_BUFFER", "on")
+		os.Setenv("PLAYBACK_RATE", "20")
+	}
 
 	// Create test secrets directory
 	os.MkdirAll(os.Getenv("NETHVOICE_MIDDLEWARE_SECRETS_DIR"), 0700)
@@ -122,6 +141,10 @@ func cleanupTestEnvironment() {
 	os.Unsetenv("NETHVOICE_MIDDLEWARE_SECRETS_DIR")
 	os.Unsetenv("NETHVOICE_MIDDLEWARE_ISSUER_2FA")
 	os.Unsetenv("NETHVOICE_MIDDLEWARE_SENSITIVE_LIST")
+	os.Unsetenv("RTP_PROXY_ADDR")
+	os.Unsetenv("RTP_PROXY_PORT")
+	os.Unsetenv("JITTER_BUFFER")
+	os.Unsetenv("PLAYBACK_RATE")
 }
 
 // Helper function to reset test state between tests
@@ -303,4 +326,206 @@ func TestDisable2FA(t *testing.T) {
 	defer resp.Body.Close()
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
+var (
+	syncPubSub       chan struct{}
+	syncReaderWriter chan struct{}
+)
+
+func publisherBehaviour(
+	t *testing.T,
+	localAddr *string,
+	udpServerAddr string,
+) {
+	udpConn, err := net.Dial("udp", udpServerAddr)
+	if err != nil {
+		t.Fatalf("Failed to dial udp listener")
+	}
+	defer udpConn.Close()
+
+	*localAddr = udpConn.LocalAddr().String()
+
+	pubMsg := map[string]string{
+		"intercom_name": *localAddr,
+	}
+
+	data, err := json.Marshal(pubMsg)
+	if err != nil {
+		t.Fatalf("Failed to marshal json: %v", err)
+	}
+	_, err = udpConn.Write(data)
+	if err != nil {
+		t.Fatalf("Failed to send join message: %v", err)
+	}
+	t.Logf("Pub Message Sent")
+
+	syncPubSub <- struct{}{}
+	<-syncReaderWriter
+
+	_, port, _ := net.SplitHostPort(*localAddr)
+	cmd := exec.Command("ffmpeg",
+		"-re",
+		"-i", "pub_test.mp4",
+		"-an",
+		"-c:v", "mpeg4",
+		"-b:v", "10M",
+		"-f", "rtp",
+		"udp://127.0.0.1:5004?localport="+port,
+	)
+
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	cmdErr := cmd.Start()
+	if cmdErr != nil {
+		t.Fatalf("FFmpeg error: %v", cmdErr)
+	}
+}
+
+func subscriberBehaviour(t *testing.T, localAddr *string) {
+	<-syncPubSub
+
+	c, _, err := websocket.DefaultDialer.Dial("ws://localhost:8899/rtp-stream", nil)
+	if err != nil {
+		t.Fatalf("WebSocket dial error: %v", err)
+	}
+	defer c.Close()
+
+	subMsg := map[string]string{
+		"publisher": *localAddr,
+	}
+	if err := c.WriteJSON(subMsg); err != nil {
+		t.Fatalf("subscribe error: %v", err)
+	}
+	t.Logf("Sub Message Sent")
+
+	syncReaderWriter <- struct{}{}
+
+	var (
+		wg           sync.WaitGroup
+		ffmpegErr    error
+		udpDialErr   error
+		rtpErr       error
+		subErr       error
+		deadlineTime time.Time
+	)
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		cmd := exec.Command("ffmpeg",
+			"-y",
+			"-protocol_whitelist", "file,udp,rtp",
+			"-i", "stream.sdp",
+			"-fflags", "+genpts+discardcorrupt",
+			"-err_detect", "ignore_err+crccheck",
+			"-buffer_size", "10000000",
+			"-max_delay", "5000000",
+			"-c:v", "copy",
+			"-f", "matroska",
+			"output.mkv",
+			"-loglevel", "debug",
+		)
+
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+
+		if err := cmd.Start(); err != nil {
+			ffmpegErr = err
+			return
+		}
+
+		cmd.Wait()
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		var pkt rtp.Packet
+		var header rtp.Header
+
+		conn, err := net.Dial("udp", "127.0.0.1:5006")
+		if err != nil {
+			udpDialErr = err
+			return
+		}
+
+		if *jb {
+			deadlineTime = time.Now().Add(52 * time.Second)
+		} else {
+			deadlineTime = time.Now().Add(10 * time.Second)
+		}
+		c.SetReadDeadline(deadlineTime)
+		for {
+			msgType, data, err := c.ReadMessage()
+			if err != nil {
+				break
+			}
+			if msgType == websocket.BinaryMessage {
+				_, errH := header.Unmarshal(data)
+				if errH != nil {
+					rtpErr = errH
+					break
+				}
+
+				err := pkt.Unmarshal(data)
+				if err != nil {
+					rtpErr = err
+					break
+				}
+				conn.Write(data)
+			} else if string(data) == "Unable to find the given publisher" {
+				subErr = errors.New("unable to find the given publisher")
+				break
+			}
+		}
+	}()
+
+	wg.Wait()
+
+	if ffmpegErr != nil {
+		t.Fatalf("FFMPEG error: %v", ffmpegErr)
+	}
+
+	if udpDialErr != nil {
+		t.Fatalf("UDP error: %v", udpDialErr)
+	}
+
+	if rtpErr != nil {
+		t.Fatalf("RTP error: %v", rtpErr)
+	}
+
+	if subErr != nil {
+		t.Fatalf("SUB error: %v", subErr)
+	}
+}
+
+func TestRTPProxy(t *testing.T) {
+	resetTestState()
+
+	var (
+		udpServerAddr = "127.0.0.1:5004"
+		localAddr     string
+		wg            = &sync.WaitGroup{}
+	)
+
+	syncPubSub = make(chan struct{}, 1)
+	syncReaderWriter = make(chan struct{}, 1)
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		publisherBehaviour(t, &localAddr, udpServerAddr)
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		subscriberBehaviour(t, &localAddr)
+	}()
+
+	wg.Wait()
+	close(syncPubSub)
+	close(syncReaderWriter)
 }
