@@ -27,6 +27,11 @@ type Configuration struct {
 	SecretsDir string `json:"secrets_dir"`
 	Issuer2FA  string `json:"issuer_2fa"`
 
+	RTPProxyAddr string `json:"rtp_proxy_addr"`
+	RTPProxyPort string `json:"rtp_proxy_port"`
+
+	StaticJitterBuffer       bool    `json:"jitter_buffer"`  
+	JitterBufferPlaybackRate string  `json:"playback_rate"`
 	// MQTT Configuration for satellite transcriptions
 	MQTTHost     string `json:"mqtt_host"`
 	MQTTPort     string `json:"mqtt_port"`
@@ -34,6 +39,7 @@ type Configuration struct {
 	MQTTPassword string `json:"mqtt_password"`
 	MQTTEnabled  bool   `json:"mqtt_enabled"`
 }
+
 
 var Config = Configuration{}
 
@@ -123,6 +129,26 @@ func Init() {
 			"/astproxy/trunk",
 			"/astproxy/trunks",
 		}
+	}
+
+	if os.Getenv("RTP_PROXY_ADDR") != "" {
+		Config.RTPProxyAddr = os.Getenv("RTP_PROXY_ADDR")
+	} else {
+		Config.RTPProxyAddr = "127.0.0.1"
+	}
+
+	if os.Getenv("RTP_PROXY_PORT") != "" {
+		Config.RTPProxyPort = os.Getenv("RTP_PROXY_PORT")
+	} else {
+		Config.RTPProxyPort = "5004"
+	}
+
+	if os.Getenv("JITTER_BUFFER") != "" && os.Getenv("JITTER_BUFFER") == "on"{
+		Config.StaticJitterBuffer = true
+	}
+
+	if os.Getenv("PLAYBACK_RATE") != "" {
+		Config.JitterBufferPlaybackRate = os.Getenv("PLAYBACK_RATE")
 	}
 
 	// set MQTT configuration for satellite transcriptions

@@ -22,6 +22,7 @@ import (
 	"github.com/nethesis/nethcti-middleware/mqtt"
 	"github.com/nethesis/nethcti-middleware/socket"
 	"github.com/nethesis/nethcti-middleware/store"
+	"github.com/nethesis/nethcti-middleware/proxy"
 )
 
 func main() {
@@ -62,6 +63,16 @@ func createRouter() *gin.Engine {
 		gin.DefaultWriter = io.Discard
 	}
 
+	exc := proxy.NewExchanger()
+	broadcast := proxy.NewBroadcaster(exc)
+	udpListener := proxy.NewProxy(
+		configuration.Config.RTPProxyAddr, 
+		configuration.Config.RTPProxyPort, 
+		exc,
+	)
+	go udpListener.WaitForShutdown()
+	go udpListener.StartListener()
+
 	// Init routers
 	router := gin.New()
 	router.RedirectTrailingSlash = false
@@ -88,6 +99,7 @@ func createRouter() *gin.Engine {
 	// Define public endpoints
 	api.POST("/login", middleware.InstanceJWT().LoginHandler)
 	api.GET("/ws/", socket.WsProxyHandler)
+	api.GET("/rtp-stream", broadcast.HandleBroadcast)
 
 	// Authentication required endpoints
 	api.Use(middleware.InstanceJWT().MiddlewareFunc())
