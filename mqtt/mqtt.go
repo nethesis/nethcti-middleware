@@ -66,12 +66,21 @@ func Init() chan WebSocketMessage {
 
 	// Create and start client
 	client = mqtt.NewClient(opts)
-	if token := client.Connect(); token.Wait() && token.Error() != nil {
-		logs.Log(fmt.Sprintf("[ERROR][MQTT] Failed to connect to MQTT broker: %v", token.Error()))
-		return nil
-	}
 
-	logs.Log("[INFO][MQTT] MQTT client initialized")
+	// Start connection in non-blocking mode
+	// The client will retry automatically in background thanks to SetAutoReconnect and SetConnectRetry
+	token := client.Connect()
+
+	// Don't wait for connection to complete - let it happen in background
+	// This prevents blocking the main thread if MQTT broker is unavailable
+	go func() {
+		if token.Wait() && token.Error() != nil {
+			logs.Log(fmt.Sprintf("[ERROR][MQTT] Failed to connect to MQTT broker: %v", token.Error()))
+			logs.Log("[INFO][MQTT] Will retry connection in background...")
+		}
+	}()
+
+	logs.Log("[INFO][MQTT] MQTT client initialized - connecting in background")
 	return websocketChannel
 }
 
