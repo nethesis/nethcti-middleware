@@ -152,6 +152,11 @@ func VerifyOTP(c *gin.Context) {
 	// Regenerate JWT token with updated 2FA status, replacing the current token
 	_, newToken, expire, err := regenerateUserToken(store.UserSessions[username], currentJWTToken)
 
+	// Save sessions to disk immediately after OTP verification
+	if saveErr := store.SaveSessions(); saveErr != nil {
+		logs.Log("[ERROR][2FA] Failed to save sessions after OTP verification: " + saveErr.Error())
+	}
+
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, structs.Map(models.StatusBadRequest{
 			Code:    500,

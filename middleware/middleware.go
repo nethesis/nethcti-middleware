@@ -248,6 +248,12 @@ func InitJWT() *jwt.GinJWTMiddleware {
 
 			// Store the JWT token in the UserSession
 			store.UserSessions[claims[identityKey].(string)].JWTTokens = append(store.UserSessions[claims[identityKey].(string)].JWTTokens, token)
+
+			// Save sessions to disk immediately
+			if err := store.SaveSessions(); err != nil {
+				logs.Log("[ERROR][AUTH] Failed to save sessions after login: " + err.Error())
+			}
+
 			c.JSON(200, gin.H{"code": 200, "expire": t, "token": token})
 		},
 		LogoutResponse: func(c *gin.Context, code int) {
@@ -269,6 +275,11 @@ func InitJWT() *jwt.GinJWTMiddleware {
 					if len(userSession.JWTTokens) == 0 {
 						delete(store.UserSessions, username)
 						logs.Log("[INFO][AUTH] Deleted session for user " + username + " (no more active tokens)")
+					}
+
+					// Save sessions to disk immediately
+					if err := store.SaveSessions(); err != nil {
+						logs.Log("[ERROR][AUTH] Failed to save sessions after logout: " + err.Error())
 					}
 				}
 			}
