@@ -44,13 +44,23 @@ func DeleteExpiredTokens() {
 
 			// remove session if token is expired or invalid
 			if !isValid {
-				delete(store.UserSessions, username)
-				logs.Log("[INFO][JWT] Removed expired session for user: " + username)
+				userSession.JWTTokens = utils.Remove(tokenRaw, userSession.JWTTokens)
+				logs.Log("[INFO][AUTH] Removed expired token for user " + username)
+
+				// If no more tokens, delete the entire session
+				if len(userSession.JWTTokens) == 0 {
+					delete(store.UserSessions, username)
+					logs.Log("[INFO][AUTH] Deleted session for user " + username + " (no more active tokens)")
+				}
+
+				// Save sessions to disk immediately
+				if err := store.SaveSessions(); err != nil {
+					logs.Log("[ERROR][AUTH] Failed to save sessions during cleanup of expired tokens: " + err.Error())
+				}
 			}
 		}
 	}
-
-	logs.Log("[INFO][JWT] Completed cleanup of expired user sessions")
+	logs.Log("[INFO][JWT] Completed cleanup of expired user sessions!")
 }
 
 // VerifyUserPassword verifies a user's password against NetCTI server

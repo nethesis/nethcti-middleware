@@ -154,7 +154,7 @@ func WsProxyHandler(c *gin.Context) {
 										username = parts[0]
 										phoneIslandToken = parts[1]
 									} else {
-										logs.Log(fmt.Sprintf("[WARNING][WS] Could not extract username from phone island token, using api_user"))
+										logs.Log("[WARNING][WS] Could not extract username from phone island token, using api_user")
 									}
 
 									loginData["token"] = phoneIslandToken
