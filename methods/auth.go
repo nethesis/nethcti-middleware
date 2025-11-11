@@ -15,6 +15,7 @@ import (
 
 	"github.com/nethesis/nethcti-middleware/configuration"
 	"github.com/nethesis/nethcti-middleware/logs"
+	"github.com/nethesis/nethcti-middleware/models"
 	"github.com/nethesis/nethcti-middleware/store"
 	"github.com/nethesis/nethcti-middleware/utils"
 )
@@ -24,7 +25,6 @@ func DeleteExpiredTokens() {
 	for username, userSession := range store.UserSessions {
 		// parse JWT token to check expiration
 		for _, tokenRaw := range userSession.JWTTokens {
-
 			token, err := jwtv4.Parse(tokenRaw, func(token *jwtv4.Token) (interface{}, error) {
 				return []byte(configuration.Config.Secret_jwt), nil
 			})
@@ -47,10 +47,9 @@ func DeleteExpiredTokens() {
 				userSession.JWTTokens = utils.Remove(tokenRaw, userSession.JWTTokens)
 				logs.Log("[INFO][AUTH] Removed expired token for user " + username)
 
-				// If no more tokens, delete the entire session
+				// If no more tokens, delete the entire session and revoke legacy token
 				if len(userSession.JWTTokens) == 0 {
-					delete(store.UserSessions, username)
-					logs.Log("[INFO][AUTH] Deleted session for user " + username + " (no more active tokens)")
+					RevokeLegacySession(username, userSession)
 				}
 
 				// Save sessions to disk immediately
@@ -114,4 +113,41 @@ func VerifyUserPassword(username, password string) bool {
 	}
 
 	return isValidPassword
+}
+
+// RevokeLegacySession deletes the session entry and revokes legacy persistent token (subtype "user")
+// Requires that userSession.JWTTokens is empty.
+func RevokeLegacySession(username string, userSession *models.UserSession) {
+	delete(store.UserSessions, username)
+	logs.Log("[INFO][AUTH] Deleted session for user " + username + " (no more active tokens)")
+
+	if userSession == nil || userSession.NethCTIToken == "" {
+		return
+	}
+
+	legacyURL := configuration.Config.V1Protocol + "://" + configuration.Config.V1ApiEndpoint + configuration.Config.V1ApiPath + "/authentication/persistent_token_remove"
+	removePayload := struct {
+		Type    string `json:"type"`
+		Subtype string `json:"subtype"`
+	}{Type: "phone-island", Subtype: "user"}
+	removePayloadBytes, _ := json.Marshal(removePayload)
+	req, err := http.NewRequest("POST", legacyURL, bytes.NewBuffer(removePayloadBytes))
+	if err != nil {
+		logs.Log("[ERROR][AUTH] Failed to build revoke request for user " + username + ": " + err.Error())
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", userSession.NethCTIToken)
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		logs.Log("[ERROR][AUTH] Failed to revoke legacy persistent token for user " + username + ": " + err.Error())
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusOK {
+		logs.Log("[INFO][AUTH] Revoked legacy persistent token (user:user) for user " + username)
+	} else {
+		logs.Log("[WARN][AUTH] Legacy persistent token revoke returned status " + resp.Status)
+	}
 }

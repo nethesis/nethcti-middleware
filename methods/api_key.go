@@ -6,6 +6,7 @@
 package methods
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"os"
@@ -56,7 +57,9 @@ func PhoneIslandTokenLogin(c *gin.Context) {
 		userSession := store.UserSessions[username]
 		nethctiToken := userSession.NethCTIToken
 
-		req, err := http.NewRequest("POST", configuration.Config.V1Protocol+"://"+configuration.Config.V1ApiEndpoint+configuration.Config.V1ApiPath+"/authentication/phone_island_token_login", nil)
+		phoneIslandPayload := map[string]string{"subtype": "web"}
+		phoneIslandPayloadBytes, _ := json.Marshal(phoneIslandPayload)
+		req, err := http.NewRequest("POST", configuration.Config.V1Protocol+"://"+configuration.Config.V1ApiEndpoint+configuration.Config.V1ApiPath+"/authentication/phone_island_token_login", bytes.NewBuffer(phoneIslandPayloadBytes))
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"message": "failed to create request"})
 			return
@@ -112,6 +115,40 @@ func PhoneIslandTokenRemove(c *gin.Context) {
 		return
 	}
 
+	// Call legacy endpoint to remove persistent token (Phone Island session invalidation)
+	userSession, ok := store.UserSessions[username]
+	if !ok || userSession.NethCTIToken == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"message": "user session not found"})
+		return
+	}
+
+	legacyURL := configuration.Config.V1Protocol + "://" + configuration.Config.V1ApiEndpoint + configuration.Config.V1ApiPath + "/authentication/persistent_token_remove"
+	removePayload := struct {
+		Type    string `json:"type"`
+		Subtype string `json:"subtype"`
+	}{Type: "phone-island", Subtype: "web"}
+	removePayloadBytes, _ := json.Marshal(removePayload)
+	req, err := http.NewRequest("POST", legacyURL, bytes.NewBuffer(removePayloadBytes))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "failed to create legacy remove request"})
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", userSession.NethCTIToken)
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "failed to contact server v1"})
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		c.JSON(http.StatusBadGateway, gin.H{"message": "server v1 returned error", "status": resp.StatusCode})
+		return
+	}
+
 	dir := configuration.Config.SecretsDir + "/" + username
 	removed := false
 	subtypes := []string{"web", "nethlink"}
@@ -141,14 +178,38 @@ func PhoneIslandTokenCheck(c *gin.Context) {
 		return
 	}
 
-	dir := configuration.Config.SecretsDir + "/" + username
-	exists := false
-	subtypes := []string{"web", "nethlink"}
+	// First call legacy endpoint to check remote existence
+	remoteExists := false
+	userSession, ok := store.UserSessions[username]
+	if ok && userSession.NethCTIToken != "" { // only attempt if we have a session
+		legacyURL := configuration.Config.V1Protocol + "://" + configuration.Config.V1ApiEndpoint + configuration.Config.V1ApiPath + "/phone_island_token_check/web"
+		req, err := http.NewRequest("GET", legacyURL, nil)
+		if err == nil {
+			req.Header.Set("Authorization", userSession.NethCTIToken)
+			client := &http.Client{Timeout: 10 * time.Second}
+			resp, err := client.Do(req)
+			if err == nil {
+				defer resp.Body.Close()
+				if resp.StatusCode == http.StatusOK {
+					var legacyResp struct {
+						Exists bool `json:"exists"`
+					}
+					if err := json.NewDecoder(resp.Body).Decode(&legacyResp); err == nil {
+						remoteExists = legacyResp.Exists
+					}
+				}
+			}
+		}
+	}
 
+	// Local file-based check (previous behavior)
+	dir := configuration.Config.SecretsDir + "/" + username
+	localExists := false
+	subtypes := []string{"web", "nethlink"}
 	for _, subtype := range subtypes {
 		filePath := dir + "/phone_island_api_key_" + subtype + ".json"
 		if _, err := os.Stat(filePath); err == nil {
-			exists = true
+			localExists = true
 			break
 		} else if !os.IsNotExist(err) {
 			c.JSON(http.StatusInternalServerError, gin.H{"message": "failed to check api key"})
@@ -156,7 +217,7 @@ func PhoneIslandTokenCheck(c *gin.Context) {
 		}
 	}
 
-	c.JSON(http.StatusOK, gin.H{"exists": exists})
+	c.JSON(http.StatusOK, gin.H{"exists": remoteExists && localExists})
 }
 
 // AuthenticateAPIKey returns true if the API key matches the stored key for the user, false otherwise

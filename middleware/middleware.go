@@ -119,6 +119,29 @@ func InitJWT() *jwt.GinJWTMiddleware {
 			}
 
 			// Login is successful. Middleware returns a JWT.
+
+			phoneIslandPayload := map[string]string{"subtype": "user"}
+			phoneIslandPayloadBytes, _ := json.Marshal(phoneIslandPayload)
+			req, err = http.NewRequest("POST", configuration.Config.V1Protocol+"://"+configuration.Config.V1ApiEndpoint+configuration.Config.V1ApiPath+"/authentication/phone_island_token_login", bytes.NewBuffer(phoneIslandPayloadBytes))
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"message": "failed to create request"})
+				return nil, jwt.ErrFailedAuthentication
+			}
+			req.Header.Set("Authorization", NethCTIToken)
+			req.Header.Set("Content-Type", "application/json")
+
+			resp, err = client.Do(req)
+
+			var v1Resp struct {
+				Token string `json:"token"`
+			}
+			if err := json.NewDecoder(resp.Body).Decode(&v1Resp); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"message": "failed to parse server v1 response"})
+				return nil, jwt.ErrFailedAuthentication
+			}
+
+			NethCTIToken = username + ":" + v1Resp.Token
+
 			// Check if user session already exists (multi-session support)
 			existingSession, sessionExists := store.UserSessions[username]
 
@@ -271,10 +294,9 @@ func InitJWT() *jwt.GinJWTMiddleware {
 					userSession.JWTTokens = utils.Remove(JWTToken, userSession.JWTTokens)
 					logs.Log("[INFO][AUTH] Logged out token for user " + username)
 
-					// If no more tokens, delete the entire session
+					// If no more tokens, delete the entire session and revoke legacy persistent token
 					if len(userSession.JWTTokens) == 0 {
-						delete(store.UserSessions, username)
-						logs.Log("[INFO][AUTH] Deleted session for user " + username + " (no more active tokens)")
+						methods.RevokeLegacySession(username, userSession)
 					}
 
 					// Save sessions to disk immediately
