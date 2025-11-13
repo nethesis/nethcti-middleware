@@ -18,6 +18,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 
+	"github.com/nethesis/nethcti-middleware/configuration"
+	"github.com/nethesis/nethcti-middleware/db"
+	"github.com/nethesis/nethcti-middleware/logs"
 	"github.com/nethesis/nethcti-middleware/models"
 	"github.com/nethesis/nethcti-middleware/store"
 	"github.com/nethesis/nethcti-middleware/utils"
@@ -60,6 +63,13 @@ func setupTestEnvironment() {
 	os.Setenv("NETHVOICE_MIDDLEWARE_SECRETS_DIR", "/tmp/test-secrets/nethcti")
 	os.Setenv("NETHVOICE_MIDDLEWARE_ISSUER_2FA", "NetCTI-Test")
 	os.Setenv("NETHVOICE_MIDDLEWARE_SENSITIVE_LIST", "password,secret")
+
+	// Set database environment variables for testing
+	os.Setenv("MARIADB_HOST", "127.0.0.1")
+	os.Setenv("MARIADB_PORT", "3306")
+	os.Setenv("MARIADB_USER", "root")
+	os.Setenv("MARIADB_PASSWORD", "root")
+	os.Setenv("MARIADB_DATABASE", "testdb")
 
 	// Create test secrets directory
 	os.MkdirAll(os.Getenv("NETHVOICE_MIDDLEWARE_SECRETS_DIR"), 0700)
@@ -306,4 +316,26 @@ func TestDisable2FA(t *testing.T) {
 	defer resp.Body.Close()
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
+// Test database connection
+func TestDatabaseConnection(t *testing.T) {
+	resetTestState()
+
+	// Initialize logging
+	logs.Init("db-test")
+
+	// Initialize configuration
+	configuration.Init()
+
+	// Attempt to initialize database
+	err := db.Init()
+	assert.NoError(t, err, "Database connection should succeed")
+
+	// Check if DB is not nil
+	assert.NotNil(t, db.DB, "Database connection pool should be initialized")
+
+	// Cleanup
+	err = db.Close()
+	assert.NoError(t, err, "Database close should succeed")
 }
