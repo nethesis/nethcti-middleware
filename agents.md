@@ -52,6 +52,19 @@ The development environment is based on Go and Docker.
         podman stop mariadb-test
         ```
 
+## Database Migrations
+
+Database schema changes are managed through versioned migrations in the `db/migrations/` directory.
+
+*   **Running migrations**:
+    ```bash
+    cd db/migrations
+    ./run_migration.sh 001 apply     # Apply a specific migration
+    ./run_migration.sh 001 status    # Check migration status
+    ```
+*   **Adding new migrations**: Create a new SQL file with incremented number (e.g., `001_description.sql`) and document it in `db/migrations/README.md`.
+*   See `db/migrations/README.md` for detailed instructions.
+
 ## OpenAPI Endpoint
 
 Keep `openapi.yaml` file updated with any changes to the API.

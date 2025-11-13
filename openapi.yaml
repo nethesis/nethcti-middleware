@@ -1,0 +1,479 @@
+openapi: 3.0.0
+info:
+  title: NethCTI Middleware API
+  description: |
+    NethCTI Middleware provides authentication, 2FA, phonebook management, 
+    and integration with NethVoice/NethCTI systems.
+  version: 1.0.0
+  contact:
+    name: Nethesis
+    url: https://www.nethesis.it
+
+servers:
+  - url: http://localhost:8080
+    description: Local development server
+  - url: https://middleware.example.com
+    description: Production server
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token obtained from /login endpoint
+
+  schemas:
+    LoginRequest:
+      type: object
+      required:
+        - username
+        - password
+      properties:
+        username:
+          type: string
+          description: User login name
+        password:
+          type: string
+          format: password
+          description: User password
+
+    LoginResponse:
+      type: object
+      properties:
+        expire:
+          type: string
+          format: date-time
+        token:
+          type: string
+          description: JWT bearer token for subsequent requests
+
+    ErrorResponse:
+      type: object
+      properties:
+        message:
+          type: string
+        error:
+          type: string
+
+    PhonebookEntry:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        owner_id:
+          type: string
+          description: Owner/user ID
+        name:
+          type: string
+          description: Contact name
+        type:
+          type: string
+          enum: [private, public]
+          description: Entry type (private or public)
+        workphone:
+          type: string
+          description: Work phone number
+        cellphone:
+          type: string
+          description: Cell phone number
+        homephone:
+          type: string
+          description: Home phone number
+        workemail:
+          type: string
+          description: Work email address
+        homeemail:
+          type: string
+          description: Home email address
+        company:
+          type: string
+          description: Company name
+        title:
+          type: string
+          description: Job title
+        fax:
+          type: string
+          description: Fax number
+        notes:
+          type: string
+          description: Notes/description
+        url:
+          type: string
+          description: Website URL
+        extension:
+          type: string
+          description: Phone extension
+        speeddial_num:
+          type: string
+          description: Speed dial number
+        homestreet:
+          type: string
+          description: Home street address
+        homepob:
+          type: string
+          description: Home P.O. box
+        homecity:
+          type: string
+          description: Home city
+        homeprovince:
+          type: string
+          description: Home province/state
+        homepostalcode:
+          type: string
+          description: Home postal code
+        homecountry:
+          type: string
+          description: Home country
+        workstreet:
+          type: string
+          description: Work street address
+        workpob:
+          type: string
+          description: Work P.O. box
+        workcity:
+          type: string
+          description: Work city
+        workprovince:
+          type: string
+          description: Work province/state
+        workpostalcode:
+          type: string
+          description: Work postal code
+        workcountry:
+          type: string
+          description: Work country
+
+    PhonebookImportResponse:
+      type: object
+      properties:
+        message:
+          type: string
+        total_rows:
+          type: integer
+          description: Total rows in the CSV
+        imported_rows:
+          type: integer
+          description: Successfully imported rows
+        failed_rows:
+          type: integer
+          description: Failed rows
+        skipped_rows:
+          type: integer
+          description: Skipped rows (validation errors)
+        error_messages:
+          type: array
+          items:
+            type: string
+          description: List of error messages encountered during import
+
+    TwoFAStatus:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        method:
+          type: string
+          enum: [totp]
+
+    QRCodeResponse:
+      type: object
+      properties:
+        qr_code:
+          type: string
+          format: byte
+          description: Base64-encoded QR code image
+
+    PhoneIslandTokenResponse:
+      type: object
+      properties:
+        token:
+          type: string
+
+paths:
+  /login:
+    post:
+      summary: User login
+      operationId: login
+      tags:
+        - Authentication
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Successful login
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '401':
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /logout:
+    post:
+      summary: User logout
+      operationId: logout
+      tags:
+        - Authentication
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Successful logout
+        '401':
+          description: Unauthorized
+
+  /2fa/status:
+    get:
+      summary: Get 2FA status
+      operationId: get2FAStatus
+      tags:
+        - Two-Factor Authentication
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Current 2FA status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TwoFAStatus'
+        '401':
+          description: Unauthorized
+
+  /2fa/qr-code:
+    get:
+      summary: Get 2FA QR code for TOTP setup
+      operationId: get2FAQRCode
+      tags:
+        - Two-Factor Authentication
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: QR code image
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QRCodeResponse'
+        '401':
+          description: Unauthorized
+
+  /2fa/verify-otp:
+    post:
+      summary: Verify OTP token and enable 2FA
+      operationId: verify2FAOTP
+      tags:
+        - Two-Factor Authentication
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - otp_code
+              properties:
+                otp_code:
+                  type: string
+                  description: 6-digit TOTP code
+      responses:
+        '200':
+          description: OTP verified successfully
+        '400':
+          description: Invalid OTP
+        '401':
+          description: Unauthorized
+
+  /2fa/disable:
+    post:
+      summary: Disable 2FA
+      operationId: disable2FA
+      tags:
+        - Two-Factor Authentication
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: 2FA disabled
+        '401':
+          description: Unauthorized
+
+  /2fa/recovery-codes:
+    post:
+      summary: Get 2FA recovery codes
+      operationId: get2FARecoveryCodes
+      tags:
+        - Two-Factor Authentication
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Recovery codes
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  recovery_codes:
+                    type: array
+                    items:
+                      type: string
+        '401':
+          description: Unauthorized
+
+  /phonebook/import:
+    post:
+      summary: Import phonebook entries from CSV file
+      operationId: importPhonebookCSV
+      tags:
+        - Phonebook
+      security:
+        - bearerAuth: []
+      description: |
+        Import phonebook entries from a CSV file. The CSV must have a 'name' column (required).
+        
+        Supported optional columns (case-insensitive):
+        - name (required): Contact name
+        - type (optional): Entry type - must be 'private' or 'public' (defaults to 'private')
+        - workphone (optional): Work phone number
+        - homephone (optional): Home phone number
+        - cellphone (optional): Cell phone number
+        - workemail (optional): Work email address
+        - homeemail (optional): Home email address
+        - company (optional): Company name
+        - title (optional): Job title
+        - fax (optional): Fax number
+        - notes (optional): Notes/description
+        - homestreet (optional): Home street address
+        - homepob (optional): Home P.O. box
+        - homecity (optional): Home city
+        - homeprovince (optional): Home province/state
+        - homepostalcode (optional): Home postal code
+        - homecountry (optional): Home country
+        - workstreet (optional): Work street address
+        - workpob (optional): Work P.O. box
+        - workcity (optional): Work city
+        - workprovince (optional): Work province/state
+        - workpostalcode (optional): Work postal code
+        - workcountry (optional): Work country
+        - url (optional): Website URL
+        - extension (optional): Phone extension
+        - speeddial_num (optional): Speed dial number
+
+        Validation rules:
+        - Rows with empty 'name' field are skipped
+        - Rows with invalid 'type' (not 'private' or 'public') are skipped
+        - All other fields are optional and can be empty
+        - Type values are case-insensitive and normalized to lowercase
+
+        Example CSV:
+        ```
+        name,type,workphone,cellphone,company
+        John Doe,private,+1234567890,,Example Corp
+        Jane Smith,public,,+0987654321,
+        Bob Johnson,,,+1111111111,Tech Services
+        ```
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - file
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: CSV file (text/csv or text/plain)
+      responses:
+        '200':
+          description: Import completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PhonebookImportResponse'
+        '400':
+          description: Invalid file or CSV format
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+        '500':
+          description: Server error during import
+
+  /authentication/phone_island_token_login:
+    post:
+      summary: Phone Island token login
+      operationId: phoneIslandTokenLogin
+      tags:
+        - Phone Island Integration
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Token generated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PhoneIslandTokenResponse'
+        '401':
+          description: Unauthorized
+
+  /authentication/phone_island_token_check:
+    get:
+      summary: Check Phone Island token validity
+      operationId: phoneIslandTokenCheck
+      tags:
+        - Phone Island Integration
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Token is valid
+        '401':
+          description: Token invalid or expired
+
+  /authentication/persistent_token_remove:
+    post:
+      summary: Remove persistent token
+      operationId: phoneIslandTokenRemove
+      tags:
+        - Phone Island Integration
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Token removed
+        '401':
+          description: Unauthorized
+
+tags:
+  - name: Authentication
+    description: Login and session management
+  - name: Two-Factor Authentication
+    description: TOTP-based 2FA management
+  - name: Phonebook
+    description: Phonebook management and CSV import
+  - name: Phone Island Integration
+    description: Phone Island token and authentication

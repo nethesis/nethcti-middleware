@@ -8,6 +8,8 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -60,6 +62,13 @@ func setupTestEnvironment() {
 	os.Setenv("NETHVOICE_MIDDLEWARE_SECRETS_DIR", "/tmp/test-secrets/nethcti")
 	os.Setenv("NETHVOICE_MIDDLEWARE_ISSUER_2FA", "NetCTI-Test")
 	os.Setenv("NETHVOICE_MIDDLEWARE_SENSITIVE_LIST", "password,secret")
+
+	// Set database environment variables for testing
+	os.Setenv("PHONEBOOK_MARIADB_HOST", "127.0.0.1")
+	os.Setenv("PHONEBOOK_MARIADB_PORT", "3306")
+	os.Setenv("PHONEBOOK_MARIADB_USER", "root")
+	os.Setenv("PHONEBOOK_MARIADB_PASSWORD", "root")
+	os.Setenv("PHONEBOOK_MARIADB_DATABASE", "nethcti3")
 
 	// Create test secrets directory
 	os.MkdirAll(os.Getenv("NETHVOICE_MIDDLEWARE_SECRETS_DIR"), 0700)
@@ -306,4 +315,140 @@ func TestDisable2FA(t *testing.T) {
 	defer resp.Body.Close()
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
+// Test phonebook CSV import
+func TestPhonebookImport(t *testing.T) {
+	resetTestState()
+
+	// Get JWT token first
+	token := utils.PerformLogin(testServerURL)
+
+	// Create a CSV content
+	csvContent := `name,type,workphone,cellphone,company
+John Doe,private,+1234567890,,Example Corp
+Jane Smith,public,,+0987654321,Tech Inc
+Bob Johnson,private,+1111111111,+2222222222,Services Ltd`
+
+	// Create multipart form data
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+
+	// Add file field
+	part, err := writer.CreateFormFile("file", "contacts.csv")
+	assert.NoError(t, err)
+
+	_, err = io.Copy(part, strings.NewReader(csvContent))
+	assert.NoError(t, err)
+
+	err = writer.Close()
+	assert.NoError(t, err)
+
+	// Make request
+	client := &http.Client{}
+	req, err := http.NewRequest("POST", testServerURL+"/phonebook/import", body)
+	assert.NoError(t, err)
+
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	resp, err := client.Do(req)
+	assert.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var response map[string]interface{}
+	err = json.NewDecoder(resp.Body).Decode(&response)
+	assert.NoError(t, err)
+
+	// Verify response structure
+	assert.NotEmpty(t, response["message"])
+	assert.Equal(t, float64(3), response["total_rows"], "Should have 3 rows in CSV")
+	// With database running, we should have successful imports
+	totalRows := response["total_rows"].(float64)
+	importedRows := response["imported_rows"].(float64)
+	assert.Greater(t, importedRows, float64(0), fmt.Sprintf("Should have imported some rows out of %.0f", totalRows))
+}
+
+// Test phonebook import with invalid type
+func TestPhonebookImportInvalidType(t *testing.T) {
+	resetTestState()
+
+	token := utils.PerformLogin(testServerURL)
+
+	// CSV with invalid type value
+	csvContent := `name,type,workphone
+John Doe,invalid,+1234567890
+Jane Smith,private,+0987654321`
+
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+
+	part, err := writer.CreateFormFile("file", "contacts.csv")
+	assert.NoError(t, err)
+
+	_, err = io.Copy(part, strings.NewReader(csvContent))
+	assert.NoError(t, err)
+
+	err = writer.Close()
+	assert.NoError(t, err)
+
+	client := &http.Client{}
+	req, err := http.NewRequest("POST", testServerURL+"/phonebook/import", body)
+	assert.NoError(t, err)
+
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	resp, err := client.Do(req)
+	assert.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var response map[string]interface{}
+	err = json.NewDecoder(resp.Body).Decode(&response)
+	assert.NoError(t, err)
+
+	// First row should be skipped due to invalid type
+	assert.Greater(t, response["skipped_rows"], float64(0), "Should have skipped rows with invalid type")
+	assert.Less(t, response["imported_rows"], float64(2), "Should not have imported the row with invalid type")
+}
+
+// Test phonebook import missing required field
+func TestPhonebookImportMissingName(t *testing.T) {
+	resetTestState()
+
+	token := utils.PerformLogin(testServerURL)
+
+	// CSV with missing name column
+	csvContent := `type,workphone
+private,+1234567890
+public,+0987654321`
+
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+
+	part, err := writer.CreateFormFile("file", "contacts.csv")
+	assert.NoError(t, err)
+
+	_, err = io.Copy(part, strings.NewReader(csvContent))
+	assert.NoError(t, err)
+
+	err = writer.Close()
+	assert.NoError(t, err)
+
+	client := &http.Client{}
+	req, err := http.NewRequest("POST", testServerURL+"/phonebook/import", body)
+	assert.NoError(t, err)
+
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	resp, err := client.Do(req)
+	assert.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 }

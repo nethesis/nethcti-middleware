@@ -34,6 +34,17 @@ type Configuration struct {
 	MQTTUsername string `json:"mqtt_username"`
 	MQTTPassword string `json:"mqtt_password"`
 	MQTTEnabled  bool   `json:"mqtt_enabled"`
+
+	// Phonebook MariaDB Configuration for phonebook and persistence layer
+	PhonebookMariaDBHost     string `json:"phonebook_mariadb_host"`
+	PhonebookMariaDBPort     string `json:"phonebook_mariadb_port"`
+	PhonebookMariaDBUser     string `json:"phonebook_mariadb_user"`
+	PhonebookMariaDBPassword string `json:"phonebook_mariadb_password"`
+	PhonebookMariaDBDatabase string `json:"phonebook_mariadb_database"`
+
+	// Authorization configuration paths
+	ProfilesConfigPath string `json:"profiles_config_path"`
+	UsersConfigPath    string `json:"users_config_path"`
 }
 
 var Config = Configuration{}
@@ -179,4 +190,55 @@ func Init() {
 
 	// Load or generate JWT secret
 	Config.Secret_jwt = loadOrGenerateJWTSecret(Config.SecretsDir)
+
+	// Set MariaDB host
+	if os.Getenv("PHONEBOOK_MARIADB_HOST") != "" {
+		Config.PhonebookMariaDBHost = os.Getenv("PHONEBOOK_MARIADB_HOST")
+	} else {
+		Config.PhonebookMariaDBHost = "localhost"
+	}
+
+	// Set MariaDB user
+	if os.Getenv("PHONEBOOK_MARIADB_USER") != "" {
+		Config.PhonebookMariaDBUser = os.Getenv("PHONEBOOK_MARIADB_USER")
+	} else {
+		Config.PhonebookMariaDBUser = "root"
+	}
+
+	// Set MariaDB port (default to 3306 when not provided)
+	if os.Getenv("PHONEBOOK_MARIADB_PORT") != "" {
+		Config.PhonebookMariaDBPort = os.Getenv("PHONEBOOK_MARIADB_PORT")
+	} else {
+		// Default to standard MariaDB port for local testing/environments
+		Config.PhonebookMariaDBPort = "3306"
+		logs.Log("[WARN][ENV] PHONEBOOK_MARIADB_PORT not set; defaulting to 3306")
+	}
+
+	// Set MariaDB password (default to 'root' for local test environments)
+	if os.Getenv("PHONEBOOK_MARIADB_PASSWORD") != "" {
+		Config.PhonebookMariaDBPassword = os.Getenv("PHONEBOOK_MARIADB_PASSWORD")
+	} else {
+		Config.PhonebookMariaDBPassword = "root"
+		logs.Log("[WARN][ENV] PHONEBOOK_MARIADB_PASSWORD not set; defaulting to 'root' for local testing")
+	}
+
+	// Set MariaDB database name
+	if os.Getenv("PHONEBOOK_MARIADB_DATABASE") != "" {
+		Config.PhonebookMariaDBDatabase = os.Getenv("PHONEBOOK_MARIADB_DATABASE")
+	} else {
+		Config.PhonebookMariaDBDatabase = "nethcti3"
+	}
+
+	// Set authorization config paths
+	if os.Getenv("AUTH_PROFILES_PATH") != "" {
+		Config.ProfilesConfigPath = os.Getenv("AUTH_PROFILES_PATH")
+	} else {
+		Config.ProfilesConfigPath = "/etc/nethcti/profiles.json"
+	}
+
+	if os.Getenv("AUTH_USERS_PATH") != "" {
+		Config.UsersConfigPath = os.Getenv("AUTH_USERS_PATH")
+	} else {
+		Config.UsersConfigPath = "/etc/nethcti/users.json"
+	}
 }
