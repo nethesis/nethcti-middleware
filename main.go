@@ -16,6 +16,7 @@ import (
 	"github.com/robfig/cron/v3"
 
 	"github.com/nethesis/nethcti-middleware/configuration"
+	"github.com/nethesis/nethcti-middleware/db"
 	"github.com/nethesis/nethcti-middleware/logs"
 	"github.com/nethesis/nethcti-middleware/methods"
 	"github.com/nethesis/nethcti-middleware/middleware"
@@ -30,6 +31,14 @@ func main() {
 
 	// Init configuration
 	configuration.Init()
+
+	// Init database
+	err := db.Init()
+	if err != nil {
+		logs.Log("[CRITICAL] Failed to initialize database: " + err.Error())
+		return
+	}
+	defer db.Close()
 
 	// Init store
 	store.UserSessionInit()
@@ -103,6 +112,9 @@ func createRouter() *gin.Engine {
 		api.GET("/2fa/status", methods.Get2FAStatus)
 		api.POST("/2fa/recovery-codes", methods.Get2FARecoveryCodes)
 		api.GET("/2fa/qr-code", methods.QRCode)
+
+		// Phonebook APIs
+		api.POST("/phonebook/import", methods.ImportPhonebookCSV)
 
 		// Phone Island Integration APIs
 		api.POST("/authentication/phone_island_token_login", methods.PhoneIslandTokenLogin)

@@ -34,6 +34,13 @@ type Configuration struct {
 	MQTTUsername string `json:"mqtt_username"`
 	MQTTPassword string `json:"mqtt_password"`
 	MQTTEnabled  bool   `json:"mqtt_enabled"`
+
+	// MariaDB Configuration for phonebook and persistence layer
+	MariaDBHost     string `json:"mariadb_host"`
+	MariaDBPort     string `json:"mariadb_port"`
+	MariaDBUser     string `json:"mariadb_user"`
+	MariaDBPassword string `json:"mariadb_password"`
+	MariaDBDatabase string `json:"mariadb_database"`
 }
 
 var Config = Configuration{}
@@ -179,4 +186,41 @@ func Init() {
 
 	// Load or generate JWT secret
 	Config.Secret_jwt = loadOrGenerateJWTSecret(Config.SecretsDir)
+
+	// set MariaDB host
+	if os.Getenv("MARIADB_HOST") != "" {
+		Config.MariaDBHost = os.Getenv("MARIADB_HOST")
+	} else {
+		Config.MariaDBHost = "localhost"
+	}
+
+	// set MariaDB user
+	if os.Getenv("MARIADB_USER") != "" {
+		Config.MariaDBUser = os.Getenv("MARIADB_USER")
+	} else {
+		Config.MariaDBUser = "root"
+	}
+
+	// set MariaDB port (required - no default)
+	if os.Getenv("MARIADB_PORT") != "" {
+		Config.MariaDBPort = os.Getenv("MARIADB_PORT")
+	} else {
+		logs.Log("[CRITICAL][ENV] MARIADB_PORT variable is empty")
+		os.Exit(1)
+	}
+
+	// set MariaDB password (required - no default)
+	if os.Getenv("MARIADB_PASSWORD") != "" {
+		Config.MariaDBPassword = os.Getenv("MARIADB_PASSWORD")
+	} else {
+		logs.Log("[CRITICAL][ENV] MARIADB_PASSWORD variable is empty")
+		os.Exit(1)
+	}
+
+	// set MariaDB database name
+	if os.Getenv("MARIADB_DB") != "" {
+		Config.MariaDBDatabase = os.Getenv("MARIADB_DB")
+	} else {
+		Config.MariaDBDatabase = "nethcti3"
+	}
 }
