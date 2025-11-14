@@ -36,12 +36,13 @@ type Configuration struct {
 	MQTTEnabled  bool   `json:"mqtt_enabled"`
 
 	// Phonebook MariaDB Configuration for phonebook and persistence layer
-	MariaDBHost     string `json:"mariadb_host"`
-	MariaDBPort     string `json:"mariadb_port"`
-	MariaDBUser     string `json:"mariadb_user"`
-	MariaDBPassword string `json:"mariadb_password"`
-	MariaDBDatabase string `json:"mariadb_database"`
+	PhonebookMariaDBHost     string `json:"phonebook_mariadb_host"`
+	PhonebookMariaDBPort     string `json:"phonebook_mariadb_port"`
+	PhonebookMariaDBUser     string `json:"phonebook_mariadb_user"`
+	PhonebookMariaDBPassword string `json:"phonebook_mariadb_password"`
+	PhonebookMariaDBDatabase string `json:"phonebook_mariadb_database"`
 
+	// Authorization configuration paths
 	ProfilesConfigPath string `json:"profiles_config_path"`
 	UsersConfigPath    string `json:"users_config_path"`
 }
@@ -191,40 +192,41 @@ func Init() {
 	Config.Secret_jwt = loadOrGenerateJWTSecret(Config.SecretsDir)
 
 	// set MariaDB host
-	if os.Getenv("MARIADB_HOST") != "" {
-		Config.MariaDBHost = os.Getenv("MARIADB_HOST")
+	if os.Getenv("PHONEBOOK_MARIADB_HOST") != "" {
+		Config.PhonebookMariaDBHost = os.Getenv("PHONEBOOK_MARIADB_HOST")
 	} else {
-		Config.MariaDBHost = "localhost"
+		Config.PhonebookMariaDBHost = "localhost"
 	}
 
 	// set MariaDB user
-	if os.Getenv("MARIADB_USER") != "" {
-		Config.MariaDBUser = os.Getenv("MARIADB_USER")
+	if os.Getenv("PHONEBOOK_MARIADB_USER") != "" {
+		Config.PhonebookMariaDBUser = os.Getenv("PHONEBOOK_MARIADB_USER")
 	} else {
-		Config.MariaDBUser = "root"
+		Config.PhonebookMariaDBUser = "root"
 	}
 
-	// set MariaDB port (required - no default)
-	if os.Getenv("MARIADB_PORT") != "" {
-		Config.MariaDBPort = os.Getenv("MARIADB_PORT")
+	// set MariaDB port (default to 3306 when not provided)
+	if os.Getenv("PHONEBOOK_MARIADB_PORT") != "" {
+		Config.PhonebookMariaDBPort = os.Getenv("PHONEBOOK_MARIADB_PORT")
 	} else {
-		logs.Log("[CRITICAL][ENV] MARIADB_PORT variable is empty")
-		os.Exit(1)
+		// Default to standard MariaDB port for local testing/environments
+		Config.PhonebookMariaDBPort = "3306"
+		logs.Log("[WARN][ENV] PHONEBOOK_MARIADB_PORT not set; defaulting to 3306")
 	}
 
-	// set MariaDB password (required - no default)
-	if os.Getenv("MARIADB_PASSWORD") != "" {
-		Config.MariaDBPassword = os.Getenv("MARIADB_PASSWORD")
+	// set MariaDB password (default to 'root' for local test environments)
+	if os.Getenv("PHONEBOOK_MARIADB_PASSWORD") != "" {
+		Config.PhonebookMariaDBPassword = os.Getenv("PHONEBOOK_MARIADB_PASSWORD")
 	} else {
-		logs.Log("[CRITICAL][ENV] MARIADB_PASSWORD variable is empty")
-		os.Exit(1)
+		Config.PhonebookMariaDBPassword = "root"
+		logs.Log("[WARN][ENV] PHONEBOOK_MARIADB_PASSWORD not set; defaulting to 'root' for local testing")
 	}
 
 	// set MariaDB database name
-	if os.Getenv("MARIADB_DB") != "" {
-		Config.MariaDBDatabase = os.Getenv("MARIADB_DB")
+	if os.Getenv("PHONEBOOK_MARIADB_DATABASE") != "" {
+		Config.PhonebookMariaDBDatabase = os.Getenv("PHONEBOOK_MARIADB_DATABASE")
 	} else {
-		Config.MariaDBDatabase = "nethcti3"
+		Config.PhonebookMariaDBDatabase = "nethcti3"
 	}
 	// set authorization config paths
 	if os.Getenv("AUTH_PROFILES_PATH") != "" {

@@ -24,11 +24,11 @@ var DB *sql.DB
 func Init() error {
 	dsn := fmt.Sprintf(
 		"%s:%s@tcp(%s:%s)/%s?parseTime=true",
-		configuration.Config.MariaDBUser,
-		configuration.Config.MariaDBPassword,
-		configuration.Config.MariaDBHost,
-		configuration.Config.MariaDBPort,
-		configuration.Config.MariaDBDatabase,
+		configuration.Config.PhonebookMariaDBUser,
+		configuration.Config.PhonebookMariaDBPassword,
+		configuration.Config.PhonebookMariaDBHost,
+		configuration.Config.PhonebookMariaDBPort,
+		configuration.Config.PhonebookMariaDBDatabase,
 	)
 
 	var err error

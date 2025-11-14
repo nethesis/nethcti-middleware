@@ -48,19 +48,19 @@ func applyTestEnv() {
 	os.Setenv("NETHVOICE_MIDDLEWARE_SECRETS_DIR", "/tmp/test-secrets/nethcti-db")
 	os.Setenv("NETHVOICE_MIDDLEWARE_ISSUER_2FA", "NetCTI-Test")
 	os.Setenv("NETHVOICE_MIDDLEWARE_SENSITIVE_LIST", "password,secret")
-	os.Setenv("MARIADB_HOST", "127.0.0.1")
-	os.Setenv("MARIADB_PORT", "3306")
-	os.Setenv("MARIADB_USER", "root")
-	os.Setenv("MARIADB_PASSWORD", "root")
-	os.Setenv("MARIADB_DB", "testdb")
+	os.Setenv("PHONEBOOK_MARIADB_HOST", "127.0.0.1")
+	os.Setenv("PHONEBOOK_MARIADB_PORT", "3306")
+	os.Setenv("PHONEBOOK_MARIADB_USER", "root")
+	os.Setenv("PHONEBOOK_MARIADB_PASSWORD", "root")
+	os.Setenv("PHONEBOOK_MARIADB_DATABASE", "testdb")
 	os.MkdirAll("/tmp/test-secrets/nethcti-db", 0755)
 }
 
 func ensureTestDatabase() error {
-	host := os.Getenv("MARIADB_HOST")
-	port := os.Getenv("MARIADB_PORT")
-	user := os.Getenv("MARIADB_USER")
-	pass := os.Getenv("MARIADB_PASSWORD")
+	host := os.Getenv("PHONEBOOK_MARIADB_HOST")
+	port := os.Getenv("PHONEBOOK_MARIADB_PORT")
+	user := os.Getenv("PHONEBOOK_MARIADB_USER")
+	pass := os.Getenv("PHONEBOOK_MARIADB_PASSWORD")
 	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/", user, pass, host, port)
 
 	db, err := sql.Open("mysql", dsn)
@@ -69,7 +69,7 @@ func ensureTestDatabase() error {
 	}
 	defer db.Close()
 
-	target := os.Getenv("MARIADB_DB")
+	target := os.Getenv("PHONEBOOK_MARIADB_DATABASE")
 	_, err = db.Exec("CREATE DATABASE IF NOT EXISTS " + target)
 	return err
 }
