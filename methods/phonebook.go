@@ -8,6 +8,7 @@ package methods
 import (
 	"context"
 	"encoding/csv"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -102,7 +103,7 @@ func ImportPhonebookCSV(c *gin.Context) {
 		}
 		if err != nil {
 			logs.Log("[PHONEBOOK] CSV read error: " + err.Error())
-			errorMessages = append(errorMessages, "Row "+string(rune(totalRows+2))+": "+err.Error())
+			errorMessages = append(errorMessages, fmt.Sprintf("Row %d: %s", totalRows+2, err.Error()))
 			continue
 		}
 
@@ -120,7 +121,7 @@ func ImportPhonebookCSV(c *gin.Context) {
 		name := getField("name")
 		if name == "" {
 			skippedRows++
-			errorMessages = append(errorMessages, "Row "+string(rune(totalRows+1))+": name is empty")
+			errorMessages = append(errorMessages, fmt.Sprintf("Row %d: name is empty", totalRows+1))
 			continue
 		}
 
@@ -132,7 +133,7 @@ func ImportPhonebookCSV(c *gin.Context) {
 			entryType = strings.ToLower(entryType)
 			if entryType != "private" && entryType != "public" {
 				skippedRows++
-				errorMessages = append(errorMessages, "Row "+string(rune(totalRows+1))+": invalid type '"+getField("type")+"' (must be 'private' or 'public')")
+				errorMessages = append(errorMessages, fmt.Sprintf("Row %d: invalid type '%s' (must be 'private' or 'public')", totalRows+1, getField("type")))
 				continue
 			}
 		}
