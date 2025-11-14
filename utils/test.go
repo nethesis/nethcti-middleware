@@ -18,9 +18,13 @@ import (
 )
 
 func PerformLogin(testServerURL string) string {
+	return PerformLoginWithCredentials(testServerURL, "testuser", "testpass")
+}
+
+func PerformLoginWithCredentials(testServerURL, username, password string) string {
 	loginData := map[string]string{
-		"username": "testuser",
-		"password": "testpass",
+		"username": username,
+		"password": password,
 	}
 	jsonData, _ := json.Marshal(loginData)
 
@@ -32,7 +36,8 @@ func PerformLogin(testServerURL string) string {
 
 	var response map[string]interface{}
 	json.NewDecoder(resp.Body).Decode(&response)
-	return response["token"].(string)
+	token, _ := response["token"].(string)
+	return token
 }
 
 func Setup2FA(testServerURL string, token string, t *testing.T) string {
