@@ -36,11 +36,12 @@ type Configuration struct {
 	MQTTEnabled  bool   `json:"mqtt_enabled"`
 
 	// Phonebook MariaDB Configuration for phonebook and persistence layer
-	MariaDBHost        string `json:"mariadb_host"`
-	MariaDBPort        string `json:"mariadb_port"`
-	MariaDBUser        string `json:"mariadb_user"`
-	MariaDBPassword    string `json:"mariadb_password"`
-	MariaDBDatabase    string `json:"mariadb_database"`
+	MariaDBHost     string `json:"mariadb_host"`
+	MariaDBPort     string `json:"mariadb_port"`
+	MariaDBUser     string `json:"mariadb_user"`
+	MariaDBPassword string `json:"mariadb_password"`
+	MariaDBDatabase string `json:"mariadb_database"`
+
 	ProfilesConfigPath string `json:"profiles_config_path"`
 	UsersConfigPath    string `json:"users_config_path"`
 }
@@ -229,12 +230,12 @@ func Init() {
 	if os.Getenv("AUTH_PROFILES_PATH") != "" {
 		Config.ProfilesConfigPath = os.Getenv("AUTH_PROFILES_PATH")
 	} else {
-		Config.ProfilesConfigPath = "examples/profiles.json"
+		Config.ProfilesConfigPath = "/etc/nethcti/profiles.json"
 	}
 
 	if os.Getenv("AUTH_USERS_PATH") != "" {
 		Config.UsersConfigPath = os.Getenv("AUTH_USERS_PATH")
 	} else {
-		Config.UsersConfigPath = "examples/users.json"
+		Config.UsersConfigPath = "/etc/nethcti/users.json"
 	}
 }
