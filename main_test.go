@@ -100,6 +100,11 @@ func mockNetCTIServer() *httptest.Server {
 			} else {
 				w.WriteHeader(http.StatusUnauthorized)
 			}
+		case "/webrest/authentication/phone_island_token_login":
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"token": "phone-island-token"}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
 		}
 	}))
 }

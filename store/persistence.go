@@ -6,12 +6,16 @@
 package store
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
+	"github.com/nethesis/nethcti-middleware/configuration"
 	"github.com/nethesis/nethcti-middleware/logs"
 	"github.com/nethesis/nethcti-middleware/models"
 )
@@ -34,7 +38,7 @@ func InitPersistence(dataDir string) {
 	logs.Log("[INFO][PERSISTENCE] Session persistence initialized at " + persistencePath)
 }
 
-// SaveSessions saves current user sessions to disk
+// Saves current user sessions to disk
 func SaveSessions() error {
 	if persistencePath == "" {
 		return nil // Persistence not initialized
@@ -127,4 +131,87 @@ func LoadSessions() error {
 
 	logs.Log(fmt.Sprintf("[INFO][PERSISTENCE] Loaded %d session(s) from disk", loadedCount))
 	return nil
+}
+
+func RemoveJWTToken(username, tokenToRemove string) error {
+	userSession, exists := UserSessions[username]
+	if !exists || userSession == nil {
+		return fmt.Errorf("no session found for user %s", username)
+	}
+
+	updatedTokens := make([]string, 0, len(userSession.JWTTokens))
+	for _, token := range userSession.JWTTokens {
+		if token != tokenToRemove {
+			updatedTokens = append(updatedTokens, token)
+		}
+	}
+
+	userSession.JWTTokens = updatedTokens
+
+	// Remove user session if no tokens remain
+	if len(updatedTokens) == 0 {
+		RevokeLegacySession(username, userSession)
+	}
+
+	// Persist changes
+	if err := SaveSessions(); err != nil {
+		return fmt.Errorf("failed to save sessions after token removal: %w", err)
+	}
+
+	return nil
+}
+
+func RemoveAllJWTTokens(username string) error {
+	userSession, exists := UserSessions[username]
+	if !exists || userSession == nil {
+		return fmt.Errorf("no session found for user %s", username)
+	}
+
+	userSession.JWTTokens = []string{}
+
+	// Revoke legacy session as well
+	RevokeLegacySession(username, userSession)
+
+	// Persist changes
+	if err := SaveSessions(); err != nil {
+		return fmt.Errorf("failed to save sessions after removing all tokens: %w", err)
+	}
+
+	return nil
+}
+
+// RevokeLegacySession deletes the session entry and revokes legacy persistent token (subtype "user")
+// Requires that userSession.JWTTokens is empty.
+func RevokeLegacySession(username string, userSession *models.UserSession) {
+	delete(UserSessions, username)
+
+	if userSession == nil || userSession.NethCTIToken == "" {
+		return
+	}
+
+	legacyURL := configuration.Config.V1Protocol + "://" + configuration.Config.V1ApiEndpoint + configuration.Config.V1ApiPath + "/authentication/persistent_token_remove"
+	removePayload := struct {
+		Type    string `json:"type"`
+		Subtype string `json:"subtype"`
+	}{Type: "phone-island", Subtype: "user"}
+	removePayloadBytes, _ := json.Marshal(removePayload)
+	req, err := http.NewRequest("POST", legacyURL, bytes.NewBuffer(removePayloadBytes))
+	if err != nil {
+		logs.Log("[ERROR][AUTH] Failed to build revoke request for user " + username + ": " + err.Error())
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", userSession.NethCTIToken)
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		logs.Log("[ERROR][AUTH] Failed to revoke legacy persistent token for user " + username + ": " + err.Error())
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusOK {
+		logs.Log("[INFO][AUTH] Deleted session and revoked legacy persistent token (user:token) for user " + username)
+	} else {
+		logs.Log("[WARN][AUTH] Legacy persistent token revoke returned status " + resp.Status)
+	}
 }

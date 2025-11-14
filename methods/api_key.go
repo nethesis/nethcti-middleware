@@ -57,7 +57,7 @@ func PhoneIslandTokenLogin(c *gin.Context) {
 		userSession := store.UserSessions[username]
 		nethctiToken := userSession.NethCTIToken
 
-		phoneIslandPayload := map[string]string{"subtype": "web"}
+		phoneIslandPayload := map[string]string{"subtype": subtype}
 		phoneIslandPayloadBytes, _ := json.Marshal(phoneIslandPayload)
 		req, err := http.NewRequest("POST", configuration.Config.V1Protocol+"://"+configuration.Config.V1ApiEndpoint+configuration.Config.V1ApiPath+"/authentication/phone_island_token_login", bytes.NewBuffer(phoneIslandPayloadBytes))
 		if err != nil {
@@ -65,6 +65,7 @@ func PhoneIslandTokenLogin(c *gin.Context) {
 			return
 		}
 		req.Header.Set("Authorization", nethctiToken)
+		req.Header.Set("Content-Type", "application/json")
 
 		client := &http.Client{Timeout: 10 * time.Second}
 		resp, err := client.Do(req)

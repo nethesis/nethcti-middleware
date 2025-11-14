@@ -152,11 +152,6 @@ func VerifyOTP(c *gin.Context) {
 	// Regenerate JWT token with updated 2FA status, replacing the current token
 	_, newToken, expire, err := regenerateUserToken(store.UserSessions[username], currentJWTToken)
 
-	// Save sessions to disk immediately after OTP verification
-	if saveErr := store.SaveSessions(); saveErr != nil {
-		logs.Log("[ERROR][2FA] Failed to save sessions after OTP verification: " + saveErr.Error())
-	}
-
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, structs.Map(models.StatusBadRequest{
 			Code:    500,
@@ -316,7 +311,10 @@ func Disable2FA(c *gin.Context) {
 
 	if userSession != nil {
 		// Clear all existing tokens - force all clients to re-login
-		userSession.JWTTokens = []string{}
+		err := store.RemoveAllJWTTokens(username)
+		if err != nil {
+			logs.Log("[ERROR][2FA] Failed to remove all JWT tokens for user " + username + ": " + err.Error())
+		}
 		userSession.OTP_Verified = false
 
 		logs.Log("[INFO][2FA] All JWT tokens invalidated for user " + username + " after disabling 2FA")

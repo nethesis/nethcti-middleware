@@ -286,25 +286,7 @@ func InitJWT() *jwt.GinJWTMiddleware {
 			claims := jwt.ExtractClaimsFromToken(tokenObj)
 			username := claims[identityKey].(string)
 
-			userSession := store.UserSessions[username]
-
-			if userSession != nil {
-				// Remove only this specific token from the user's token array
-				if utils.Contains(JWTToken, userSession.JWTTokens) {
-					userSession.JWTTokens = utils.Remove(JWTToken, userSession.JWTTokens)
-					logs.Log("[INFO][AUTH] Logged out token for user " + username)
-
-					// If no more tokens, delete the entire session and revoke legacy persistent token
-					if len(userSession.JWTTokens) == 0 {
-						methods.RevokeLegacySession(username, userSession)
-					}
-
-					// Save sessions to disk immediately
-					if err := store.SaveSessions(); err != nil {
-						logs.Log("[ERROR][AUTH] Failed to save sessions after logout: " + err.Error())
-					}
-				}
-			}
+			store.RemoveJWTToken(username, JWTToken)
 
 			c.JSON(200, gin.H{"code": 200})
 		},
