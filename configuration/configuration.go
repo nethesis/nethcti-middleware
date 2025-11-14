@@ -42,7 +42,6 @@ type Configuration struct {
 	PhonebookMariaDBPassword string `json:"phonebook_mariadb_password"`
 	PhonebookMariaDBDatabase string `json:"phonebook_mariadb_database"`
 
-	// Authorization configuration paths
 	ProfilesConfigPath string `json:"profiles_config_path"`
 	UsersConfigPath    string `json:"users_config_path"`
 }

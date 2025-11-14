@@ -48,6 +48,13 @@ func main() {
 		logs.Log("[WARNING][PERSISTENCE] Failed to load sessions: " + err.Error())
 	}
 
+	// Init authorization ProfileManager
+	authzProfileManager, err := middleware.NewManager(configuration.Config.ProfilesConfigPath, configuration.Config.UsersConfigPath)
+	if err != nil {
+		logs.Log("[CRITICAL] Failed to initialize authorization ProfileManager: " + err.Error())
+		return
+	}
+
 	// Init MQTT and setup transcription subscription
 	mqttCh := mqtt.Init()
 	if mqttCh != nil {
@@ -59,7 +66,7 @@ func main() {
 	}
 
 	// Create router
-	router := createRouter()
+	router := createRouter(authzProfileManager)
 
 	// Create cron to run daily
 	c := cron.New()
@@ -70,7 +77,7 @@ func main() {
 	router.Run(configuration.Config.ListenAddress)
 }
 
-func createRouter() *gin.Engine {
+func createRouter(authzProfileManager *middleware.ProfileManager) *gin.Engine {
 	// Disable log to stdout when running in release mode
 	if gin.Mode() == gin.ReleaseMode {
 		gin.DefaultWriter = io.Discard
@@ -114,7 +121,7 @@ func createRouter() *gin.Engine {
 		api.GET("/2fa/qr-code", methods.QRCode)
 
 		// Phonebook APIs
-		api.POST("/phonebook/import", methods.ImportPhonebookCSV)
+		api.POST("/phonebook/import", authzProfileManager.RequireCapabilities("phonebook.ad_phonebook"), methods.ImportPhonebookCSV)
 
 		// Phone Island Integration APIs
 		api.POST("/authentication/phone_island_token_login", methods.PhoneIslandTokenLogin)

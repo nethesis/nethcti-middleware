@@ -8,11 +8,13 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -52,6 +54,14 @@ func setupTestEnvironment() {
 	mockNetCTI = mockNetCTIServer()
 	mockURL := strings.TrimPrefix(mockNetCTI.URL, "http://")
 
+	// Prepare temporary authorization data so tests can satisfy capability checks
+	authDir := filepath.Join(os.TempDir(), "nethcti-authz")
+	os.MkdirAll(authDir, 0755)
+	profilesPath := filepath.Join(authDir, "profiles.json")
+	usersPath := filepath.Join(authDir, "users.json")
+	writeTestProfiles(profilesPath)
+	writeTestUsers(usersPath)
+
 	// Set environment variables for the middleware
 	os.Setenv("NETHVOICE_MIDDLEWARE_LISTEN_ADDRESS", "127.0.0.1:8899")
 	os.Setenv("NETHVOICE_MIDDLEWARE_V1_PROTOCOL", "http")
@@ -62,6 +72,8 @@ func setupTestEnvironment() {
 	os.Setenv("NETHVOICE_MIDDLEWARE_SECRETS_DIR", "/tmp/test-secrets/nethcti")
 	os.Setenv("NETHVOICE_MIDDLEWARE_ISSUER_2FA", "NetCTI-Test")
 	os.Setenv("NETHVOICE_MIDDLEWARE_SENSITIVE_LIST", "password,secret")
+	os.Setenv("AUTH_PROFILES_PATH", profilesPath)
+	os.Setenv("AUTH_USERS_PATH", usersPath)
 
 	// Set database environment variables for testing
 	os.Setenv("PHONEBOOK_MARIADB_HOST", "127.0.0.1")
@@ -87,27 +99,33 @@ func setupTestEnvironment() {
 
 // Mock NetCTI server for testing
 func mockNetCTIServer() *httptest.Server {
-	// This mock server simulates the NetCTI backend for authentication and user info
+	validUsers := map[string]string{
+		"testuser": "testpass",
+		"baseuser": "testpass",
+		"advuser":  "testpass",
+	}
+
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/webrest/authentication/login":
 			var loginData map[string]string
 			json.NewDecoder(r.Body).Decode(&loginData)
 
-			// Simulate Digest authentication challenge for correct credentials
-			if loginData["username"] == "testuser" && loginData["password"] == "testpass" {
+			if pwd, ok := validUsers[loginData["username"]]; ok && pwd == loginData["password"] {
 				w.Header().Set("Www-Authenticate", `Digest realm="test", nonce="test123", qop="auth"`)
 				w.WriteHeader(http.StatusUnauthorized)
-			} else {
-				w.WriteHeader(http.StatusUnauthorized)
+				return
 			}
+
+			w.WriteHeader(http.StatusUnauthorized)
 		case "/webrest/user/me":
 			auth := r.Header.Get("Authorization")
-			if strings.Contains(auth, "testuser") {
-				w.WriteHeader(http.StatusOK)
-				w.Write([]byte(`{"username": "testuser"}`))
-			} else {
-				w.WriteHeader(http.StatusUnauthorized)
+			for username := range validUsers {
+				if strings.Contains(auth, username) {
+					w.WriteHeader(http.StatusOK)
+					w.Write([]byte(fmt.Sprintf(`{"username": "%s"}`, username)))
+					return
+				}
 			}
 		case "/webrest/authentication/phone_island_token_login":
 			w.WriteHeader(http.StatusOK)
@@ -134,6 +152,9 @@ func cleanupTestEnvironment() {
 	os.Unsetenv("NETHVOICE_MIDDLEWARE_SECRETS_DIR")
 	os.Unsetenv("NETHVOICE_MIDDLEWARE_ISSUER_2FA")
 	os.Unsetenv("NETHVOICE_MIDDLEWARE_SENSITIVE_LIST")
+	os.Unsetenv("AUTH_PROFILES_PATH")
+	os.Unsetenv("AUTH_USERS_PATH")
+	os.RemoveAll(filepath.Join(os.TempDir(), "nethcti-authz"))
 }
 
 // Helper function to reset test state between tests
@@ -451,4 +472,112 @@ public,+0987654321`
 	defer resp.Body.Close()
 
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+}
+
+func sendPhonebookImportRequest(t *testing.T, token, csvContent string) *http.Response {
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+
+	part, err := writer.CreateFormFile("file", "contacts.csv")
+	assert.NoError(t, err)
+
+	_, err = io.Copy(part, strings.NewReader(csvContent))
+	assert.NoError(t, err)
+
+	err = writer.Close()
+	assert.NoError(t, err)
+
+	req, err := http.NewRequest("POST", testServerURL+"/phonebook/import", body)
+	assert.NoError(t, err)
+
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	assert.NoError(t, err)
+
+	return resp
+}
+
+func TestPhonebookImportDeniedForBaseProfile(t *testing.T) {
+	resetTestState()
+
+	token := utils.PerformLoginWithCredentials(testServerURL, "baseuser", "testpass")
+	assert.NotEmpty(t, token)
+
+	csvContent := `name,type,workphone
+John Doe,private,+1234567890`
+
+	resp := sendPhonebookImportRequest(t, token, csvContent)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusForbidden, resp.StatusCode)
+
+	var response map[string]interface{}
+	err := json.NewDecoder(resp.Body).Decode(&response)
+	assert.NoError(t, err)
+	assert.Equal(t, float64(http.StatusForbidden), response["code"])
+	assert.Equal(t, "missing capability", response["message"])
+}
+
+func TestPhonebookImportAllowedForAdvancedProfile(t *testing.T) {
+	resetTestState()
+
+	token := utils.PerformLoginWithCredentials(testServerURL, "advuser", "testpass")
+	assert.NotEmpty(t, token)
+
+	csvContent := `name,type,workphone
+John Doe,private,+1234567890
+Jane Smith,public,+0987654321`
+
+	resp := sendPhonebookImportRequest(t, token, csvContent)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var response map[string]interface{}
+	err := json.NewDecoder(resp.Body).Decode(&response)
+	assert.NoError(t, err)
+	assert.Equal(t, float64(2), response["total_rows"], "Should report two rows")
+	assert.Equal(t, float64(2), response["imported_rows"], "Both rows should import")
+}
+
+func writeTestProfiles(path string) {
+	content := `{
+	"1": {
+		"id": "1",
+		"name": "Base",
+		"macro_permissions": {
+			"phonebook": {
+				"value": true,
+				"permissions": [
+					{"id": "12", "name": "ad_phonebook", "value": false}
+				]
+			}
+		}
+	},
+	"3": {
+		"id": "3",
+		"name": "Advanced",
+		"macro_permissions": {
+			"phonebook": {
+				"value": true,
+				"permissions": [
+					{"id": "12", "name": "ad_phonebook", "value": true}
+				]
+			}
+		}
+	}
+}`
+	os.WriteFile(path, []byte(content), 0o644)
+}
+
+func writeTestUsers(path string) {
+	content := `{
+	"testuser": {"profile_id": "3"},
+	"baseuser": {"profile_id": "1"},
+	"advuser": {"profile_id": "3"}
+}`
+	os.WriteFile(path, []byte(content), 0o644)
 }
