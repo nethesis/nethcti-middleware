@@ -17,7 +17,10 @@ import (
 	"github.com/nethesis/nethcti-middleware/logs"
 )
 
-var DB *sql.DB
+var (
+	DB          *sql.DB
+	sqlOpenFunc = sql.Open
+)
 
 // Init initializes the database connection pool with the configured MariaDB settings.
 // It performs health checks and creates necessary schema.
@@ -32,7 +35,7 @@ func Init() error {
 	)
 
 	var err error
-	DB, err = sql.Open("mysql", dsn)
+	DB, err = sqlOpenFunc("mysql", dsn)
 	if err != nil {
 		logs.Log("[CRITICAL][DB] Failed to open database connection: " + err.Error())
 		return err

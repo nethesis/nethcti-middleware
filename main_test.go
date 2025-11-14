@@ -22,7 +22,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/nethesis/nethcti-middleware/db"
 	"github.com/nethesis/nethcti-middleware/models"
 	"github.com/nethesis/nethcti-middleware/store"
 	"github.com/nethesis/nethcti-middleware/utils"
@@ -337,19 +336,6 @@ func TestDisable2FA(t *testing.T) {
 	defer resp.Body.Close()
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
-}
-
-// Test database connection
-func TestDatabaseConnection(t *testing.T) {
-	// Note: Don't reset/reinit here since DB is already initialized
-	// by the main test setup. Just verify it's running.
-
-	// Check if DB is not nil
-	assert.NotNil(t, db.DB, "Database connection pool should be initialized")
-
-	// Test a simple ping to verify connectivity
-	err := db.DB.Ping()
-	assert.NoError(t, err, "Database ping should succeed")
 }
 
 // Test phonebook CSV import
