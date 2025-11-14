@@ -35,12 +35,14 @@ type Configuration struct {
 	MQTTPassword string `json:"mqtt_password"`
 	MQTTEnabled  bool   `json:"mqtt_enabled"`
 
-	// MariaDB Configuration for phonebook and persistence layer
-	MariaDBHost     string `json:"mariadb_host"`
-	MariaDBPort     string `json:"mariadb_port"`
-	MariaDBUser     string `json:"mariadb_user"`
-	MariaDBPassword string `json:"mariadb_password"`
-	MariaDBDatabase string `json:"mariadb_database"`
+	// Phonebook MariaDB Configuration for phonebook and persistence layer
+	MariaDBHost        string `json:"mariadb_host"`
+	MariaDBPort        string `json:"mariadb_port"`
+	MariaDBUser        string `json:"mariadb_user"`
+	MariaDBPassword    string `json:"mariadb_password"`
+	MariaDBDatabase    string `json:"mariadb_database"`
+	ProfilesConfigPath string `json:"profiles_config_path"`
+	UsersConfigPath    string `json:"users_config_path"`
 }
 
 var Config = Configuration{}
@@ -222,5 +224,17 @@ func Init() {
 		Config.MariaDBDatabase = os.Getenv("MARIADB_DB")
 	} else {
 		Config.MariaDBDatabase = "nethcti3"
+	}
+	// set authorization config paths
+	if os.Getenv("AUTH_PROFILES_PATH") != "" {
+		Config.ProfilesConfigPath = os.Getenv("AUTH_PROFILES_PATH")
+	} else {
+		Config.ProfilesConfigPath = "examples/profiles.json"
+	}
+
+	if os.Getenv("AUTH_USERS_PATH") != "" {
+		Config.UsersConfigPath = os.Getenv("AUTH_USERS_PATH")
+	} else {
+		Config.UsersConfigPath = "examples/users.json"
 	}
 }

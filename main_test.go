@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -53,6 +54,14 @@ func setupTestEnvironment() {
 	mockNetCTI = mockNetCTIServer()
 	mockURL := strings.TrimPrefix(mockNetCTI.URL, "http://")
 
+	// Prepare temporary authorization data so tests can satisfy capability checks
+	authDir := filepath.Join(os.TempDir(), "nethcti-authz")
+	os.MkdirAll(authDir, 0755)
+	profilesPath := filepath.Join(authDir, "profiles.json")
+	usersPath := filepath.Join(authDir, "users.json")
+	writeTestProfiles(profilesPath)
+	writeTestUsers(usersPath)
+
 	// Set environment variables for the middleware
 	os.Setenv("NETHVOICE_MIDDLEWARE_LISTEN_ADDRESS", "127.0.0.1:8899")
 	os.Setenv("NETHVOICE_MIDDLEWARE_V1_PROTOCOL", "http")
@@ -63,6 +72,8 @@ func setupTestEnvironment() {
 	os.Setenv("NETHVOICE_MIDDLEWARE_SECRETS_DIR", "/tmp/test-secrets/nethcti")
 	os.Setenv("NETHVOICE_MIDDLEWARE_ISSUER_2FA", "NetCTI-Test")
 	os.Setenv("NETHVOICE_MIDDLEWARE_SENSITIVE_LIST", "password,secret")
+	os.Setenv("AUTH_PROFILES_PATH", profilesPath)
+	os.Setenv("AUTH_USERS_PATH", usersPath)
 
 	// Set database environment variables for testing
 	os.Setenv("MARIADB_HOST", "127.0.0.1")
@@ -135,6 +146,9 @@ func cleanupTestEnvironment() {
 	os.Unsetenv("NETHVOICE_MIDDLEWARE_SECRETS_DIR")
 	os.Unsetenv("NETHVOICE_MIDDLEWARE_ISSUER_2FA")
 	os.Unsetenv("NETHVOICE_MIDDLEWARE_SENSITIVE_LIST")
+	os.Unsetenv("AUTH_PROFILES_PATH")
+	os.Unsetenv("AUTH_USERS_PATH")
+	os.RemoveAll(filepath.Join(os.TempDir(), "nethcti-authz"))
 }
 
 // Helper function to reset test state between tests
@@ -465,4 +479,29 @@ public,+0987654321`
 	defer resp.Body.Close()
 
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+}
+
+func writeTestProfiles(path string) {
+	content := `{
+	"test-profile": {
+		"id": "test-profile",
+		"name": "test",
+		"macro_permissions": {
+			"phonebook": {
+				"value": true,
+				"permissions": [
+					{"id": "12", "name": "ad_phonebook", "value": true}
+				]
+			}
+		}
+	}
+}`
+	os.WriteFile(path, []byte(content), 0o644)
+}
+
+func writeTestUsers(path string) {
+	content := `{
+	"testuser": {"profile_id": "test-profile"}
+}`
+	os.WriteFile(path, []byte(content), 0o644)
 }
