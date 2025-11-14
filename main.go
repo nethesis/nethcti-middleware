@@ -6,6 +6,7 @@
 package main
 
 import (
+	"context"
 	"io"
 	"regexp"
 	"strings"
@@ -15,7 +16,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/robfig/cron/v3"
 
+	"github.com/nethesis/nethcti-middleware/authz"
 	"github.com/nethesis/nethcti-middleware/configuration"
+	"github.com/nethesis/nethcti-middleware/db"
 	"github.com/nethesis/nethcti-middleware/logs"
 	"github.com/nethesis/nethcti-middleware/methods"
 	"github.com/nethesis/nethcti-middleware/middleware"
@@ -31,6 +34,14 @@ func main() {
 	// Init configuration
 	configuration.Init()
 
+	// Init database
+	err := db.Init()
+	if err != nil {
+		logs.Log("[CRITICAL] Failed to initialize database: " + err.Error())
+		return
+	}
+	defer db.Close()
+
 	// Init store
 	store.UserSessionInit()
 
@@ -38,6 +49,16 @@ func main() {
 	if err := store.LoadSessions(); err != nil {
 		logs.Log("[WARNING][PERSISTENCE] Failed to load sessions: " + err.Error())
 	}
+
+	// Init authorization manager
+	authzCtx, authzCancel := context.WithCancel(context.Background())
+	defer authzCancel()
+	authzManager, err := authz.NewManager(authzCtx, configuration.Config.ProfilesConfigPath, configuration.Config.UsersConfigPath)
+	if err != nil {
+		logs.Log("[CRITICAL] Failed to initialize authorization manager: " + err.Error())
+		return
+	}
+	defer authzManager.Close()
 
 	// Init MQTT and setup transcription subscription
 	mqttCh := mqtt.Init()
@@ -50,7 +71,7 @@ func main() {
 	}
 
 	// Create router
-	router := createRouter()
+	router := createRouter(authzManager)
 
 	// Create cron to run daily
 	c := cron.New()
@@ -61,7 +82,7 @@ func main() {
 	router.Run(configuration.Config.ListenAddress)
 }
 
-func createRouter() *gin.Engine {
+func createRouter(authzManager *authz.Manager) *gin.Engine {
 	// Disable log to stdout when running in release mode
 	if gin.Mode() == gin.ReleaseMode {
 		gin.DefaultWriter = io.Discard
@@ -103,6 +124,9 @@ func createRouter() *gin.Engine {
 		api.GET("/2fa/status", methods.Get2FAStatus)
 		api.POST("/2fa/recovery-codes", methods.Get2FARecoveryCodes)
 		api.GET("/2fa/qr-code", methods.QRCode)
+
+		// Phonebook APIs
+		api.POST("/phonebook/import", authzManager.RequireCapabilities("phonebook.ad_phonebook"), methods.ImportPhonebookCSV)
 
 		// Phone Island Integration APIs
 		api.POST("/authentication/phone_island_token_login", methods.PhoneIslandTokenLogin)
