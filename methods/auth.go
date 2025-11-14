@@ -20,11 +20,14 @@ import (
 )
 
 func DeleteExpiredTokens() {
-	// iterate through all user sessions
+	// Iterate through all user sessions building a filtered slice of valid tokens.
+	// Avoid mutating the slice while ranging over it to prevent skipping elements.
 	for username, userSession := range store.UserSessions {
-		// parse JWT token to check expiration
-		for _, tokenRaw := range userSession.JWTTokens {
+		if userSession == nil || len(userSession.JWTTokens) == 0 {
+			continue
+		}
 
+		for _, tokenRaw := range userSession.JWTTokens {
 			token, err := jwtv4.Parse(tokenRaw, func(token *jwtv4.Token) (interface{}, error) {
 				return []byte(configuration.Config.Secret_jwt), nil
 			})
@@ -42,15 +45,13 @@ func DeleteExpiredTokens() {
 				}
 			}
 
-			// remove session if token is expired or invalid
 			if !isValid {
-				delete(store.UserSessions, username)
-				logs.Log("[INFO][JWT] Removed expired session for user: " + username)
+				store.RemoveJWTToken(username, tokenRaw)
+				logs.Log("[INFO][AUTH] Removed expired token for user " + username)
 			}
 		}
 	}
-
-	logs.Log("[INFO][JWT] Completed cleanup of expired user sessions")
+	logs.Log("[INFO][JWT] Completed cleanup of expired user sessions!")
 }
 
 // VerifyUserPassword verifies a user's password against NetCTI server

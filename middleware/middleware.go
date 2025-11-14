@@ -119,6 +119,29 @@ func InitJWT() *jwt.GinJWTMiddleware {
 			}
 
 			// Login is successful. Middleware returns a JWT.
+
+			phoneIslandPayload := map[string]string{"subtype": "user"}
+			phoneIslandPayloadBytes, _ := json.Marshal(phoneIslandPayload)
+			req, err = http.NewRequest("POST", configuration.Config.V1Protocol+"://"+configuration.Config.V1ApiEndpoint+configuration.Config.V1ApiPath+"/authentication/phone_island_token_login", bytes.NewBuffer(phoneIslandPayloadBytes))
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"message": "failed to create request"})
+				return nil, jwt.ErrFailedAuthentication
+			}
+			req.Header.Set("Authorization", NethCTIToken)
+			req.Header.Set("Content-Type", "application/json")
+
+			resp, err = client.Do(req)
+
+			var v1Resp struct {
+				Token string `json:"token"`
+			}
+			if err := json.NewDecoder(resp.Body).Decode(&v1Resp); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"message": "failed to parse server v1 response"})
+				return nil, jwt.ErrFailedAuthentication
+			}
+
+			NethCTIToken = username + ":" + v1Resp.Token
+
 			// Check if user session already exists (multi-session support)
 			existingSession, sessionExists := store.UserSessions[username]
 
@@ -248,6 +271,12 @@ func InitJWT() *jwt.GinJWTMiddleware {
 
 			// Store the JWT token in the UserSession
 			store.UserSessions[claims[identityKey].(string)].JWTTokens = append(store.UserSessions[claims[identityKey].(string)].JWTTokens, token)
+
+			// Save sessions to disk immediately
+			if err := store.SaveSessions(); err != nil {
+				logs.Log("[ERROR][AUTH] Failed to save sessions after login: " + err.Error())
+			}
+
 			c.JSON(200, gin.H{"code": 200, "expire": t, "token": token})
 		},
 		LogoutResponse: func(c *gin.Context, code int) {
@@ -257,21 +286,7 @@ func InitJWT() *jwt.GinJWTMiddleware {
 			claims := jwt.ExtractClaimsFromToken(tokenObj)
 			username := claims[identityKey].(string)
 
-			userSession := store.UserSessions[username]
-
-			if userSession != nil {
-				// Remove only this specific token from the user's token array
-				if utils.Contains(JWTToken, userSession.JWTTokens) {
-					userSession.JWTTokens = utils.Remove(JWTToken, userSession.JWTTokens)
-					logs.Log("[INFO][AUTH] Logged out token for user " + username)
-
-					// If no more tokens, delete the entire session
-					if len(userSession.JWTTokens) == 0 {
-						delete(store.UserSessions, username)
-						logs.Log("[INFO][AUTH] Deleted session for user " + username + " (no more active tokens)")
-					}
-				}
-			}
+			store.RemoveJWTToken(username, JWTToken)
 
 			c.JSON(200, gin.H{"code": 200})
 		},

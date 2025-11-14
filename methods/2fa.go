@@ -311,7 +311,10 @@ func Disable2FA(c *gin.Context) {
 
 	if userSession != nil {
 		// Clear all existing tokens - force all clients to re-login
-		userSession.JWTTokens = []string{}
+		err := store.RemoveAllJWTTokens(username)
+		if err != nil {
+			logs.Log("[ERROR][2FA] Failed to remove all JWT tokens for user " + username + ": " + err.Error())
+		}
 		userSession.OTP_Verified = false
 
 		logs.Log("[INFO][2FA] All JWT tokens invalidated for user " + username + " after disabling 2FA")

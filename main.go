@@ -34,6 +34,11 @@ func main() {
 	// Init store
 	store.UserSessionInit()
 
+	store.InitPersistence(configuration.Config.SecretsDir)
+	if err := store.LoadSessions(); err != nil {
+		logs.Log("[WARNING][PERSISTENCE] Failed to load sessions: " + err.Error())
+	}
+
 	// Init MQTT and setup transcription subscription
 	mqttCh := mqtt.Init()
 	if mqttCh != nil {

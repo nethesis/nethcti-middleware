@@ -7,7 +7,6 @@ The application can be configured using the following environment variables:
 | Variable | Description | Default Value |
 |----------|-------------|---------------|
 | `NETHVOICE_MIDDLEWARE_LISTEN_ADDRESS` | Address and port where the middleware will listen | `127.0.0.1:8080` |
-| `NETHVOICE_MIDDLEWARE_SECRET_JWT` | Secret key used for JWT token signing and validation | Auto-generated UUID |
 | `NETHVOICE_MIDDLEWARE_V1_PROTOCOL` | Protocol used for V1 API connections | `https` |
 | `NETHVOICE_MIDDLEWARE_V1_API_ENDPOINT` | Hostname/IP for V1 API endpoint | **Required** |
 | `NETHVOICE_MIDDLEWARE_V1_WS_ENDPOINT` | Hostname/IP for V1 WebSocket endpoint | **Required** |

@@ -57,7 +57,6 @@ func setupTestEnvironment() {
 	os.Setenv("NETHVOICE_MIDDLEWARE_V1_WS_ENDPOINT", mockURL)
 	os.Setenv("NETHVOICE_MIDDLEWARE_V1_API_PATH", "/webrest")
 	os.Setenv("NETHVOICE_MIDDLEWARE_V1_WS_PATH", "/socket.io")
-	os.Setenv("NETHVOICE_MIDDLEWARE_SECRET_JWT", "test-secret-key-for-jwt-tokens")
 	os.Setenv("NETHVOICE_MIDDLEWARE_SECRETS_DIR", "/tmp/test-secrets/nethcti")
 	os.Setenv("NETHVOICE_MIDDLEWARE_ISSUER_2FA", "NetCTI-Test")
 	os.Setenv("NETHVOICE_MIDDLEWARE_SENSITIVE_LIST", "password,secret")
@@ -101,6 +100,11 @@ func mockNetCTIServer() *httptest.Server {
 			} else {
 				w.WriteHeader(http.StatusUnauthorized)
 			}
+		case "/webrest/authentication/phone_island_token_login":
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"token": "phone-island-token"}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
 		}
 	}))
 }
@@ -118,7 +122,6 @@ func cleanupTestEnvironment() {
 	os.Unsetenv("NETHVOICE_MIDDLEWARE_V1_API_ENDPOINT")
 	os.Unsetenv("NETHVOICE_MIDDLEWARE_V1_API_PATH")
 	os.Unsetenv("NETHVOICE_MIDDLEWARE_V1_WS_PATH")
-	os.Unsetenv("NETHVOICE_MIDDLEWARE_SECRET_JWT")
 	os.Unsetenv("NETHVOICE_MIDDLEWARE_SECRETS_DIR")
 	os.Unsetenv("NETHVOICE_MIDDLEWARE_ISSUER_2FA")
 	os.Unsetenv("NETHVOICE_MIDDLEWARE_SENSITIVE_LIST")

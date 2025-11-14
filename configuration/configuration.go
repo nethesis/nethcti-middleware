@@ -7,6 +7,7 @@ package configuration
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/google/uuid"
@@ -37,19 +38,44 @@ type Configuration struct {
 
 var Config = Configuration{}
 
+// loadOrGenerateJWTSecret loads JWT secret from file or generates a new one if it doesn't exist
+func loadOrGenerateJWTSecret(secretsDir string) string {
+	jwtSecretPath := filepath.Join(secretsDir, "jwt.secret")
+
+	// Try to read existing secret
+	if data, err := os.ReadFile(jwtSecretPath); err == nil {
+		secret := strings.TrimSpace(string(data))
+		if secret != "" {
+			logs.Log("[INFO][CONFIG] Loaded existing JWT secret from " + jwtSecretPath)
+			return secret
+		}
+	}
+
+	// Generate new secret if file doesn't exist or is empty
+	newSecret := uuid.New().String()
+
+	// Ensure directory exists
+	if err := os.MkdirAll(secretsDir, 0700); err != nil {
+		logs.Log("[WARNING][CONFIG] Failed to create secrets directory: " + err.Error() + ", using in-memory secret")
+		return newSecret
+	}
+
+	// Write secret to file
+	if err := os.WriteFile(jwtSecretPath, []byte(newSecret), 0600); err != nil {
+		logs.Log("[WARNING][CONFIG] Failed to save JWT secret to file: " + err.Error() + ", using in-memory secret")
+		return newSecret
+	}
+
+	logs.Log("[INFO][CONFIG] Generated and saved new JWT secret to " + jwtSecretPath)
+	return newSecret
+}
+
 func Init() {
 	// read configuration from ENV
 	if os.Getenv("NETHVOICE_MIDDLEWARE_LISTEN_ADDRESS") != "" {
 		Config.ListenAddress = os.Getenv("NETHVOICE_MIDDLEWARE_LISTEN_ADDRESS")
 	} else {
 		Config.ListenAddress = "127.0.0.1:8080"
-	}
-
-	// set default secret
-	if os.Getenv("NETHVOICE_MIDDLEWARE_SECRET_JWT") != "" {
-		Config.Secret_jwt = os.Getenv("NETHVOICE_MIDDLEWARE_SECRET_JWT")
-	} else {
-		Config.Secret_jwt = uuid.New().String()
 	}
 
 	// set V1 API protocol
@@ -150,4 +176,7 @@ func Init() {
 
 	// Enable MQTT only if we have at least username and password
 	Config.MQTTEnabled = Config.MQTTUsername != "" && Config.MQTTPassword != ""
+
+	// Load or generate JWT secret
+	Config.Secret_jwt = loadOrGenerateJWTSecret(Config.SecretsDir)
 }
