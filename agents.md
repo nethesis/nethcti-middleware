@@ -59,7 +59,7 @@ Keep `openapi.yaml` file updated with any changes to the API.
 
 ## Testing Instructions
 
-The project does not currently have a dedicated test suite.
+The project includes a dedicated test suite covering its core functionality.
 
 *   When adding new features or fixing bugs, you **must** also add corresponding tests.
 *   Use Go's standard testing library.
