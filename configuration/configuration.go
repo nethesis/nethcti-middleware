@@ -191,21 +191,21 @@ func Init() {
 	// Load or generate JWT secret
 	Config.Secret_jwt = loadOrGenerateJWTSecret(Config.SecretsDir)
 
-	// set MariaDB host
+	// Set MariaDB host
 	if os.Getenv("PHONEBOOK_MARIADB_HOST") != "" {
 		Config.PhonebookMariaDBHost = os.Getenv("PHONEBOOK_MARIADB_HOST")
 	} else {
 		Config.PhonebookMariaDBHost = "localhost"
 	}
 
-	// set MariaDB user
+	// Set MariaDB user
 	if os.Getenv("PHONEBOOK_MARIADB_USER") != "" {
 		Config.PhonebookMariaDBUser = os.Getenv("PHONEBOOK_MARIADB_USER")
 	} else {
 		Config.PhonebookMariaDBUser = "root"
 	}
 
-	// set MariaDB port (default to 3306 when not provided)
+	// Set MariaDB port (default to 3306 when not provided)
 	if os.Getenv("PHONEBOOK_MARIADB_PORT") != "" {
 		Config.PhonebookMariaDBPort = os.Getenv("PHONEBOOK_MARIADB_PORT")
 	} else {
@@ -214,7 +214,7 @@ func Init() {
 		logs.Log("[WARN][ENV] PHONEBOOK_MARIADB_PORT not set; defaulting to 3306")
 	}
 
-	// set MariaDB password (default to 'root' for local test environments)
+	// Set MariaDB password (default to 'root' for local test environments)
 	if os.Getenv("PHONEBOOK_MARIADB_PASSWORD") != "" {
 		Config.PhonebookMariaDBPassword = os.Getenv("PHONEBOOK_MARIADB_PASSWORD")
 	} else {
@@ -222,13 +222,13 @@ func Init() {
 		logs.Log("[WARN][ENV] PHONEBOOK_MARIADB_PASSWORD not set; defaulting to 'root' for local testing")
 	}
 
-	// set MariaDB database name
+	// Set MariaDB database name
 	if os.Getenv("PHONEBOOK_MARIADB_DATABASE") != "" {
 		Config.PhonebookMariaDBDatabase = os.Getenv("PHONEBOOK_MARIADB_DATABASE")
 	} else {
 		Config.PhonebookMariaDBDatabase = "nethcti3"
 	}
-	// set authorization config paths
+	// Set authorization config paths
 	if os.Getenv("AUTH_PROFILES_PATH") != "" {
 		Config.ProfilesConfigPath = os.Getenv("AUTH_PROFILES_PATH")
 	} else {
