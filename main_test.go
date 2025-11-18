@@ -76,11 +76,11 @@ func setupTestEnvironment() {
 	os.Setenv("AUTH_USERS_PATH", usersPath)
 
 	// Set database environment variables for testing
-	os.Setenv("MARIADB_HOST", "127.0.0.1")
-	os.Setenv("MARIADB_PORT", "3306")
-	os.Setenv("MARIADB_USER", "root")
-	os.Setenv("MARIADB_PASSWORD", "root")
-	os.Setenv("MARIADB_DATABASE", "testdb")
+	os.Setenv("PHONEBOOK_MARIADB_HOST", "127.0.0.1")
+	os.Setenv("PHONEBOOK_MARIADB_PORT", "3306")
+	os.Setenv("PHONEBOOK_MARIADB_USER", "root")
+	os.Setenv("PHONEBOOK_MARIADB_PASSWORD", "root")
+	os.Setenv("PHONEBOOK_MARIADB_DATABASE", "testdb")
 
 	// Create test secrets directory
 	os.MkdirAll(os.Getenv("NETHVOICE_MIDDLEWARE_SECRETS_DIR"), 0700)

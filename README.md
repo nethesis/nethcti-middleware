@@ -16,11 +16,11 @@ The application can be configured using the following environment variables:
 | `NETHVOICE_MIDDLEWARE_SECRETS_DIR` | Directory path for storing secrets | `/var/lib/whale/secrets` |
 | `NETHVOICE_MIDDLEWARE_ISSUER_2FA` | Issuer name for 2FA tokens | `NethVoice` |
 | `NETHVOICE_MIDDLEWARE_FREEPBX_APIS` | Comma-separated list of FreePBX APIs that bypass JWT | See default APIs in code |
-| `MARIADB_HOST` | MariaDB server hostname | `localhost` |
-| `MARIADB_PORT` | MariaDB server port | **Required** |
-| `MARIADB_USER` | MariaDB username | `root` |
-| `MARIADB_PASSWORD` | MariaDB password | **Required** |
-| `MARIADB_DB` | MariaDB database name | `nethcti3` |
+| `PHONEBOOK_MARIADB_HOST` | MariaDB server hostname | `localhost` |
+| `PHONEBOOK_MARIADB_PORT` | MariaDB server port | **Required** |
+| `PHONEBOOK_MARIADB_USER` | MariaDB username | `root` |
+| `PHONEBOOK_MARIADB_PASSWORD` | MariaDB password | **Required** |
+| `PHONEBOOK_MARIADB_DB` | MariaDB database name | `nethcti3` |
 
 ## Testing
 
@@ -116,19 +116,12 @@ podman run -d -p 8080:8080 --name nethcti-container \
   --env NETHVOICE_MIDDLEWARE_V1_API_PATH=/webrest \
   --env NETHVOICE_MIDDLEWARE_V1_WS_PATH=/socket.io \
   --env NETHVOICE_MIDDLEWARE_SECRETS_DIR=/var/log/nethcti \
-  --env MARIADB_HOST=mariadb \
-  --env MARIADB_PORT=3306 \
-  --env MARIADB_USER=root \
-  --env MARIADB_PASSWORD=your-secure-password \
+  --env PHONEBOOK_MARIADB_HOST=mariadb \
+  --env PHONEBOOK_MARIADB_PORT=3306 \
+  --env PHONEBOOK_MARIADB_USER=root \
+  --env PHONEBOOK_MARIADB_PASSWORD=your-secure-password \
   --volume ./data:/var/log/nethcti \
   --replace nethcti-middleware
-```
-
-**Database Environment Variables for Container**:
-- `MARIADB_HOST`: Set to `mariadb` when linked, or the actual hostname/IP
-- `MARIADB_PORT`: Database port (must be provided)
-- `MARIADB_USER`: Database user (defaults to `root`)
-- `MARIADB_PASSWORD`: Database password (must be provided)
 
 ### Connection Pool Configuration
 
