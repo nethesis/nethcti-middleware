@@ -389,7 +389,7 @@ Bob Johnson,private,+1111111111,+2222222222,Services Ltd`
 	// With database running, we should have successful imports
 	totalRows := response["total_rows"].(float64)
 	importedRows := response["imported_rows"].(float64)
-	assert.Greater(t, importedRows, float64(0), "Should have imported some rows out of "+string(rune(int(totalRows))))
+	assert.Greater(t, importedRows, float64(0), fmt.Sprintf("Should have imported some rows out of %.0f", totalRows))
 }
 
 // Test phonebook import with invalid type
