@@ -80,7 +80,7 @@ func setupTestEnvironment() {
 	os.Setenv("PHONEBOOK_MARIADB_PORT", "3306")
 	os.Setenv("PHONEBOOK_MARIADB_USER", "root")
 	os.Setenv("PHONEBOOK_MARIADB_PASSWORD", "root")
-	os.Setenv("PHONEBOOK_MARIADB_DATABASE", "testdb")
+	os.Setenv("PHONEBOOK_MARIADB_DATABASE", "nethcti3")
 
 	// Create test secrets directory
 	os.MkdirAll(os.Getenv("NETHVOICE_MIDDLEWARE_SECRETS_DIR"), 0700)

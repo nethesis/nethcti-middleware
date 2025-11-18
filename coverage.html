@@ -1,0 +1,3757 @@
+
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+		<title>authz: Go Coverage Report</title>
+		<style>
+			body {
+				background: black;
+				color: rgb(80, 80, 80);
+			}
+			body, pre, #legend span {
+				font-family: Menlo, monospace;
+				font-weight: bold;
+			}
+			#topbar {
+				background: black;
+				position: fixed;
+				top: 0; left: 0; right: 0;
+				height: 42px;
+				border-bottom: 1px solid rgb(80, 80, 80);
+			}
+			#content {
+				margin-top: 50px;
+			}
+			#nav, #legend {
+				float: left;
+				margin-left: 10px;
+			}
+			#legend {
+				margin-top: 12px;
+			}
+			#nav {
+				margin-top: 10px;
+			}
+			#legend span {
+				margin: 0 5px;
+			}
+			.cov0 { color: rgb(192, 0, 0) }
+.cov1 { color: rgb(128, 128, 128) }
+.cov2 { color: rgb(116, 140, 131) }
+.cov3 { color: rgb(104, 152, 134) }
+.cov4 { color: rgb(92, 164, 137) }
+.cov5 { color: rgb(80, 176, 140) }
+.cov6 { color: rgb(68, 188, 143) }
+.cov7 { color: rgb(56, 200, 146) }
+.cov8 { color: rgb(44, 212, 149) }
+.cov9 { color: rgb(32, 224, 152) }
+.cov10 { color: rgb(20, 236, 155) }
+
+		</style>
+	</head>
+	<body>
+		<div id="topbar">
+			<div id="nav">
+				<select id="files">
+				
+				<option value="file0">github.com/nethesis/nethcti-middleware/authz/manager.go (66.4%)</option>
+				
+				<option value="file1">github.com/nethesis/nethcti-middleware/configuration/configuration.go (0.0%)</option>
+				
+				<option value="file2">github.com/nethesis/nethcti-middleware/db/db.go (62.9%)</option>
+				
+				<option value="file3">github.com/nethesis/nethcti-middleware/logs/logs.go (0.0%)</option>
+				
+				<option value="file4">github.com/nethesis/nethcti-middleware/main.go (53.9%)</option>
+				
+				<option value="file5">github.com/nethesis/nethcti-middleware/methods/2fa.go (0.0%)</option>
+				
+				<option value="file6">github.com/nethesis/nethcti-middleware/methods/api_key.go (0.0%)</option>
+				
+				<option value="file7">github.com/nethesis/nethcti-middleware/methods/auth.go (0.0%)</option>
+				
+				<option value="file8">github.com/nethesis/nethcti-middleware/methods/phonebook.go (0.0%)</option>
+				
+				<option value="file9">github.com/nethesis/nethcti-middleware/methods/proxy.go (0.0%)</option>
+				
+				<option value="file10">github.com/nethesis/nethcti-middleware/methods/user.go (0.0%)</option>
+				
+				<option value="file11">github.com/nethesis/nethcti-middleware/middleware/middleware.go (0.0%)</option>
+				
+				<option value="file12">github.com/nethesis/nethcti-middleware/mqtt/mqtt.go (0.0%)</option>
+				
+				<option value="file13">github.com/nethesis/nethcti-middleware/mqtt/transcription.go (0.0%)</option>
+				
+				<option value="file14">github.com/nethesis/nethcti-middleware/socket/connections.go (0.0%)</option>
+				
+				<option value="file15">github.com/nethesis/nethcti-middleware/socket/socket.go (0.0%)</option>
+				
+				<option value="file16">github.com/nethesis/nethcti-middleware/store/phonebook.go (0.0%)</option>
+				
+				<option value="file17">github.com/nethesis/nethcti-middleware/store/users.go (0.0%)</option>
+				
+				<option value="file18">github.com/nethesis/nethcti-middleware/utils/test.go (0.0%)</option>
+				
+				<option value="file19">github.com/nethesis/nethcti-middleware/utils/utils.go (0.0%)</option>
+				
+				</select>
+			</div>
+			<div id="legend">
+				<span>not tracked</span>
+			
+				<span class="cov0">not covered</span>
+				<span class="cov8">covered</span>
+			
+			</div>
+		</div>
+		<div id="content">
+		
+		<pre class="file" id="file0" style="display: none">package authz
+
+import (
+        "context"
+        "encoding/json"
+        "fmt"
+        "net/http"
+        "os"
+        "path/filepath"
+        "sync"
+        "time"
+
+        jwt "github.com/appleboy/gin-jwt/v2"
+        "github.com/fsnotify/fsnotify"
+        "github.com/gin-gonic/gin"
+        "github.com/nethesis/nethcti-middleware/logs"
+)
+
+// Manager handles profile/user permissions and exposes Gin middleware.
+type Manager struct {
+        profilesPath string
+        usersPath    string
+
+        mu       sync.RWMutex
+        profiles map[string]*Profile
+        users    map[string]*User
+
+        watcherProfiles *fsnotify.Watcher
+        watcherUsers    *fsnotify.Watcher
+        cancel          context.CancelFunc
+}
+
+// Profile represents a parsed profile with capability map.
+type Profile struct {
+        ID           string
+        Name         string
+        Capabilities map[string]bool
+}
+
+// User links a username to a profile ID.
+type User struct {
+        Username  string
+        ProfileID string
+}
+
+// NewManager creates an authorization manager and starts file watchers.
+func NewManager(ctx context.Context, profilesPath, usersPath string) (*Manager, error) <span class="cov8" title="1">{
+        profAbs, err := filepath.Abs(profilesPath)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("profiles path: %w", err)
+        }</span>
+
+        <span class="cov8" title="1">usersAbs, err := filepath.Abs(usersPath)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("users path: %w", err)
+        }</span>
+
+        <span class="cov8" title="1">m := &amp;Manager{
+                profilesPath: profAbs,
+                usersPath:    usersAbs,
+                profiles:     make(map[string]*Profile),
+                users:        make(map[string]*User),
+        }
+
+        if err := m.loadAll(); err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+
+        <span class="cov8" title="1">if err := m.startWatchers(ctx); err != nil </span><span class="cov0" title="0">{
+                m.Close()
+                return nil, err
+        }</span>
+
+        <span class="cov8" title="1">return m, nil</span>
+}
+
+// Close stops file watchers and releases resources.
+func (m *Manager) Close() <span class="cov8" title="1">{
+        if m.cancel != nil </span><span class="cov8" title="1">{
+                m.cancel()
+        }</span>
+
+        <span class="cov8" title="1">if m.watcherProfiles != nil </span><span class="cov8" title="1">{
+                m.watcherProfiles.Close()
+        }</span>
+
+        <span class="cov8" title="1">if m.watcherUsers != nil </span><span class="cov8" title="1">{
+                m.watcherUsers.Close()
+        }</span>
+}
+
+// IsLoaded returns true if profiles and users are already loaded.
+func (m *Manager) IsLoaded() bool <span class="cov0" title="0">{
+        m.mu.RLock()
+        defer m.mu.RUnlock()
+        return len(m.profiles) &gt; 0 &amp;&amp; len(m.users) &gt; 0
+}</span>
+
+// RequireCapabilities returns a middleware that enforces capability checks.
+func (m *Manager) RequireCapabilities(capabilities ...string) gin.HandlerFunc <span class="cov8" title="1">{
+        return func(c *gin.Context) </span><span class="cov8" title="1">{
+                if len(capabilities) == 0 </span><span class="cov0" title="0">{
+                        c.Next()
+                        return
+                }</span>
+
+                <span class="cov8" title="1">claims := jwt.ExtractClaims(c)
+                username, _ := claims["id"].(string)
+                if username == "" </span><span class="cov0" title="0">{
+                        logs.Log(fmt.Sprintf("[AUTHZ][WARN] missing identity on %s %s", c.Request.Method, c.Request.RequestURI))
+                        c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"code": http.StatusForbidden, "message": "authorization failed"})
+                        return
+                }</span>
+
+                <span class="cov8" title="1">ok, missing := m.CheckCapabilities(username, capabilities)
+                if !ok </span><span class="cov8" title="1">{
+                        logs.Log(fmt.Sprintf("[AUTHZ][DENIED] %s missing capability %s", username, missing))
+                        c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"code": http.StatusForbidden, "message": "missing capability"})
+                        return
+                }</span>
+
+                <span class="cov8" title="1">c.Next()</span>
+        }
+}
+
+// CheckCapabilities verifies that the specified user has every capability.
+func (m *Manager) CheckCapabilities(username string, required []string) (bool, string) <span class="cov8" title="1">{
+        m.mu.RLock()
+        defer m.mu.RUnlock()
+
+        user, ok := m.users[username]
+        if !ok </span><span class="cov8" title="1">{
+                return false, "user"
+        }</span>
+
+        <span class="cov8" title="1">profile, ok := m.profiles[user.ProfileID]
+        if !ok </span><span class="cov0" title="0">{
+                return false, "profile"
+        }</span>
+
+        <span class="cov8" title="1">for _, capability := range required </span><span class="cov8" title="1">{
+                if !profile.Capabilities[capability] </span><span class="cov8" title="1">{
+                        return false, capability
+                }</span>
+        }
+
+        <span class="cov8" title="1">return true, ""</span>
+}
+
+func (m *Manager) loadAll() error <span class="cov8" title="1">{
+        if err := m.reloadProfiles(); err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        <span class="cov8" title="1">if err := m.reloadUsers(); err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        <span class="cov8" title="1">return nil</span>
+}
+
+func (m *Manager) reloadProfiles() error <span class="cov8" title="1">{
+        data, err := os.ReadFile(m.profilesPath)
+        if err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("read profiles: %w", err)
+        }</span>
+
+        <span class="cov8" title="1">raw := make(map[string]*rawProfile)
+        if err := json.Unmarshal(data, &amp;raw); err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("parse profiles: %w", err)
+        }</span>
+
+        <span class="cov8" title="1">profiles := make(map[string]*Profile)
+        for key, rp := range raw </span><span class="cov8" title="1">{
+                profID := rp.ID
+                if profID == "" </span><span class="cov0" title="0">{
+                        profID = key
+                }</span>
+
+                <span class="cov8" title="1">if profID == "" </span><span class="cov0" title="0">{
+                        continue</span>
+                }
+
+                <span class="cov8" title="1">capMap := make(map[string]bool)
+                for macroName, macro := range rp.MacroPermissions </span><span class="cov8" title="1">{
+                        capMap[macroName+".value"] = macro.Value
+                        for _, permission := range macro.Permissions </span><span class="cov8" title="1">{
+                                key := fmt.Sprintf("%s.%s", macroName, permission.Name)
+                                capMap[key] = permission.Value
+                        }</span>
+                }
+
+                <span class="cov8" title="1">profiles[profID] = &amp;Profile{
+                        ID:           profID,
+                        Name:         rp.Name,
+                        Capabilities: capMap,
+                }</span>
+        }
+
+        <span class="cov8" title="1">m.mu.Lock()
+        m.profiles = profiles
+        m.mu.Unlock()
+
+        logs.Log(fmt.Sprintf("[AUTHZ] loaded %d profiles", len(profiles)))
+        return nil</span>
+}
+
+func (m *Manager) reloadUsers() error <span class="cov8" title="1">{
+        data, err := os.ReadFile(m.usersPath)
+        if err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("read users: %w", err)
+        }</span>
+
+        <span class="cov8" title="1">raw := make(map[string]*rawUser)
+        if err := json.Unmarshal(data, &amp;raw); err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("parse users: %w", err)
+        }</span>
+
+        <span class="cov8" title="1">m.mu.RLock()
+        profilesSnapshot := make(map[string]*Profile, len(m.profiles))
+        for k, v := range m.profiles </span><span class="cov8" title="1">{
+                profilesSnapshot[k] = v
+        }</span>
+        <span class="cov8" title="1">m.mu.RUnlock()
+
+        users := make(map[string]*User)
+        for username, ru := range raw </span><span class="cov8" title="1">{
+                if ru.ProfileID == "" </span><span class="cov0" title="0">{
+                        return fmt.Errorf("user %s missing profile reference", username)
+                }</span>
+
+                <span class="cov8" title="1">if _, ok := profilesSnapshot[ru.ProfileID]; !ok </span><span class="cov0" title="0">{
+                        return fmt.Errorf("user %s references unknown profile %s", username, ru.ProfileID)
+                }</span>
+
+                <span class="cov8" title="1">users[username] = &amp;User{
+                        Username:  username,
+                        ProfileID: ru.ProfileID,
+                }</span>
+        }
+
+        <span class="cov8" title="1">m.mu.Lock()
+        m.users = users
+        m.mu.Unlock()
+
+        logs.Log(fmt.Sprintf("[AUTHZ] loaded %d users", len(users)))
+        return nil</span>
+}
+
+func (m *Manager) startWatchers(parent context.Context) error <span class="cov8" title="1">{
+        ctx, cancel := context.WithCancel(parent)
+        m.cancel = cancel
+
+        profWatcher, err := fsnotify.NewWatcher()
+        if err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        <span class="cov8" title="1">if err := profWatcher.Add(m.profilesPath); err != nil </span><span class="cov0" title="0">{
+                profWatcher.Close()
+                cancel()
+                return fmt.Errorf("watch profiles: %w", err)
+        }</span>
+
+        <span class="cov8" title="1">userWatcher, err := fsnotify.NewWatcher()
+        if err != nil </span><span class="cov0" title="0">{
+                profWatcher.Close()
+                cancel()
+                return err
+        }</span>
+
+        <span class="cov8" title="1">if err := userWatcher.Add(m.usersPath); err != nil </span><span class="cov0" title="0">{
+                profWatcher.Close()
+                userWatcher.Close()
+                cancel()
+                return fmt.Errorf("watch users: %w", err)
+        }</span>
+
+        <span class="cov8" title="1">m.watcherProfiles = profWatcher
+        m.watcherUsers = userWatcher
+
+        go m.watchLoop(ctx, profWatcher, m.reloadProfiles, "profiles", m.profilesPath)
+        go m.watchLoop(ctx, userWatcher, m.reloadUsers, "users", m.usersPath)
+
+        return nil</span>
+}
+
+func (m *Manager) watchLoop(ctx context.Context, watcher *fsnotify.Watcher, reload func() error, label, path string) <span class="cov8" title="1">{
+        for </span><span class="cov8" title="1">{
+                select </span>{
+                case &lt;-ctx.Done():<span class="cov8" title="1">
+                        return</span>
+                case err, ok := &lt;-watcher.Errors:<span class="cov8" title="1">
+                        if !ok </span><span class="cov8" title="1">{
+                                return
+                        }</span>
+                        <span class="cov0" title="0">logs.Log(fmt.Sprintf("[AUTHZ][%s-watch] %v", label, err))</span>
+                case event, ok := &lt;-watcher.Events:<span class="cov0" title="0">
+                        if !ok </span><span class="cov0" title="0">{
+                                return
+                        }</span>
+
+                        <span class="cov0" title="0">if event.Op&amp;(fsnotify.Write|fsnotify.Create) != 0 </span><span class="cov0" title="0">{
+                                if err := reload(); err != nil </span><span class="cov0" title="0">{
+                                        logs.Log(fmt.Sprintf("[AUTHZ][%s] reload failed: %v", label, err))
+                                }</span>
+                        }
+
+                        <span class="cov0" title="0">if event.Op&amp;(fsnotify.Remove|fsnotify.Rename) != 0 </span><span class="cov0" title="0">{
+                                go m.readdWatcher(label, watcher, path)
+                        }</span>
+                }
+        }
+}
+
+func (m *Manager) readdWatcher(label string, watcher *fsnotify.Watcher, path string) <span class="cov0" title="0">{
+        for i := 0; i &lt; 3; i++ </span><span class="cov0" title="0">{
+                time.Sleep(500 * time.Millisecond)
+                if err := watcher.Add(path); err == nil </span><span class="cov0" title="0">{
+                        logs.Log(fmt.Sprintf("[AUTHZ][%s] rewatch successful", label))
+                        return
+                }</span>
+        }
+        <span class="cov0" title="0">logs.Log(fmt.Sprintf("[AUTHZ][%s] failed to rewatch %s", label, path))</span>
+}
+
+type rawProfile struct {
+        ID               string                         `json:"id"`
+        Name             string                         `json:"name"`
+        MacroPermissions map[string]*rawMacroPermission `json:"macro_permissions"`
+}
+
+type rawMacroPermission struct {
+        Value       bool             `json:"value"`
+        Permissions []*rawPermission `json:"permissions"`
+}
+
+type rawPermission struct {
+        ID    string `json:"id"`
+        Name  string `json:"name"`
+        Value bool   `json:"value"`
+}
+
+type rawUser struct {
+        ProfileID string `json:"profile_id"`
+}
+</pre>
+		
+		<pre class="file" id="file1" style="display: none">/*
+ * Copyright (C) 2025 Nethesis S.r.l.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
+package configuration
+
+import (
+        "os"
+        "strings"
+
+        "github.com/google/uuid"
+        "github.com/nethesis/nethcti-middleware/logs"
+)
+
+type Configuration struct {
+        ListenAddress string   `json:"listen_address"`
+        Secret_jwt    string   `json:"secret"`
+        V1Protocol    string   `json:"v1_protocol"`
+        V1ApiEndpoint string   `json:"v1_api_endpoint"`
+        V1WsEndpoint  string   `json:"v1_ws_endpoint"`
+        V1ApiPath     string   `json:"v1_api_path"`
+        V1WsPath      string   `json:"v1_ws_path"`
+        SensitiveList []string `json:"sensitive_list"`
+        FreePBXAPIs   []string `json:"freepbx_apis"`
+
+        SecretsDir string `json:"secrets_dir"`
+        Issuer2FA  string `json:"issuer_2fa"`
+
+        // MQTT Configuration for satellite transcriptions
+        MQTTHost     string `json:"mqtt_host"`
+        MQTTPort     string `json:"mqtt_port"`
+        MQTTUsername string `json:"mqtt_username"`
+        MQTTPassword string `json:"mqtt_password"`
+        MQTTEnabled  bool   `json:"mqtt_enabled"`
+
+        // Phonebook MariaDB Configuration for phonebook and persistence layer
+        PhonebookMariaDBHost     string `json:"phonebook_mariadb_host"`
+        PhonebookMariaDBPort     string `json:"phonebook_mariadb_port"`
+        PhonebookMariaDBUser     string `json:"phonebook_mariadb_user"`
+        PhonebookMariaDBPassword string `json:"phonebook_mariadb_password"`
+        PhonebookMariaDBDatabase string `json:"phonebook_mariadb_database"`
+
+        // Authorization configuration paths
+        ProfilesConfigPath string `json:"profiles_config_path"`
+        UsersConfigPath    string `json:"users_config_path"`
+}
+
+var Config = Configuration{}
+
+func Init() <span class="cov0" title="0">{
+        // read configuration from ENV
+        if os.Getenv("NETHVOICE_MIDDLEWARE_LISTEN_ADDRESS") != "" </span><span class="cov0" title="0">{
+                Config.ListenAddress = os.Getenv("NETHVOICE_MIDDLEWARE_LISTEN_ADDRESS")
+        }</span> else<span class="cov0" title="0"> {
+                Config.ListenAddress = "127.0.0.1:8080"
+        }</span>
+
+        // set default secret
+        <span class="cov0" title="0">if os.Getenv("NETHVOICE_MIDDLEWARE_SECRET_JWT") != "" </span><span class="cov0" title="0">{
+                Config.Secret_jwt = os.Getenv("NETHVOICE_MIDDLEWARE_SECRET_JWT")
+        }</span> else<span class="cov0" title="0"> {
+                Config.Secret_jwt = uuid.New().String()
+        }</span>
+
+        // set V1 API protocol
+        <span class="cov0" title="0">if os.Getenv("NETHVOICE_MIDDLEWARE_V1_PROTOCOL") != "" </span><span class="cov0" title="0">{
+                Config.V1Protocol = os.Getenv("NETHVOICE_MIDDLEWARE_V1_PROTOCOL")
+        }</span> else<span class="cov0" title="0"> {
+                Config.V1Protocol = "https"
+        }</span>
+
+        // set V1 API endpoint
+        <span class="cov0" title="0">if os.Getenv("NETHVOICE_MIDDLEWARE_V1_API_ENDPOINT") != "" </span><span class="cov0" title="0">{
+                Config.V1ApiEndpoint = os.Getenv("NETHVOICE_MIDDLEWARE_V1_API_ENDPOINT")
+        }</span> else<span class="cov0" title="0"> {
+                logs.Log("[CRITICAL][ENV] NETHVOICE_MIDDLEWARE_V1_API_ENDPOINT variable is empty")
+                os.Exit(1)
+        }</span>
+
+        // set V1 API endpoint
+        <span class="cov0" title="0">if os.Getenv("NETHVOICE_MIDDLEWARE_V1_WS_ENDPOINT") != "" </span><span class="cov0" title="0">{
+                Config.V1WsEndpoint = os.Getenv("NETHVOICE_MIDDLEWARE_V1_WS_ENDPOINT")
+        }</span> else<span class="cov0" title="0"> {
+                logs.Log("[CRITICAL][ENV] NETHVOICE_MIDDLEWARE_V1_WS_ENDPOINT variable is empty")
+                os.Exit(1)
+        }</span>
+
+        // set V1 API path
+        <span class="cov0" title="0">if os.Getenv("NETHVOICE_MIDDLEWARE_V1_API_PATH") != "" </span><span class="cov0" title="0">{
+                Config.V1ApiPath = os.Getenv("NETHVOICE_MIDDLEWARE_V1_API_PATH")
+        }</span> else<span class="cov0" title="0"> {
+                Config.V1ApiPath = ""
+        }</span>
+
+        // set V1 API path
+        <span class="cov0" title="0">if os.Getenv("NETHVOICE_MIDDLEWARE_V1_WS_PATH") != "" </span><span class="cov0" title="0">{
+                Config.V1WsPath = os.Getenv("NETHVOICE_MIDDLEWARE_V1_WS_PATH")
+        }</span> else<span class="cov0" title="0"> {
+                Config.V1WsPath = "/socket.io"
+        }</span>
+
+        // set sensitive list
+        <span class="cov0" title="0">if os.Getenv("NETHVOICE_MIDDLEWARE_SENSITIVE_LIST") != "" </span><span class="cov0" title="0">{
+                Config.SensitiveList = strings.Split(os.Getenv("NETHVOICE_MIDDLEWARE_SENSITIVE_LIST"), ",")
+        }</span> else<span class="cov0" title="0"> {
+                Config.SensitiveList = []string{"password", "secret", "token", "passphrase", "private", "key"}
+        }</span>
+
+        // set secrets dir
+        <span class="cov0" title="0">if os.Getenv("NETHVOICE_MIDDLEWARE_SECRETS_DIR") != "" </span><span class="cov0" title="0">{
+                Config.SecretsDir = os.Getenv("NETHVOICE_MIDDLEWARE_SECRETS_DIR")
+        }</span> else<span class="cov0" title="0"> {
+                Config.SecretsDir = "/var/lib/whale/secrets"
+        }</span>
+
+        // set issuer for 2FA
+        <span class="cov0" title="0">if os.Getenv("NETHVOICE_MIDDLEWARE_ISSUER_2FA") != "" </span><span class="cov0" title="0">{
+                Config.Issuer2FA = os.Getenv("NETHVOICE_MIDDLEWARE_ISSUER_2FA")
+        }</span> else<span class="cov0" title="0"> {
+                Config.Issuer2FA = "NethVoice"
+        }</span>
+
+        // set FreePBX APIs (FreePBX admin APIs that bypass JWT)
+        <span class="cov0" title="0">if os.Getenv("NETHVOICE_MIDDLEWARE_FREEPBX_APIS") != "" </span><span class="cov0" title="0">{
+                Config.FreePBXAPIs = strings.Split(os.Getenv("NETHVOICE_MIDDLEWARE_FREEPBX_APIS"), ",")
+        }</span> else<span class="cov0" title="0"> {
+                Config.FreePBXAPIs = []string{
+                        "/dbconn/test",
+                        "/custcard/preview",
+                        "/user/endpoints/all",
+                        "/astproxy/extension",
+                        "/astproxy/extensions",
+                        "/astproxy/trunk",
+                        "/astproxy/trunks",
+                }
+        }</span>
+
+        // set MQTT configuration for satellite transcriptions
+        <span class="cov0" title="0">if os.Getenv("SATELLITE_MQTT_HOST") != "" </span><span class="cov0" title="0">{
+                Config.MQTTHost = os.Getenv("SATELLITE_MQTT_HOST")
+        }</span> else<span class="cov0" title="0"> {
+                Config.MQTTHost = "127.0.0.1"
+        }</span>
+
+        <span class="cov0" title="0">if os.Getenv("SATELLITE_MQTT_PORT") != "" </span><span class="cov0" title="0">{
+                Config.MQTTPort = os.Getenv("SATELLITE_MQTT_PORT")
+        }</span> else<span class="cov0" title="0"> {
+                Config.MQTTPort = "1883"
+        }</span>
+
+        <span class="cov0" title="0">if os.Getenv("SATELLITE_MQTT_USERNAME") != "" </span><span class="cov0" title="0">{
+                Config.MQTTUsername = os.Getenv("SATELLITE_MQTT_USERNAME")
+        }</span> else<span class="cov0" title="0"> {
+                Config.MQTTUsername = "satellite"
+        }</span>
+
+        <span class="cov0" title="0">if os.Getenv("SATELLITE_MQTT_PASSWORD") != "" </span><span class="cov0" title="0">{
+                Config.MQTTPassword = os.Getenv("SATELLITE_MQTT_PASSWORD")
+        }</span>
+
+        // Enable MQTT only if we have at least username and password
+        <span class="cov0" title="0">Config.MQTTEnabled = Config.MQTTUsername != "" &amp;&amp; Config.MQTTPassword != ""
+
+        // set MariaDB host
+        if os.Getenv("PHONEBOOK_MARIADB_HOST") != "" </span><span class="cov0" title="0">{
+                Config.PhonebookMariaDBHost = os.Getenv("PHONEBOOK_MARIADB_HOST")
+        }</span> else<span class="cov0" title="0"> {
+                Config.PhonebookMariaDBHost = "localhost"
+        }</span>
+
+        // set MariaDB user
+        <span class="cov0" title="0">if os.Getenv("PHONEBOOK_MARIADB_USER") != "" </span><span class="cov0" title="0">{
+                Config.PhonebookMariaDBUser = os.Getenv("PHONEBOOK_MARIADB_USER")
+        }</span> else<span class="cov0" title="0"> {
+                Config.PhonebookMariaDBUser = "root"
+        }</span>
+
+        // set MariaDB port (default to 3306 when not provided)
+        <span class="cov0" title="0">if os.Getenv("PHONEBOOK_MARIADB_PORT") != "" </span><span class="cov0" title="0">{
+                Config.PhonebookMariaDBPort = os.Getenv("PHONEBOOK_MARIADB_PORT")
+        }</span> else<span class="cov0" title="0"> {
+                // Default to standard MariaDB port for local testing/environments
+                Config.PhonebookMariaDBPort = "3306"
+                logs.Log("[WARN][ENV] PHONEBOOK_MARIADB_PORT not set; defaulting to 3306")
+        }</span>
+
+        // set MariaDB password (default to 'root' for local test environments)
+        <span class="cov0" title="0">if os.Getenv("PHONEBOOK_MARIADB_PASSWORD") != "" </span><span class="cov0" title="0">{
+                Config.PhonebookMariaDBPassword = os.Getenv("PHONEBOOK_MARIADB_PASSWORD")
+        }</span> else<span class="cov0" title="0"> {
+                Config.PhonebookMariaDBPassword = "root"
+                logs.Log("[WARN][ENV] PHONEBOOK_MARIADB_PASSWORD not set; defaulting to 'root' for local testing")
+        }</span>
+
+        // set MariaDB database name
+        <span class="cov0" title="0">if os.Getenv("PHONEBOOK_MARIADB_DATABASE") != "" </span><span class="cov0" title="0">{
+                Config.PhonebookMariaDBDatabase = os.Getenv("PHONEBOOK_MARIADB_DATABASE")
+        }</span> else<span class="cov0" title="0"> {
+                Config.PhonebookMariaDBDatabase = "nethcti3"
+        }</span>
+        // set authorization config paths
+        <span class="cov0" title="0">if os.Getenv("AUTH_PROFILES_PATH") != "" </span><span class="cov0" title="0">{
+                Config.ProfilesConfigPath = os.Getenv("AUTH_PROFILES_PATH")
+        }</span> else<span class="cov0" title="0"> {
+                Config.ProfilesConfigPath = "/etc/nethcti/profiles.json"
+        }</span>
+
+        <span class="cov0" title="0">if os.Getenv("AUTH_USERS_PATH") != "" </span><span class="cov0" title="0">{
+                Config.UsersConfigPath = os.Getenv("AUTH_USERS_PATH")
+        }</span> else<span class="cov0" title="0"> {
+                Config.UsersConfigPath = "/etc/nethcti/users.json"
+        }</span>
+}
+</pre>
+		
+		<pre class="file" id="file2" style="display: none">/*package db
+
+ * Copyright (C) 2025 Nethesis S.r.l.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
+package db
+
+import (
+        "context"
+        "database/sql"
+        "fmt"
+        "time"
+
+        _ "github.com/go-sql-driver/mysql"
+        "github.com/nethesis/nethcti-middleware/configuration"
+        "github.com/nethesis/nethcti-middleware/logs"
+)
+
+var (
+        DB *sql.DB
+        sqlOpenFunc = sql.Open
+)
+
+// Init initializes the database connection pool with the configured MariaDB settings.
+// It performs health checks and creates necessary schema.
+func Init() error {
+        dsn := fmt.Sprintf(
+                "%s:%s@tcp(%s:%s)/%s?parseTime=true",
+                configuration.Config.PhonebookMariaDBUser,
+                configuration.Config.PhonebookMariaDBPassword,
+                configuration.Config.PhonebookMariaDBHost,
+                configuration.Config.PhonebookMariaDBPort,
+                configuration.Config.PhonebookMariaDBDatabase,
+        )
+
+</span>        var err error
+        DB, err = sqlOpenFunc("mysql", dsn)
+        i</span>f err != nil {
+                logs.Log("[CRITICAL][DB] Failed to open database connection: " + err.Error())
+                return err
+        <span class="cov8" title="1">}
+
+        // Configure connection pool
+        DB.SetMaxOpenConns(25)
+        DB.SetMaxIdleConns(5)
+        DB.SetConnMaxLifetime(5 * time.Minute)
+
+        // Test the connection
+        ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+        defer cancel()</span><span class="cov0" title="0">
+
+        err = DB.PingContext(ctx)
+        i</span>f err != nil {
+                logs.Log("[CRITICAL][DB] Failed to ping database: " + err.Error())
+        <span class="cov8" title="1">        return err
+        }
+
+        logs.Log("[DB] Database connection established successfully")
+
+</span>        // Create schema if it doesn't exist
+        err = createSchema()
+        i</span>f err != nil {
+                logs.Log("[CRITICAL][DB] Failed to create schema: " + err.Error())
+        <span class="cov8" title="1">        return er</span>r
+        }
+
+        return nil
+}
+
+</span>// Close gracefully closes the database connection pool.
+fu</span>nc Close() error {
+        <span class="cov0" title="0">if DB != n</span>il {
+                return DB.Close()
+        }
+        return nil
+}
+
+// createSchema creates the necessary database schema for the middleware.
+func createSchema() error {
+        ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+        defer cancel()
+
+        // Create phonebook table
+        createPhonebookTable := `
+        CREATE TABLE IF NOT EXISTS cti_phonebook (
+                id int(11) NOT NULL AUTO_INCREMENT,
+                owner_id varchar(255) NOT NULL DEFAULT '',
+                type varchar(255) NOT NULL DEFAULT '',
+                homeemail varchar(255) DEFAULT NULL,
+                workemail varchar(255) DEFAULT NULL,
+                homephone varchar(25) DEFAULT NULL,
+                workphone varchar(25) DEFAULT NULL,
+                cellphone varchar(25) DEFAULT NULL,
+                fax varchar(25) DEFAULT NULL,
+                title varchar(255) DEFAULT NULL,
+                company varchar(255) DEFAULT NULL,
+                notes text DEFAULT NULL,
+                name varchar(255) DEFAULT NULL,
+                homestreet varchar(255) DEFAULT NULL,
+                homepob varchar(10) DEFAULT NULL,
+                homecity varchar(255) DEFAULT NULL,
+                homeprovince varchar(255) DEFAULT NULL,
+                homepostalcode varchar(255) DEFAULT NULL,
+                homecountry varchar(255) DEFAULT NULL,
+                workstreet varchar(255) DEFAULT NULL,
+                workpob varchar(10) DEFAULT NULL,
+                workcity varchar(255) DEFAULT NULL,
+                workprovince varchar(255) DEFAULT NULL,
+                workpostalcode varchar(255) DEFAULT NULL,
+                workcountry varchar(255) DEFAULT NULL,
+                url varchar(255) DEFAULT NULL,
+                extension varchar(255) DEFAULT NULL,
+                speeddial_num varchar(255) DEFAULT NULL,
+                PRIMARY KEY (id),
+                KEY owner_idx (owner_id),
+                KEY wemail_idx (workemail),
+                KEY hemail_idx (homeemail),
+                KEY name_idx (name),
+                KEY hphone_idx (homephone),
+                KEY wphone_idx (workphone),
+                KEY cphone_idx (cellphone),
+                KEY extension_idx (extension),
+                KEY fax_idx (fax),
+                KEY company_idx (company)
+        ) ENGINE=MyISAM DEFAULT CHARSET=utf8mb3
+        `
+</span>
+        _</span>, err := DB.ExecContext(ctx, createPhonebookTable)
+        if err != nil {
+        <span class="cov8" title="1">        return err
+        }
+</span>
+        logs.Log("[DB] Schema created/verified successfully")
+        return nil
+}
+
+// HealthCheck performs a health check on the database connection.
+func HealthCheck() error {
+        ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+        </span>defer cancel()
+
+        return DB.PingContext(ctx)
+}
+</pre>
+		
+		<pre class="file" id="file3" style="display: none">/*
+ * Copyright (C) 2025 Nethesis S.r.l.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
+package logs
+
+import (
+        "log"
+        "os"
+)
+
+var Logs *log.Logger
+
+func Init(name string) <span class="cov0" title="0">{
+        // init syslog writer
+        logger := log.New(os.Stderr, name+" ", log.Ldate|log.Ltime|log.Lshortfile)
+
+        // assign writer to Logs var
+        Logs = logger
+}</span>
+
+func Log(message string) <span class="cov0" title="0">{
+        Logs.Println(message)
+}</span>
+</pre>
+		
+		<pre class="file" id="file4" style="display: none">/*
+ * Copyright (C) 2025 Nethesis S.r.l.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
+package main
+
+import (
+        "context"
+        "io"
+        "regexp"
+        "strings"
+
+        "github.com/gin-contrib/cors"
+        "github.com/gin-contrib/gzip"
+        "github.com/gin-gonic/gin"
+        "github.com/robfig/cron/v3"
+
+        "github.com/nethesis/nethcti-middleware/authz"
+        "github.com/nethesis/nethcti-middleware/configuration"
+        "github.com/nethesis/nethcti-middleware/db"
+        "github.com/nethesis/nethcti-middleware/logs"
+        "github.com/nethesis/nethcti-middleware/methods"
+        "github.com/nethesis/nethcti-middleware/middleware"
+        "github.com/nethesis/nethcti-middleware/mqtt"
+        "github.com/nethesis/nethcti-middleware/socket"
+        "github.com/nethesis/nethcti-middleware/store"
+)
+
+func main() <span class="cov8" title="1">{
+        // Init logger first
+        logs.Init("nethcti-middleware")
+
+        // Init configuration
+        configuration.Init()
+
+        // Init database
+        err := db.Init()
+        if err != nil </span><span class="cov0" title="0">{
+                logs.Log("[CRITICAL] Failed to initialize database: " + err.Error())
+                return
+        }</span>
+        <span class="cov8" title="1">defer db.Close()
+
+        // Init store
+        store.UserSessionInit()
+
+        // Init authorization manager
+        authzCtx, authzCancel := context.WithCancel(context.Background())
+        defer authzCancel()
+        authzManager, err := authz.NewManager(authzCtx, configuration.Config.ProfilesConfigPath, configuration.Config.UsersConfigPath)
+        if err != nil </span><span class="cov0" title="0">{
+                logs.Log("[CRITICAL] Failed to initialize authorization manager: " + err.Error())
+                return
+        }</span>
+        <span class="cov8" title="1">defer authzManager.Close()
+
+        // Init MQTT and setup transcription subscription
+        mqttCh := mqtt.Init()
+        if mqttCh != nil </span><span class="cov0" title="0">{
+                socket.SetMQTTChannel(mqttCh)
+                err := mqtt.InitTranscriptionSubscription()
+                if err != nil </span><span class="cov0" title="0">{
+                        logs.Log("[WARNING][MQTT] Failed to subscribe to transcription topic: " + err.Error())
+                }</span>
+        }
+
+        // Create router
+        <span class="cov8" title="1">router := createRouter(authzManager)
+
+        // Create cron to run daily
+        c := cron.New()
+        c.AddFunc("@daily", methods.DeleteExpiredTokens)
+        c.Start()
+
+        // Run server
+        router.Run(configuration.Config.ListenAddress)</span>
+}
+
+func createRouter(authzManager *authz.Manager) *gin.Engine <span class="cov8" title="1">{
+        // Disable log to stdout when running in release mode
+        if gin.Mode() == gin.ReleaseMode </span><span class="cov0" title="0">{
+                gin.DefaultWriter = io.Discard
+        }</span>
+
+        // Init routers
+        <span class="cov8" title="1">router := gin.New()
+        router.RedirectTrailingSlash = false
+        router.Use(
+                gin.LoggerWithWriter(gin.DefaultWriter),
+                gin.Recovery(),
+        )
+
+        // Add default compression
+        router.Use(gzip.Gzip(gzip.DefaultCompression))
+
+        // Cors configuration only in debug mode GIN_MODE=debug
+        if gin.Mode() == gin.DebugMode </span><span class="cov0" title="0">{
+                // gin gonic cors conf
+                corsConf := cors.DefaultConfig()
+                corsConf.AllowHeaders = []string{"Authorization", "Content-Type", "Accept"}
+                corsConf.AllowAllOrigins = true
+                router.Use(cors.New(corsConf))
+        }</span>
+
+        // Define api group
+        <span class="cov8" title="1">api := router.Group("")
+
+        // Define public endpoints
+        api.POST("/login", middleware.InstanceJWT().LoginHandler)
+        api.GET("/ws/", socket.WsProxyHandler)
+
+        // Authentication required endpoints
+        api.Use(middleware.InstanceJWT().MiddlewareFunc())
+        </span><span class="cov8" title="1">{
+                // 2FA APIs
+                api.POST("/2fa/disable", methods.Disable2FA)
+                api.POST("/2fa/verify-otp", methods.VerifyOTP)
+                api.GET("/2fa/status", methods.Get2FAStatus)
+                api.POST("/2fa/recovery-codes", methods.Get2FARecoveryCodes)
+                api.GET("/2fa/qr-code", methods.QRCode)
+
+                // Phonebook APIs
+                api.POST("/phonebook/import", authzManager.RequireCapabilities("phonebook.ad_phonebook"), methods.ImportPhonebookCSV)
+
+                // Phone Island Integration APIs
+                api.POST("/authentication/phone_island_token_login", methods.PhoneIslandTokenLogin)
+                api.POST("/authentication/persistent_token_remove", methods.PhoneIslandTokenRemove)
+                api.GET("/authentication/phone_island_token_check", methods.PhoneIslandTokenCheck)
+
+                // Logout endpoint
+                api.POST("/logout", middleware.InstanceJWT().LogoutHandler)
+        }</span>
+
+        // Handle missing endpoint
+        <span class="cov8" title="1">router.NoRoute(func(c *gin.Context) </span><span class="cov0" title="0">{
+                path := c.Request.URL.Path
+
+                // Check if this is a FreePBX admin transparent API call
+                userHeader := c.GetHeader("User")
+                secretKeyHeader := c.GetHeader("Secretkey")
+                isFreePBXAdmin := userHeader == "admin" &amp;&amp; secretKeyHeader != ""
+
+                // Check if the API is in the FreePBX API list (prefix match with validation)
+                isFreePBXAPI := false
+                for _, freepbxPath := range configuration.Config.FreePBXAPIs </span><span class="cov0" title="0">{
+                        if path == freepbxPath </span><span class="cov0" title="0">{
+                                // Exact match
+                                isFreePBXAPI = true
+                                break</span>
+                        } else<span class="cov0" title="0"> if strings.HasPrefix(path, freepbxPath+"/") </span><span class="cov0" title="0">{
+                                // Prefix match - validate the remainder contains only numeric ID or safe paths
+                                remainder := path[len(freepbxPath)+1:]
+                                // Allow only numeric IDs (extensions/trunks) - no path traversal or additional paths
+                                matched, _ := regexp.MatchString(`^\d+$`, remainder)
+                                if matched </span><span class="cov0" title="0">{
+                                        isFreePBXAPI = true
+                                        break</span>
+                                }
+                        }
+                }
+
+                <span class="cov0" title="0">if isFreePBXAdmin &amp;&amp; isFreePBXAPI </span><span class="cov0" title="0">{
+                        // Handle FreePBX API call - add authorization_user header and forward directly
+                        c.Request.Header.Set("Authorization-User", "admin")
+                        methods.ProxyV1Request(c, path)
+                }</span> else<span class="cov0" title="0"> {
+                        // Apply JWT middleware for regular APIs
+                        middleware.InstanceJWT().MiddlewareFunc()(c)
+                        if c.IsAborted() </span><span class="cov0" title="0">{
+                                return
+                        }</span>
+                        // Fallback to proxy logic for legacy V1 API
+                        <span class="cov0" title="0">methods.ProxyV1Request(c, path)</span>
+                }
+        })
+
+        <span class="cov8" title="1">return router</span>
+}
+</pre>
+		
+		<pre class="file" id="file5" style="display: none">/*
+ * Copyright (C) 2025 Nethesis S.r.l.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
+package methods
+
+import (
+        "crypto/rand"
+        "encoding/base32"
+        "net/http"
+        "net/url"
+        "os"
+        "strings"
+        "time"
+
+        jwt "github.com/appleboy/gin-jwt/v2"
+        "github.com/dgryski/dgoogauth"
+        "github.com/fatih/structs"
+        "github.com/gin-gonic/gin"
+        "github.com/gin-gonic/gin/binding"
+        jwtv4 "github.com/golang-jwt/jwt/v4"
+        "github.com/nethesis/nethcti-middleware/configuration"
+        "github.com/nethesis/nethcti-middleware/logs"
+        "github.com/nethesis/nethcti-middleware/models"
+        "github.com/nethesis/nethcti-middleware/store"
+        "github.com/nethesis/nethcti-middleware/utils"
+)
+
+// -------------------------------- exported methods --------------------------------
+
+// GetUserStatus retrieves the 2FA status for the user
+func GetUserStatus(username string) (string, error) <span class="cov0" title="0">{
+        status, err := os.ReadFile(configuration.Config.SecretsDir + "/" + username + "/status")
+        statusS := strings.TrimSpace(string(status[:]))
+
+        return statusS, err
+}</span>
+
+// Test2FAStatus checks if 2FA is enabled for the user
+func Get2FAStatus(c *gin.Context) <span class="cov0" title="0">{
+        // get claims from token
+        claims := jwt.ExtractClaims(c)
+
+        // get status
+        twoFaStatus, _ := GetUserStatus(claims["id"].(string))
+
+        // return response
+        c.JSON(http.StatusOK, gin.H{"status": twoFaStatus == "1"})
+}</span>
+
+// VerifyOTP verifies the OTP provided by the user
+func VerifyOTP(c *gin.Context) <span class="cov0" title="0">{
+        // get payload
+        var jsonOTP models.OTPJson
+
+        if err := c.ShouldBindBodyWith(&amp;jsonOTP, binding.JSON); err != nil </span><span class="cov0" title="0">{
+                c.JSON(http.StatusBadRequest, structs.Map(models.StatusBadRequest{
+                        Code:    400,
+                        Message: "request fields malformed",
+                        Data:    err.Error(),
+                }))
+                return
+        }</span>
+
+        // get secret for the user
+        <span class="cov0" title="0">username := jsonOTP.Username
+        secret := getUserSecret(username)
+
+        // check secret
+        if len(secret) == 0 </span><span class="cov0" title="0">{
+                c.JSON(http.StatusNotFound, structs.Map(models.StatusNotFound{
+                        Code:    404,
+                        Message: "user secret not found",
+                        Data:    "",
+                }))
+                return
+        }</span>
+
+        // set OTP configuration
+        <span class="cov0" title="0">otpc := &amp;dgoogauth.OTPConfig{
+                Secret:      secret,
+                WindowSize:  3,
+                HotpCounter: 0,
+        }
+
+        // verifiy OTP
+        result, err := otpc.Authenticate(jsonOTP.OTP)
+        if err != nil || !result </span><span class="cov0" title="0">{
+
+                // check if OTP is a recovery code
+                recoveryCodes := getRecoveryCodes(username)
+
+                if !utils.Contains(jsonOTP.OTP, recoveryCodes) </span><span class="cov0" title="0">{
+                        c.JSON(http.StatusBadRequest, structs.Map(models.StatusBadRequest{
+                                Code:    400,
+                                Message: "invalid_otp",
+                                Data:    nil,
+                        }))
+                        return
+                }</span>
+
+                // remove used recovery OTP
+                <span class="cov0" title="0">recoveryCodes = utils.Remove(jsonOTP.OTP, recoveryCodes)
+
+                // update recovery codes file
+                if !updateRecoveryCodes(username, recoveryCodes) </span><span class="cov0" title="0">{
+                        c.JSON(http.StatusBadRequest, structs.Map(models.StatusBadRequest{
+                                Code:    400,
+                                Message: "OTP recovery codes not updated",
+                                Data:    "",
+                        }))
+                        return
+                }</span>
+        }
+
+        // Check if this is initial 2FA setup (not login OTP verification)
+        // If the current token has 2fa:false, it means user is setting up 2FA for the first time
+        <span class="cov0" title="0">claims := jwt.ExtractClaims(c)
+        currentHas2FA := false
+        if val, exists := claims["2fa"]; exists </span><span class="cov0" title="0">{
+                currentHas2FA = val.(bool)
+        }</span>
+
+        // enable 2FA for user
+        <span class="cov0" title="0">if !enable2FA(username) </span><span class="cov0" title="0">{
+                c.JSON(http.StatusBadRequest, structs.Map(models.StatusBadRequest{
+                        Code:    400,
+                        Message: "failed to enable 2FA",
+                        Data:    "",
+                }))
+                return
+        }</span>
+
+        // Extract the JWT token being used for this request
+        <span class="cov0" title="0">currentJWTToken := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
+
+        // If this is initial 2FA setup (2fa was false before), invalidate all other tokens
+        // to force all other clients to re-login with the new 2FA requirement
+        if !currentHas2FA </span><span class="cov0" title="0">{
+                userSession := store.UserSessions[username]
+                if userSession != nil </span><span class="cov0" title="0">{
+                        // Keep only the current token, remove all others
+                        userSession.JWTTokens = []string{currentJWTToken}
+                        logs.Log("[INFO][2FA] All other JWT tokens invalidated for user " + username + " after enabling 2FA")
+                }</span>
+        }
+
+        // update user session to mark OTP as verified
+        <span class="cov0" title="0">store.UserSessions[username].OTP_Verified = true
+
+        // Regenerate JWT token with updated 2FA status, replacing the current token
+        _, newToken, expire, err := regenerateUserToken(store.UserSessions[username], currentJWTToken)
+
+        if err != nil </span><span class="cov0" title="0">{
+                c.JSON(http.StatusInternalServerError, structs.Map(models.StatusBadRequest{
+                        Code:    500,
+                        Message: "failed to generate new token",
+                        Data:    err.Error(),
+                }))
+                return
+        }</span>
+
+        // response with new token (the regenerated one that replaces currentJWTToken)
+        <span class="cov0" title="0">c.JSON(http.StatusOK, structs.Map(models.StatusOK{
+                Code:    200,
+                Message: "OTP verified",
+                Data:    gin.H{"token": newToken, "expire": expire},
+        }))</span>
+}
+
+// QRCode generates a QR code for the user to set up 2FA
+func QRCode(c *gin.Context) <span class="cov0" title="0">{
+        // generate random secret
+        secret := make([]byte, 20)
+        _, err := rand.Read(secret)
+        if err != nil </span><span class="cov0" title="0">{
+                logs.Log("[ERR][2FA] Failed to generate random secret for QRCode: " + err.Error())
+        }</span>
+
+        // convert to string
+        <span class="cov0" title="0">secretBase32 := base32.StdEncoding.EncodeToString(secret)
+
+        // get claims from token
+        claims := jwt.ExtractClaims(c)
+
+        // define issuer
+        account := claims["id"].(string)
+        issuer := configuration.Config.Issuer2FA
+
+        // set secret for user
+        result, setSecret := setUserSecret(account, secretBase32)
+        if !result </span><span class="cov0" title="0">{
+                c.JSON(http.StatusBadRequest, structs.Map(models.StatusBadRequest{
+                        Code:    400,
+                        Message: "user secret set error",
+                        Data:    "",
+                }))
+                return
+        }</span>
+
+        // define URL
+        <span class="cov0" title="0">URL, err := url.Parse("otpauth://totp")
+        if err != nil </span><span class="cov0" title="0">{
+                logs.Log("[ERR][2FA] Failed to parse URL for QRCode: " + err.Error())
+        }</span>
+
+        // add params
+        <span class="cov0" title="0">URL.Path += "/" + issuer + ":" + account
+        params := url.Values{}
+        params.Add("secret", setSecret)
+        params.Add("algorithm", "SHA1")
+        params.Add("digits", "6")
+        params.Add("period", "30")
+
+        // print url
+        URL.RawQuery = params.Encode()
+
+        // response
+        c.JSON(http.StatusOK, structs.Map(models.StatusOK{
+                Code:    200,
+                Message: "QR code string",
+                Data:    gin.H{"url": URL.String(), "key": setSecret},
+        }))</span>
+}
+
+// Disable2FA disables two-factor authentication for the user
+func Disable2FA(c *gin.Context) <span class="cov0" title="0">{
+        // get payload
+        var loginData models.LoginJson
+
+        if err := c.ShouldBindBodyWith(&amp;loginData, binding.JSON); err != nil </span><span class="cov0" title="0">{
+                c.JSON(http.StatusBadRequest, structs.Map(models.StatusBadRequest{
+                        Code:    400,
+                        Message: "request fields malformed",
+                        Data:    err.Error(),
+                }))
+                return
+        }</span>
+
+        // get claims from token
+        <span class="cov0" title="0">claims := jwt.ExtractClaims(c)
+        username := claims["id"].(string)
+
+        // validate password is provided
+        if loginData.Password == "" </span><span class="cov0" title="0">{
+                c.JSON(http.StatusBadRequest, structs.Map(models.StatusBadRequest{
+                        Code:    400,
+                        Message: "password is required to disable 2FA",
+                        Data:    "",
+                }))
+                return
+        }</span>
+
+        // verify password using VerifyUserPassword from auth.go
+        <span class="cov0" title="0">isValidPassword := VerifyUserPassword(username, loginData.Password)
+        if !isValidPassword </span><span class="cov0" title="0">{
+                c.JSON(http.StatusUnauthorized, structs.Map(models.StatusUnauthorized{
+                        Code:    401,
+                        Message: "invalid password",
+                        Data:    "",
+                }))
+                return
+        }</span>
+
+        // revocate secret
+        <span class="cov0" title="0">errRevocate := os.Remove(configuration.Config.SecretsDir + "/" + username + "/secret")
+        if errRevocate != nil </span><span class="cov0" title="0">{
+                c.JSON(http.StatusBadRequest, structs.Map(models.StatusBadRequest{
+                        Code:    403,
+                        Message: "error in revocate 2FA for user",
+                        Data:    nil,
+                }))
+                return
+        }</span>
+
+        // revocate recovery codes
+        <span class="cov0" title="0">errRevocateCodes := os.Remove(configuration.Config.SecretsDir + "/" + username + "/codes")
+        if errRevocateCodes != nil </span><span class="cov0" title="0">{
+                // if the file does not exist, it is ok, skip the error
+                if !os.IsNotExist(errRevocateCodes) </span><span class="cov0" title="0">{
+                        c.JSON(http.StatusBadRequest, structs.Map(models.StatusBadRequest{
+                                Code:    403,
+                                Message: "error in delete 2FA recovery codes",
+                                Data:    nil,
+                        }))
+                        return
+                }</span>
+        }
+
+        // set 2FA to disabled
+        <span class="cov0" title="0">f, _ := os.OpenFile(configuration.Config.SecretsDir+"/"+username+"/status", os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
+        defer f.Close()
+
+        // write file with tokens
+        _, err := f.WriteString("0")
+
+        // check error
+        if err != nil </span><span class="cov0" title="0">{
+                c.JSON(http.StatusBadRequest, structs.Map(models.StatusBadRequest{
+                        Code:    400,
+                        Message: "2FA not revocated",
+                        Data:    "",
+                }))
+                return
+        }</span>
+
+        // Invalidate ALL tokens for this user when 2FA is disabled
+        // This ensures that all clients (web, desktop, mobile) must re-authenticate
+        <span class="cov0" title="0">userSession := store.UserSessions[username]
+
+        if userSession != nil </span><span class="cov0" title="0">{
+                // Clear all existing tokens - force all clients to re-login
+                userSession.JWTTokens = []string{}
+                userSession.OTP_Verified = false
+
+                logs.Log("[INFO][2FA] All JWT tokens invalidated for user " + username + " after disabling 2FA")
+
+                // Don't generate a new token - return success without token
+                // The client will need to login again
+                c.JSON(http.StatusOK, structs.Map(models.StatusOK{
+                        Code:    200,
+                        Message: "2FA revocate successfully - all sessions invalidated, please login again",
+                        Data:    gin.H{"must_relogin": true},
+                }))
+                return
+        }</span>
+
+        // response without new token if user session not found
+        <span class="cov0" title="0">c.JSON(http.StatusOK, structs.Map(models.StatusOK{
+                Code:    200,
+                Message: "2FA revocate successfully",
+                Data:    "",
+        }))</span>
+}
+
+// Get2FARecoveryCodes retrieves the recovery codes for the user
+func Get2FARecoveryCodes(c *gin.Context) <span class="cov0" title="0">{
+        claims := jwt.ExtractClaims(c)
+
+        codes := getRecoveryCodes(claims["id"].(string))
+
+        c.JSON(http.StatusOK, gin.H{"codes": codes})
+}</span>
+
+// -------------------------------- private methods --------------------------------
+
+// enable2FA enables two-factor authentication for the user
+func enable2FA(username string) bool <span class="cov0" title="0">{
+        // check if dir exists, otherwise create it
+        if _, errD := os.Stat(configuration.Config.SecretsDir + "/" + username); os.IsNotExist(errD) </span><span class="cov0" title="0">{
+                _ = os.MkdirAll(configuration.Config.SecretsDir+"/"+username, 0700)
+        }</span>
+
+        // set 2FA to enabled
+        <span class="cov0" title="0">f, _ := os.OpenFile(configuration.Config.SecretsDir+"/"+username+"/status", os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
+        defer f.Close()
+
+        // write file with 2fa status
+        _, err := f.WriteString("1")
+
+        return err == nil</span>
+}
+
+// regenerateUserToken creates a new JWT token for an existing user session, replacing the old token
+func regenerateUserToken(userSession *models.UserSession, oldToken string) (*models.UserSession, string, time.Time, error) <span class="cov0" title="0">{
+        // Create new JWT payload with updated 2FA status
+        status, _ := GetUserStatus(userSession.Username)
+
+        now := time.Now()
+        expire := now.Add(time.Hour * 24 * 14) // 2 weeks
+
+        claims := jwtv4.MapClaims{
+                "id":           userSession.Username,
+                "2fa":          status == "1",
+                "otp_verified": userSession.OTP_Verified, // Use the session's OTP verification status
+                "exp":          expire.Unix(),
+                "iat":          now.Unix(),
+        }
+
+        // Create and sign token using github.com/golang-jwt/jwt/v4
+        token := jwtv4.NewWithClaims(jwtv4.SigningMethodHS256, claims)
+        tokenString, err := token.SignedString([]byte(configuration.Config.Secret_jwt))
+
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, "", time.Time{}, err
+        }</span>
+
+        // Find and replace the old token in the array
+        <span class="cov0" title="0">for i, t := range userSession.JWTTokens </span><span class="cov0" title="0">{
+                if t == oldToken </span><span class="cov0" title="0">{
+                        userSession.JWTTokens[i] = tokenString
+                        break</span>
+                }
+        }
+
+        <span class="cov0" title="0">return userSession, tokenString, expire, nil</span>
+}
+
+// getUserSecret retrieves the secret for the user
+func getUserSecret(username string) string <span class="cov0" title="0">{
+        // get secret
+        secret, err := os.ReadFile(configuration.Config.SecretsDir + "/" + username + "/secret")
+
+        // handle error
+        if err != nil </span><span class="cov0" title="0">{
+                return ""
+        }</span>
+
+        // return string
+        <span class="cov0" title="0">return string(secret[:])</span>
+}
+
+// setUserSecret sets the secret for the user
+func setUserSecret(username string, secret string) (bool, string) <span class="cov0" title="0">{
+        // get secret
+        secretB, _ := os.ReadFile(configuration.Config.SecretsDir + "/" + username + "/secret")
+
+        // check error
+        if len(string(secretB[:])) == 0 </span><span class="cov0" title="0">{
+                // check if dir exists, otherwise create it
+                if _, errD := os.Stat(configuration.Config.SecretsDir + "/" + username); os.IsNotExist(errD) </span><span class="cov0" title="0">{
+                        _ = os.MkdirAll(configuration.Config.SecretsDir+"/"+username, 0700)
+                }</span>
+
+                // open file
+                <span class="cov0" title="0">f, _ := os.OpenFile(configuration.Config.SecretsDir+"/"+username+"/secret", os.O_WRONLY|os.O_CREATE, 0600)
+                defer f.Close()
+
+                // write file with secret
+                _, err := f.WriteString(secret)
+
+                // check error
+                if err != nil </span><span class="cov0" title="0">{
+                        return false, ""
+                }</span>
+
+                <span class="cov0" title="0">return true, secret</span>
+        }
+
+        <span class="cov0" title="0">return true, string(secretB[:])</span>
+}
+
+// getRecoveryCodes retrieves the recovery codes for the user
+func getRecoveryCodes(username string) []string <span class="cov0" title="0">{
+        // create empty array
+        var recoveryCodes []string
+
+        // check if recovery codes exists
+        savedCodes, _ := os.ReadFile(configuration.Config.SecretsDir + "/" + username + "/codes")
+
+        // check length
+        if len(string(savedCodes[:])) == 0 </span><span class="cov0" title="0">{
+
+                // get secret
+                secret := getUserSecret(username)
+
+                // get recovery codes
+                if len(string(secret)) &gt; 0 </span><span class="cov0" title="0">{
+                        // generate new random recovery codes
+                        newCodes := generateRandomRecoveryCodes()
+
+                        // create codes string
+                        codesString := strings.Join(newCodes, "\n") + "\n"
+
+                        // open file
+                        f, _ := os.OpenFile(configuration.Config.SecretsDir+"/"+username+"/codes", os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+                        defer f.Close()
+
+                        // write file with codes
+                        _, _ = f.WriteString(codesString)
+
+                        // assign codes
+                        return newCodes
+                }</span>
+        }
+
+        // parse output
+        <span class="cov0" title="0">recoveryCodes = strings.Split(string(savedCodes[:]), "\n")
+
+        // remove empty element, the last one
+        if len(recoveryCodes) &gt; 0 &amp;&amp; recoveryCodes[len(recoveryCodes)-1] == "" </span><span class="cov0" title="0">{
+                recoveryCodes = recoveryCodes[:len(recoveryCodes)-1]
+        }</span>
+
+        // return codes
+        <span class="cov0" title="0">return recoveryCodes</span>
+}
+
+// updateRecoveryCodes updates the recovery codes for the user
+func updateRecoveryCodes(username string, codes []string) bool <span class="cov0" title="0">{
+        // open file
+        f, _ := os.OpenFile(configuration.Config.SecretsDir+"/"+username+"/codes", os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+        defer f.Close()
+
+        // write file with secret
+        codes = append(codes, "")
+        _, err := f.WriteString(strings.Join(codes[:], "\n"))
+
+        // check error
+        return err == nil
+}</span>
+
+// generateRandomRecoveryCodes generates random recovery codes
+func generateRandomRecoveryCodes() []string <span class="cov0" title="0">{
+        var codes []string
+
+        // Generate 5 random recovery codes
+        for i := 0; i &lt; 5; i++ </span><span class="cov0" title="0">{
+                // Generate 6-digit numeric recovery code
+                code := ""
+                for j := 0; j &lt; 6; j++ </span><span class="cov0" title="0">{
+                        digit := make([]byte, 1)
+                        rand.Read(digit)
+                        code += string('0' + (digit[0] % 10))
+                }</span>
+                <span class="cov0" title="0">codes = append(codes, code)</span>
+        }
+
+        <span class="cov0" title="0">return codes</span>
+}
+</pre>
+		
+		<pre class="file" id="file6" style="display: none">/*
+ * Copyright (C) 2025 Nethesis S.r.l.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
+package methods
+
+import (
+        "encoding/json"
+        "net/http"
+        "os"
+        "time"
+
+        jwt "github.com/appleboy/gin-jwt/v2"
+        "github.com/gin-gonic/gin"
+        jwtv4 "github.com/golang-jwt/jwt/v4"
+        "github.com/nethesis/nethcti-middleware/configuration"
+        "github.com/nethesis/nethcti-middleware/models"
+        "github.com/nethesis/nethcti-middleware/store"
+)
+
+// -------------------------------- exported methods --------------------------------
+
+// PhoneIslandTokenLogin handles the login for Phone Island using a JWT token
+func PhoneIslandTokenLogin(c *gin.Context) <span class="cov0" title="0">{
+        claims := jwt.ExtractClaims(c)
+        username, ok := claims["id"].(string)
+        if !ok || username == "" </span><span class="cov0" title="0">{
+                c.JSON(http.StatusBadRequest, gin.H{"message": "invalid user"})
+                return
+        }</span>
+
+        // Read subtype from request body
+        <span class="cov0" title="0">var requestBody struct {
+                Subtype string `json:"subtype"`
+        }
+        if err := c.ShouldBindJSON(&amp;requestBody); err != nil </span><span class="cov0" title="0">{
+                c.JSON(http.StatusBadRequest, gin.H{"message": "invalid request body"})
+                return
+        }</span>
+
+        <span class="cov0" title="0">subtype := requestBody.Subtype
+        if subtype == "" </span><span class="cov0" title="0">{
+                subtype = "web"
+        }</span>
+
+        // Check if a phone_island_token already exists for any other subtype
+        // If it does, reuse it to avoid invalidating existing sessions
+        <span class="cov0" title="0">var phoneIslandToken string
+        existingToken, err := getExistingPhoneIslandToken(username)
+        if err == nil &amp;&amp; existingToken != "" </span><span class="cov0" title="0">{
+                // Reuse existing token from another subtype
+                phoneIslandToken = existingToken
+        }</span> else<span class="cov0" title="0"> {
+                // Get new token from CTI Server
+                userSession := store.UserSessions[username]
+                nethctiToken := userSession.NethCTIToken
+
+                req, err := http.NewRequest("POST", configuration.Config.V1Protocol+"://"+configuration.Config.V1ApiEndpoint+configuration.Config.V1ApiPath+"/authentication/phone_island_token_login", nil)
+                if err != nil </span><span class="cov0" title="0">{
+                        c.JSON(http.StatusInternalServerError, gin.H{"message": "failed to create request"})
+                        return
+                }</span>
+                <span class="cov0" title="0">req.Header.Set("Authorization", nethctiToken)
+
+                client := &amp;http.Client{Timeout: 10 * time.Second}
+                resp, err := client.Do(req)
+                if err != nil </span><span class="cov0" title="0">{
+                        c.JSON(http.StatusInternalServerError, gin.H{"message": "failed to contact server v1"})
+                        return
+                }</span>
+                <span class="cov0" title="0">defer resp.Body.Close()
+
+                if resp.StatusCode != http.StatusOK </span><span class="cov0" title="0">{
+                        c.JSON(http.StatusBadGateway, gin.H{"message": "server v1 returned error", "status": resp.StatusCode})
+                        return
+                }</span>
+
+                <span class="cov0" title="0">var v1Resp struct {
+                        Token string `json:"token"`
+                }
+                if err := json.NewDecoder(resp.Body).Decode(&amp;v1Resp); err != nil </span><span class="cov0" title="0">{
+                        c.JSON(http.StatusInternalServerError, gin.H{"message": "failed to parse server v1 response"})
+                        return
+                }</span>
+
+                <span class="cov0" title="0">phoneIslandToken = v1Resp.Token</span>
+        }
+
+        <span class="cov0" title="0">apiKey, err := generateAPIKey(username)
+        if err != nil </span><span class="cov0" title="0">{
+                c.JSON(http.StatusInternalServerError, gin.H{"message": "failed to generate api key"})
+                return
+        }</span>
+        <span class="cov0" title="0">if err := saveAPIKey(username, apiKey, phoneIslandToken, subtype); err != nil </span><span class="cov0" title="0">{
+                c.JSON(http.StatusInternalServerError, gin.H{"message": "failed to save api key"})
+                return
+        }</span>
+
+        <span class="cov0" title="0">c.JSON(http.StatusOK, gin.H{
+                "token":    apiKey,
+                "username": username,
+        })</span>
+}
+
+// PhoneIslandTokenRemove removes the Phone Island API key for the user
+func PhoneIslandTokenRemove(c *gin.Context) <span class="cov0" title="0">{
+        claims := jwt.ExtractClaims(c)
+        username, ok := claims["id"].(string)
+        if !ok || username == "" </span><span class="cov0" title="0">{
+                c.JSON(http.StatusBadRequest, gin.H{"message": "invalid user"})
+                return
+        }</span>
+
+        <span class="cov0" title="0">dir := configuration.Config.SecretsDir + "/" + username
+        removed := false
+        subtypes := []string{"web", "nethlink"}
+
+        for _, subtype := range subtypes </span><span class="cov0" title="0">{
+                filePath := dir + "/phone_island_api_key_" + subtype + ".json"
+                err := os.Remove(filePath)
+                if err == nil </span><span class="cov0" title="0">{
+                        removed = true
+                }</span>
+        }
+
+        <span class="cov0" title="0">if !removed </span><span class="cov0" title="0">{
+                c.JSON(http.StatusOK, gin.H{"removed": false, "message": "api key not found"})
+                return
+        }</span>
+
+        <span class="cov0" title="0">c.JSON(http.StatusOK, gin.H{"removed": true})</span>
+}
+
+// PhoneIslandTokenCheck checks if the user has a Phone Island API key
+func PhoneIslandTokenCheck(c *gin.Context) <span class="cov0" title="0">{
+        claims := jwt.ExtractClaims(c)
+        username, ok := claims["id"].(string)
+        if !ok || username == "" </span><span class="cov0" title="0">{
+                c.JSON(http.StatusBadRequest, gin.H{"message": "invalid user"})
+                return
+        }</span>
+
+        <span class="cov0" title="0">dir := configuration.Config.SecretsDir + "/" + username
+        exists := false
+        subtypes := []string{"web", "nethlink"}
+
+        for _, subtype := range subtypes </span><span class="cov0" title="0">{
+                filePath := dir + "/phone_island_api_key_" + subtype + ".json"
+                if _, err := os.Stat(filePath); err == nil </span><span class="cov0" title="0">{
+                        exists = true
+                        break</span>
+                } else<span class="cov0" title="0"> if !os.IsNotExist(err) </span><span class="cov0" title="0">{
+                        c.JSON(http.StatusInternalServerError, gin.H{"message": "failed to check api key"})
+                        return
+                }</span>
+        }
+
+        <span class="cov0" title="0">c.JSON(http.StatusOK, gin.H{"exists": exists})</span>
+}
+
+// AuthenticateAPIKey returns true if the API key matches the stored key for the user, false otherwise
+func AuthenticateAPIKey(username, apiKey string) bool <span class="cov0" title="0">{
+        dir := configuration.Config.SecretsDir + "/" + username
+
+        // Check if directory exists
+        if _, err := os.Stat(dir); os.IsNotExist(err) </span><span class="cov0" title="0">{
+                return false
+        }</span>
+
+        // Try to find the API key in any subtype file
+        <span class="cov0" title="0">subtypes := []string{"web", "nethlink"}
+        for _, subtype := range subtypes </span><span class="cov0" title="0">{
+                filePath := dir + "/phone_island_api_key_" + subtype + ".json"
+
+                data, err := os.ReadFile(filePath)
+                if err != nil </span><span class="cov0" title="0">{
+                        continue</span>
+                }
+
+                <span class="cov0" title="0">var keyData models.ApiKeyData
+                if err := json.Unmarshal(data, &amp;keyData); err != nil </span><span class="cov0" title="0">{
+                        continue</span>
+                }
+
+                <span class="cov0" title="0">if keyData.APIKey == apiKey </span><span class="cov0" title="0">{
+                        return true
+                }</span>
+        }
+
+        <span class="cov0" title="0">return false</span>
+}
+
+// Return the PhoneIslandToken from ApiKeyData given a JWT token string
+func GetPhoneIslandToken(jwtToken string, onlyToken bool) (string, error) <span class="cov0" title="0">{
+        // Parse the JWT token to extract the username (id)
+        token, err := jwtv4.Parse(jwtToken, func(token *jwtv4.Token) (interface{}, error) </span><span class="cov0" title="0">{
+                return []byte(configuration.Config.Secret_jwt), nil
+        }</span>)
+        <span class="cov0" title="0">if err != nil || !token.Valid </span><span class="cov0" title="0">{
+                return "", err
+        }</span>
+
+        <span class="cov0" title="0">claims, ok := token.Claims.(jwtv4.MapClaims)
+        if !ok </span><span class="cov0" title="0">{
+                return "", err
+        }</span>
+
+        <span class="cov0" title="0">username, ok := claims["id"].(string)
+        if !ok || username == "" </span><span class="cov0" title="0">{
+                return "", err
+        }</span>
+
+        <span class="cov0" title="0">dir := configuration.Config.SecretsDir + "/" + username
+
+        // Try to find the Phone Island token in any subtype file
+        subtypes := []string{"web", "nethlink"}
+        for _, subtype := range subtypes </span><span class="cov0" title="0">{
+                filePath := dir + "/phone_island_api_key_" + subtype + ".json"
+
+                data, err := os.ReadFile(filePath)
+                if err != nil </span><span class="cov0" title="0">{
+                        continue</span>
+                }
+
+                <span class="cov0" title="0">var keyData models.ApiKeyData
+                if err := json.Unmarshal(data, &amp;keyData); err != nil </span><span class="cov0" title="0">{
+                        continue</span>
+                }
+
+                // Check if this API key matches the JWT token
+                <span class="cov0" title="0">if keyData.APIKey == jwtToken </span><span class="cov0" title="0">{
+                        if onlyToken </span><span class="cov0" title="0">{
+                                return keyData.PhoneIslandToken, nil
+                        }</span> else<span class="cov0" title="0"> {
+                                completedToken := keyData.Username + ":" + keyData.PhoneIslandToken
+                                return completedToken, nil
+                        }</span>
+                }
+        }
+
+        <span class="cov0" title="0">return "", os.ErrNotExist</span>
+}
+
+// -------------------------------- private methods --------------------------------
+
+// generateAPIKey generates a JWT token for the user with a long expiration time
+func generateAPIKey(username string) (string, error) <span class="cov0" title="0">{
+        claims := jwtv4.MapClaims{
+                "id":  username,
+                "2fa": false,
+                "exp": time.Now().Add(100 * 365 * 24 * time.Hour).Unix(),
+                "iat": time.Now().Unix(),
+        }
+
+        token := jwtv4.NewWithClaims(jwtv4.SigningMethodHS256, claims)
+        tokenString, err := token.SignedString([]byte(configuration.Config.Secret_jwt))
+        if err != nil </span><span class="cov0" title="0">{
+                return "", err
+        }</span>
+        <span class="cov0" title="0">return tokenString, nil</span>
+}
+
+// getExistingPhoneIslandToken checks if a phone_island_token already exists for the user
+// in any subtype file and returns it. This prevents invalidating existing sessions.
+func getExistingPhoneIslandToken(username string) (string, error) <span class="cov0" title="0">{
+        dir := configuration.Config.SecretsDir + "/" + username
+        subtypes := []string{"web", "nethlink"}
+
+        for _, subtype := range subtypes </span><span class="cov0" title="0">{
+                filePath := dir + "/phone_island_api_key_" + subtype + ".json"
+
+                data, err := os.ReadFile(filePath)
+                if err != nil </span><span class="cov0" title="0">{
+                        continue</span>
+                }
+
+                <span class="cov0" title="0">var keyData models.ApiKeyData
+                if err := json.Unmarshal(data, &amp;keyData); err != nil </span><span class="cov0" title="0">{
+                        continue</span>
+                }
+
+                // Return the first valid phone_island_token we find
+                <span class="cov0" title="0">if keyData.PhoneIslandToken != "" </span><span class="cov0" title="0">{
+                        return keyData.PhoneIslandToken, nil
+                }</span>
+        }
+
+        <span class="cov0" title="0">return "", os.ErrNotExist</span>
+}
+
+// saveAPIKey saves the API key and Phone Island token to a file for the user
+func saveAPIKey(username string, apiKey string, phoneIslandToken string, subtype string) error <span class="cov0" title="0">{
+        dir := configuration.Config.SecretsDir + "/" + username
+        if _, err := os.Stat(dir); os.IsNotExist(err) </span><span class="cov0" title="0">{
+                if err := os.MkdirAll(dir, 0700); err != nil </span><span class="cov0" title="0">{
+                        return err
+                }</span>
+        }
+
+        <span class="cov0" title="0">data := models.ApiKeyData{
+                Username:         username,
+                APIKey:           apiKey,
+                PhoneIslandToken: phoneIslandToken,
+                Subtype:          subtype,
+        }
+
+        jsonBytes, err := json.Marshal(data)
+        if err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        <span class="cov0" title="0">filename := dir + "/phone_island_api_key_" + subtype + ".json"
+        f, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+        if err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+        <span class="cov0" title="0">defer f.Close()
+
+        _, err = f.Write(jsonBytes)
+        if err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        <span class="cov0" title="0">return nil</span>
+}
+</pre>
+		
+		<pre class="file" id="file7" style="display: none">/*
+ * Copyright (C) 2025 Nethesis S.r.l.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
+package methods
+
+import (
+        "bytes"
+        "encoding/json"
+        "net/http"
+        "time"
+
+        jwtv4 "github.com/golang-jwt/jwt/v4"
+
+        "github.com/nethesis/nethcti-middleware/configuration"
+        "github.com/nethesis/nethcti-middleware/logs"
+        "github.com/nethesis/nethcti-middleware/store"
+        "github.com/nethesis/nethcti-middleware/utils"
+)
+
+func DeleteExpiredTokens() <span class="cov0" title="0">{
+        // iterate through all user sessions
+        for username, userSession := range store.UserSessions </span><span class="cov0" title="0">{
+                // parse JWT token to check expiration
+                for _, tokenRaw := range userSession.JWTTokens </span><span class="cov0" title="0">{
+
+                        token, err := jwtv4.Parse(tokenRaw, func(token *jwtv4.Token) (interface{}, error) </span><span class="cov0" title="0">{
+                                return []byte(configuration.Config.Secret_jwt), nil
+                        }</span>)
+
+                        // check if token is valid and not expired
+                        <span class="cov0" title="0">isValid := false
+                        if err == nil &amp;&amp; token.Valid </span><span class="cov0" title="0">{
+                                if claims, ok := token.Claims.(jwtv4.MapClaims); ok </span><span class="cov0" title="0">{
+                                        if exp, ok := claims["exp"].(float64); ok </span><span class="cov0" title="0">{
+                                                // check if token is not expired
+                                                if time.Now().Unix() &lt; int64(exp) </span><span class="cov0" title="0">{
+                                                        isValid = true
+                                                }</span>
+                                        }
+                                }
+                        }
+
+                        // remove session if token is expired or invalid
+                        <span class="cov0" title="0">if !isValid </span><span class="cov0" title="0">{
+                                delete(store.UserSessions, username)
+                                logs.Log("[INFO][JWT] Removed expired session for user: " + username)
+                        }</span>
+                }
+        }
+
+        <span class="cov0" title="0">logs.Log("[INFO][JWT] Completed cleanup of expired user sessions")</span>
+}
+
+// VerifyUserPassword verifies a user's password against NetCTI server
+func VerifyUserPassword(username, password string) bool <span class="cov0" title="0">{
+        // verify password against NetCTI server
+        netCtiLoginURL := configuration.Config.V1Protocol + "://" + configuration.Config.V1ApiEndpoint + configuration.Config.V1ApiPath + "/authentication/login"
+        payload := map[string]string{"username": username, "password": password}
+        payloadBytes, _ := json.Marshal(payload)
+
+        req, err := http.NewRequest("POST", netCtiLoginURL, bytes.NewBuffer(payloadBytes))
+        if err != nil </span><span class="cov0" title="0">{
+                logs.Log("[AUTH] Failed to create HTTP request for password verification")
+                return false
+        }</span>
+        <span class="cov0" title="0">req.Header.Set("Content-Type", "application/json")
+
+        client := &amp;http.Client{Timeout: 10 * time.Second}
+        resp, err := client.Do(req)
+        if err != nil </span><span class="cov0" title="0">{
+                logs.Log("[AUTH] Failed to send password verification request to NetCTI")
+                return false
+        }</span>
+        <span class="cov0" title="0">defer resp.Body.Close()
+
+        var NethCTIToken string
+        isValidPassword := false
+
+        switch resp.StatusCode </span>{
+        case http.StatusUnauthorized:<span class="cov0" title="0">
+                wwwAuth := resp.Header.Get("Www-Authenticate")
+                if wwwAuth != "" </span><span class="cov0" title="0">{
+                        // Generate NethCTIToken using the www-authenticate header
+                        NethCTIToken = utils.GenerateLegacyToken(resp, username, password)
+                        if NethCTIToken != "" </span><span class="cov0" title="0">{
+                                // Verify the generated token by making a request to /user/me
+                                netCtiMeURL := configuration.Config.V1Protocol + "://" + configuration.Config.V1ApiEndpoint + configuration.Config.V1ApiPath + "/user/me"
+                                req, _ := http.NewRequest("GET", netCtiMeURL, nil)
+                                req.Header.Set("Authorization", NethCTIToken)
+
+                                resp, err = client.Do(req)
+                                if err == nil &amp;&amp; resp.StatusCode == http.StatusOK </span><span class="cov0" title="0">{
+                                        isValidPassword = true
+                                }</span>
+                                <span class="cov0" title="0">if resp != nil </span><span class="cov0" title="0">{
+                                        resp.Body.Close()
+                                }</span>
+                        }
+                }
+        case http.StatusOK:<span class="cov0" title="0">
+                isValidPassword = true</span>
+        }
+
+        <span class="cov0" title="0">return isValidPassword</span>
+}
+</pre>
+		
+		<pre class="file" id="file8" style="display: none">/*
+ * Copyright (C) 2025 Nethesis S.r.l.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
+package methods
+
+import (
+        "context"
+        "encoding/csv"
+        "fmt"
+        "io"
+        "net/http"
+        "strings"
+        "time"
+
+        jwt "github.com/appleboy/gin-jwt/v2"
+        "github.com/gin-gonic/gin"
+
+        "github.com/nethesis/nethcti-middleware/logs"
+        "github.com/nethesis/nethcti-middleware/store"
+)
+
+// PhonebookImportResponse represents the response from a CSV import
+type PhonebookImportResponse struct {
+        Message       string   `json:"message"`
+        TotalRows     int      `json:"total_rows"`
+        ImportedRows  int      `json:"imported_rows"`
+        FailedRows    int      `json:"failed_rows"`
+        SkippedRows   int      `json:"skipped_rows"`
+        ErrorMessages []string `json:"error_messages,omitempty"`
+}
+
+// ImportPhonebookCSV handles CSV phonebook imports.
+// Supports all phonebook fields: name (required), and optional: type, workemail, homeemail, workphone, homephone,
+// cellphone, fax, title, company, notes, homestreet, homepob, homecity, homeprovince, homepostalcode, homecountry,
+// workstreet, workpob, workcity, workprovince, workpostalcode, workcountry, url, extension, speeddial_num.
+// The handler requires JWT authentication and associates imports with the authenticated user.
+func ImportPhonebookCSV(c *gin.Context) <span class="cov0" title="0">{
+        // Extract user from JWT claims
+        claims := jwt.ExtractClaims(c)
+        username, ok := claims["id"].(string)
+        if !ok || username == "" </span><span class="cov0" title="0">{
+                c.JSON(http.StatusUnauthorized, gin.H{"message": "invalid user in token"})
+                return
+        }</span>
+
+        // Get the uploaded file
+        <span class="cov0" title="0">file, _, err := c.Request.FormFile("file")
+        if err != nil </span><span class="cov0" title="0">{
+                c.JSON(http.StatusBadRequest, gin.H{"message": "file required", "error": err.Error()})
+                return
+        }</span>
+        <span class="cov0" title="0">defer file.Close()
+
+        // Parse CSV
+        reader := csv.NewReader(file)
+
+        // Read header
+        header, err := reader.Read()
+        if err != nil </span><span class="cov0" title="0">{
+                logs.Log("[PHONEBOOK] CSV header read error: " + err.Error())
+                c.JSON(http.StatusBadRequest, gin.H{"message": "invalid CSV file", "error": err.Error()})
+                return
+        }</span>
+
+        // Validate header format: must have at least "name"
+        <span class="cov0" title="0">if len(header) &lt; 1 </span><span class="cov0" title="0">{
+                c.JSON(http.StatusBadRequest, gin.H{
+                        "message": "CSV must have at least 'name' column",
+                })
+                return
+        }</span>
+
+        // Build column index map (case-insensitive)
+        <span class="cov0" title="0">columnIndices := make(map[string]int)
+        for i, col := range header </span><span class="cov0" title="0">{
+                colLower := strings.ToLower(strings.TrimSpace(col))
+                columnIndices[colLower] = i
+        }</span>
+
+        // Validate required "name" column
+        <span class="cov0" title="0">if _, hasName := columnIndices["name"]; !hasName </span><span class="cov0" title="0">{
+                c.JSON(http.StatusBadRequest, gin.H{
+                        "message": "CSV must have 'name' column",
+                })
+                return
+        }</span>
+
+        // Parse and import records
+        <span class="cov0" title="0">ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+        defer cancel()
+
+        var entries []*store.PhonebookEntry
+        var errorMessages []string
+        totalRows := 0
+        skippedRows := 0
+
+        for </span><span class="cov0" title="0">{
+                record, err := reader.Read()
+                if err == io.EOF </span><span class="cov0" title="0">{
+                        break</span>
+                }
+                <span class="cov0" title="0">if err != nil </span><span class="cov0" title="0">{
+                        logs.Log("[PHONEBOOK] CSV read error: " + err.Error())
+                        errorMessages = append(errorMessages, fmt.Sprintf("Row %d: %s", totalRows+2, err.Error()))
+                        continue</span>
+                }
+
+                <span class="cov0" title="0">totalRows++
+
+                // Helper function to safely extract field value from record
+                getField := func(fieldName string) string </span><span class="cov0" title="0">{
+                        if idx, ok := columnIndices[fieldName]; ok &amp;&amp; idx &lt; len(record) </span><span class="cov0" title="0">{
+                                return strings.TrimSpace(record[idx])
+                        }</span>
+                        <span class="cov0" title="0">return ""</span>
+                }
+
+                // Extract and validate name (required)
+                <span class="cov0" title="0">name := getField("name")
+                if name == "" </span><span class="cov0" title="0">{
+                        skippedRows++
+                        errorMessages = append(errorMessages, fmt.Sprintf("Row %d: name is empty", totalRows+1))
+                        continue</span>
+                }
+
+                // Extract type and validate (must be 'private' or 'public', default to 'private')
+                <span class="cov0" title="0">entryType := getField("type")
+                if entryType == "" </span><span class="cov0" title="0">{
+                        entryType = "private"
+                }</span> else<span class="cov0" title="0"> {
+                        entryType = strings.ToLower(entryType)
+                        if entryType != "private" &amp;&amp; entryType != "public" </span><span class="cov0" title="0">{
+                                skippedRows++
+                                errorMessages = append(errorMessages, fmt.Sprintf("Row %d: invalid type '%s' (must be 'private' or 'public')", totalRows+1, getField("type")))
+                                continue</span>
+                        }
+                }
+
+                // Extract all available fields
+                <span class="cov0" title="0">entry := &amp;store.PhonebookEntry{
+                        OwnerID:        username,
+                        Name:           name,
+                        Type:           entryType,
+                        WorkEmail:      getField("workemail"),
+                        HomeEmail:      getField("homeemail"),
+                        WorkPhone:      getField("workphone"),
+                        HomePhone:      getField("homephone"),
+                        CellPhone:      getField("cellphone"),
+                        Fax:            getField("fax"),
+                        Title:          getField("title"),
+                        Company:        getField("company"),
+                        Notes:          getField("notes"),
+                        HomeStreet:     getField("homestreet"),
+                        HomePOB:        getField("homepob"),
+                        HomeCity:       getField("homecity"),
+                        HomeProvince:   getField("homeprovince"),
+                        HomePostalCode: getField("homepostalcode"),
+                        HomeCountry:    getField("homecountry"),
+                        WorkStreet:     getField("workstreet"),
+                        WorkPOB:        getField("workpob"),
+                        WorkCity:       getField("workcity"),
+                        WorkProvince:   getField("workprovince"),
+                        WorkPostalCode: getField("workpostalcode"),
+                        WorkCountry:    getField("workcountry"),
+                        URL:            getField("url"),
+                        Extension:      getField("extension"),
+                        SpeedDialNum:   getField("speeddial_num"),
+                }
+
+                entries = append(entries, entry)</span>
+        }
+
+        // Perform batch import
+        <span class="cov0" title="0">successful, failed, err := store.BatchInsertPhonebookEntries(ctx, entries)
+        if err != nil </span><span class="cov0" title="0">{
+                logs.Log("[PHONEBOOK] Batch import error: " + err.Error())
+                errorMessages = append(errorMessages, "Database error: "+err.Error())
+        }</span>
+
+        <span class="cov0" title="0">response := PhonebookImportResponse{
+                Message:       "phonebook import completed",
+                TotalRows:     totalRows,
+                ImportedRows:  successful,
+                FailedRows:    failed,
+                SkippedRows:   skippedRows,
+                ErrorMessages: errorMessages,
+        }
+
+        c.JSON(http.StatusOK, response)</span>
+}
+</pre>
+		
+		<pre class="file" id="file9" style="display: none">/*
+ * Copyright (C) 2025 Nethesis S.r.l.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
+package methods
+
+import (
+        "io"
+        "net/http"
+        "strings"
+        "time"
+
+        jwt "github.com/appleboy/gin-jwt/v2"
+        "github.com/fatih/structs"
+        "github.com/gin-gonic/gin"
+
+        "github.com/nethesis/nethcti-middleware/configuration"
+        "github.com/nethesis/nethcti-middleware/logs"
+        "github.com/nethesis/nethcti-middleware/models"
+        "github.com/nethesis/nethcti-middleware/store"
+)
+
+// ProxyV1Request forwards requests to the legacy V1 API
+func ProxyV1Request(c *gin.Context, path string) <span class="cov0" title="0">{
+        // Check if V1 endpoint is configured
+        if configuration.Config.V1ApiEndpoint == "" </span><span class="cov0" title="0">{
+                c.JSON(http.StatusServiceUnavailable, gin.H{
+                        "code":    503,
+                        "message": "V1 API endpoint not configured",
+                })
+                return
+        }</span>
+
+        // Extract path from the original request
+        <span class="cov0" title="0">if path == "" </span><span class="cov0" title="0">{
+                path = "/"
+        }</span>
+
+        // Build the forwarding URL
+        <span class="cov0" title="0">url := configuration.Config.V1Protocol + "://" + configuration.Config.V1ApiEndpoint + configuration.Config.V1ApiPath + path
+
+        // Create a new request
+        req, err := http.NewRequest(c.Request.Method, url, c.Request.Body)
+        if err != nil </span><span class="cov0" title="0">{
+                logs.Log("failed to create proxy request")
+                c.JSON(http.StatusInternalServerError, gin.H{
+                        "code":    500,
+                        "message": "Failed to forward request",
+                })
+                return
+        }</span>
+
+        // Copy headers from the original request
+        <span class="cov0" title="0">for name, values := range c.Request.Header </span><span class="cov0" title="0">{
+                for _, value := range values </span><span class="cov0" title="0">{
+                        req.Header.Add(name, value)
+
+                        // Set Host header with X-Forwarded-Host only for Tancredi routes
+                        // This allows nethcti-server to proxy correctly to Tancredi
+                        // This is a workaround, remove when Tancredi is routed internally in
+                        // middleware
+                        if strings.HasPrefix(path, "/tancredi") &amp;&amp; name == "X-Forwarded-Host" </span><span class="cov0" title="0">{
+                                req.Host = value
+                        }</span>
+                }
+        }
+
+        // Check if this is a FreePBX API call (has Authorization-User header)
+        <span class="cov0" title="0">authorizationUser := c.GetHeader("Authorization-User")
+        isFreePBXCall := authorizationUser != ""
+
+        if isFreePBXCall </span><span class="cov0" title="0">{
+                // For FreePBX calls, don't add Authorization header - the Authorization-User header is enough
+                logs.Log("[INFO][PROXY] FreePBX API call for user: " + authorizationUser)
+        }</span> else<span class="cov0" title="0"> {
+                // Regular JWT-based authentication flow
+                JWTToken := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
+                if JWTToken == "" </span><span class="cov0" title="0">{
+                        c.JSON(http.StatusUnauthorized, gin.H{
+                                "code":    401,
+                                "message": "Authorization token not provided",
+                        })
+                        return
+                }</span>
+
+                // Extract claims from the JWT token
+                <span class="cov0" title="0">claims := jwt.ExtractClaims(c)
+                username := claims["id"].(string)
+                nethCTIToken := ""
+
+                // Check if the request is authenticated with an API key
+                if AuthenticateAPIKey(username, JWTToken) </span><span class="cov0" title="0">{
+                        // If authenticated with API key, retrieve the Phone Island token
+                        nethCTIToken, err = GetPhoneIslandToken(JWTToken, false)
+                        if err != nil </span><span class="cov0" title="0">{
+                                logs.Log("[ERROR][AUTH] Failed to retrieve Phone Island token for API key")
+                                c.JSON(http.StatusUnauthorized, gin.H{
+                                        "code":    401,
+                                        "message": "Failed to retrieve Phone Island token",
+                                })
+                                return
+                        }</span>
+                } else<span class="cov0" title="0"> {
+                        // If not authenticated with API key, use the NethCTI token from the user session
+                        userSession := store.UserSessions[username]
+                        nethCTIToken = userSession.NethCTIToken
+                }</span>
+
+                // Add the NetCTI token to the request headers
+                <span class="cov0" title="0">req.Header.Set("Authorization", nethCTIToken)</span>
+        }
+
+        // Copy query parameters
+        <span class="cov0" title="0">req.URL.RawQuery = c.Request.URL.RawQuery
+
+        // Create HTTP client with timeout
+        client := &amp;http.Client{
+                Timeout: time.Second * 30,
+        }
+
+        // Forward the request
+        resp, err := client.Do(req)
+        if err != nil </span><span class="cov0" title="0">{
+                logs.Log("failed to forward request to V1 API")
+                c.JSON(http.StatusBadGateway, gin.H{
+                        "code":    502,
+                        "message": "Failed to reach V1 API",
+                })
+                return
+        }</span>
+        <span class="cov0" title="0">defer resp.Body.Close()
+
+        // Copy response headers
+        for name, values := range resp.Header </span><span class="cov0" title="0">{
+                for _, value := range values </span><span class="cov0" title="0">{
+                        c.Header(name, value)
+                }</span>
+        }
+
+        // Check if V1 API returned 404 and provide a more complete response
+        <span class="cov0" title="0">if resp.StatusCode == http.StatusNotFound </span><span class="cov0" title="0">{
+                c.JSON(http.StatusNotFound, structs.Map(models.StatusNotFound{
+                        Code:    404,
+                        Message: "API not found",
+                        Data:    nil,
+                }))
+                return
+        }</span>
+
+        // Set response status code
+        <span class="cov0" title="0">c.Status(resp.StatusCode)
+
+        // Copy response body
+        body, err := io.ReadAll(resp.Body)
+        if err != nil </span><span class="cov0" title="0">{
+                logs.Log("failed to read V1 API response")
+                c.JSON(http.StatusInternalServerError, gin.H{
+                        "code":    500,
+                        "message": "Failed to process V1 API response",
+                })
+                return
+        }</span>
+
+        // Write response body
+        <span class="cov0" title="0">c.Writer.Write(body)</span>
+}
+</pre>
+		
+		<pre class="file" id="file10" style="display: none">/*
+ * Copyright (C) 2025 Nethesis S.r.l.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
+package methods
+
+import (
+        "encoding/json"
+        "fmt"
+        "io"
+        "net/http"
+        "time"
+
+        "github.com/nethesis/nethcti-middleware/configuration"
+        "github.com/nethesis/nethcti-middleware/logs"
+)
+
+// Extension represents a phone extension
+type Extension struct {
+        ID          string          `json:"id"`
+        Type        string          `json:"type"`
+        Secret      string          `json:"secret"`
+        Username    string          `json:"username"`
+        Description string          `json:"description"`
+        Actions     map[string]bool `json:"actions"`
+}
+
+// Endpoints represents all endpoint types
+type Endpoints struct {
+        Email         []interface{} `json:"email"`
+        Jabber        []interface{} `json:"jabber"`
+        Extension     []Extension   `json:"extension"`
+        Cellphone     []interface{} `json:"cellphone"`
+        Voicemail     []interface{} `json:"voicemail"`
+        MainExtension []Extension   `json:"mainextension"`
+}
+
+// DefaultDevice represents the default device
+type DefaultDevice struct {
+        ID          string          `json:"id"`
+        Type        string          `json:"type"`
+        Secret      string          `json:"secret"`
+        Username    string          `json:"username"`
+        Description string          `json:"description"`
+        Actions     map[string]bool `json:"actions"`
+}
+
+// Profile represents user profile with permissions
+type Profile struct {
+        ID                        string                 `json:"id"`
+        Name                      string                 `json:"name"`
+        MacroPermissions          map[string]interface{} `json:"macro_permissions"`
+        OutboundRoutesPermissions []interface{}          `json:"outbound_routes_permissions"`
+}
+
+// Settings represents user settings
+type Settings struct {
+        DesktopNotifications bool   `json:"desktop_notifications"`
+        OpenCcard            string `json:"open_ccard"`
+        ChatNotifications    bool   `json:"chat_notifications"`
+        DefaultExtension     string `json:"default_extension"`
+}
+
+// UserInfo represents complete user information from the API
+type UserInfo struct {
+        Name                  string        `json:"name"`
+        Username              string        `json:"username"`
+        MainPresence          string        `json:"mainPresence"`
+        Presence              string        `json:"presence"`
+        Endpoints             Endpoints     `json:"endpoints"`
+        PresenceOnBusy        string        `json:"presenceOnBusy"`
+        PresenceOnUnavailable string        `json:"presenceOnUnavailable"`
+        RecallOnBusy          string        `json:"recallOnBusy"`
+        Profile               Profile       `json:"profile"`
+        DefaultDevice         DefaultDevice `json:"default_device"`
+        LKHash                string        `json:"lkhash"`
+        ProxyFQDN             string        `json:"proxy_fqdn"`
+        Settings              Settings      `json:"settings"`
+
+        // Computed fields for easier access
+        DisplayName  string   `json:"-"`
+        PhoneNumbers []string `json:"-"`
+}
+
+// GetUserInfo retrieves user information from V1 API using the provided token
+func GetUserInfo(nethCTIToken string) (*UserInfo, error) <span class="cov0" title="0">{
+        // Build the URL for user info endpoint
+        url := fmt.Sprintf("%s://%s%s/user/me",
+                configuration.Config.V1Protocol,
+                configuration.Config.V1ApiEndpoint,
+                configuration.Config.V1ApiPath)
+
+        // Create the request
+        req, err := http.NewRequest("GET", url, nil)
+        if err != nil </span><span class="cov0" title="0">{
+                logs.Log("[ERROR][USER] Failed to create user info request: " + err.Error())
+                return nil, err
+        }</span>
+
+        // Add authorization header
+        <span class="cov0" title="0">req.Header.Set("Authorization", nethCTIToken)
+        req.Header.Set("Content-Type", "application/json")
+
+        // Create HTTP client with timeout
+        client := &amp;http.Client{
+                Timeout: time.Second * 10,
+        }
+
+        // Make the request
+        resp, err := client.Do(req)
+        if err != nil </span><span class="cov0" title="0">{
+                logs.Log("[ERROR][USER] Failed to get user info: " + err.Error())
+                return nil, err
+        }</span>
+        <span class="cov0" title="0">defer resp.Body.Close()
+
+        // Check if request was successful
+        if resp.StatusCode != http.StatusOK </span><span class="cov0" title="0">{
+                logs.Log(fmt.Sprintf("[ERROR][USER] User info request failed with status: %d", resp.StatusCode))
+                return nil, fmt.Errorf("user info request failed with status: %d", resp.StatusCode)
+        }</span>
+
+        // Read the response body
+        <span class="cov0" title="0">body, err := io.ReadAll(resp.Body)
+        if err != nil </span><span class="cov0" title="0">{
+                logs.Log("[ERROR][USER] Failed to read user info response: " + err.Error())
+                return nil, err
+        }</span>
+
+        // Parse the JSON response
+        <span class="cov0" title="0">var userInfo UserInfo
+        err = json.Unmarshal(body, &amp;userInfo)
+        if err != nil </span><span class="cov0" title="0">{
+                logs.Log("[ERROR][USER] Failed to parse user info JSON: " + err.Error())
+                return nil, err
+        }</span>
+
+        // Populate computed fields
+        <span class="cov0" title="0">userInfo.DisplayName = userInfo.Name
+        userInfo.PhoneNumbers = []string{}
+
+        // Extract all extension IDs from endpoints.extension
+        for _, extension := range userInfo.Endpoints.Extension </span><span class="cov0" title="0">{
+                userInfo.PhoneNumbers = append(userInfo.PhoneNumbers, extension.ID)
+        }</span>
+
+        // Also extract main extension IDs if different
+        <span class="cov0" title="0">for _, mainExt := range userInfo.Endpoints.MainExtension </span><span class="cov0" title="0">{
+                // Only add if not already in the list
+                found := false
+                for _, existing := range userInfo.PhoneNumbers </span><span class="cov0" title="0">{
+                        if existing == mainExt.ID </span><span class="cov0" title="0">{
+                                found = true
+                                break</span>
+                        }
+                }
+                <span class="cov0" title="0">if !found </span><span class="cov0" title="0">{
+                        userInfo.PhoneNumbers = append(userInfo.PhoneNumbers, mainExt.ID)
+                }</span>
+        }
+
+        <span class="cov0" title="0">logs.Log(fmt.Sprintf("[INFO][USER] Retrieved user info for: %s (%s) with extensions: %v",
+                userInfo.Username, userInfo.DisplayName, userInfo.PhoneNumbers))
+
+        return &amp;userInfo, nil</span>
+}
+</pre>
+		
+		<pre class="file" id="file11" style="display: none">/*
+ * Copyright (C) 2025 Nethesis S.r.l.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
+package middleware
+
+import (
+        "bytes"
+        "encoding/json"
+        "fmt"
+        "io"
+        "net/http"
+        "strings"
+        "time"
+
+        "github.com/fatih/structs"
+        "github.com/gin-gonic/gin"
+        "github.com/nqd/flat"
+
+        jwt "github.com/appleboy/gin-jwt/v2"
+
+        "github.com/nethesis/nethcti-middleware/configuration"
+        "github.com/nethesis/nethcti-middleware/logs"
+        "github.com/nethesis/nethcti-middleware/methods"
+        "github.com/nethesis/nethcti-middleware/models"
+        "github.com/nethesis/nethcti-middleware/store"
+        "github.com/nethesis/nethcti-middleware/utils"
+)
+
+type login struct {
+        Username string `form:"username" json:"username" binding:"required"`
+        Password string `form:"password" json:"password" binding:"required"`
+}
+
+var jwtMiddleware *jwt.GinJWTMiddleware
+var identityKey = "id"
+
+func InstanceJWT() *jwt.GinJWTMiddleware <span class="cov0" title="0">{
+        if jwtMiddleware == nil </span><span class="cov0" title="0">{
+                jwtMiddleware = InitJWT()
+        }</span>
+        <span class="cov0" title="0">return jwtMiddleware</span>
+}
+
+func InitJWT() *jwt.GinJWTMiddleware <span class="cov0" title="0">{
+        // define jwt middleware
+        authMiddleware, errDefine := jwt.New(&amp;jwt.GinJWTMiddleware{
+                Realm:       "nethcti",
+                Key:         []byte(configuration.Config.Secret_jwt),
+                Timeout:     time.Hour * 24 * 14, // 2 weeks
+                IdentityKey: identityKey,
+                Authenticator: func(c *gin.Context) (interface{}, error) </span><span class="cov0" title="0">{
+                        // Ensure jwtMiddleware is initialized before using it
+                        if jwtMiddleware == nil </span><span class="cov0" title="0">{
+                                jwtMiddleware = InitJWT()
+                        }</span>
+
+                        // check login credentials exists
+                        <span class="cov0" title="0">var loginVals login
+                        if err := c.ShouldBind(&amp;loginVals); err != nil </span><span class="cov0" title="0">{
+                                logs.Log("[AUTH] Missing login values")
+                                return "", jwt.ErrMissingLoginValues
+                        }</span>
+
+                        // set login credentials
+                        <span class="cov0" title="0">username := loginVals.Username
+                        password := loginVals.Password
+
+                        // Perform login on the old NetCTI server
+                        netCtiLoginURL := configuration.Config.V1Protocol + "://" + configuration.Config.V1ApiEndpoint + configuration.Config.V1ApiPath + "/authentication/login"
+                        payload := map[string]string{"username": username, "password": password}
+                        payloadBytes, _ := json.Marshal(payload)
+
+                        req, err := http.NewRequest("POST", netCtiLoginURL, bytes.NewBuffer(payloadBytes))
+                        if err != nil </span><span class="cov0" title="0">{
+                                logs.Log("[AUTH] Failed to create HTTP request")
+                                return nil, err
+                        }</span>
+                        <span class="cov0" title="0">req.Header.Set("Content-Type", "application/json")
+
+                        client := &amp;http.Client{}
+                        resp, err := client.Do(req)
+                        if err != nil </span><span class="cov0" title="0">{
+                                logs.Log("[AUTH] Failed to send request to NetCTI")
+                                return nil, jwt.ErrFailedAuthentication
+                        }</span>
+                        <span class="cov0" title="0">defer resp.Body.Close()
+
+                        var NethCTIToken string
+
+                        if resp.StatusCode == http.StatusUnauthorized </span><span class="cov0" title="0">{
+                                wwwAuth := resp.Header.Get("Www-Authenticate")
+                                if wwwAuth != "" </span><span class="cov0" title="0">{
+                                        // Generate NethCTIToken using the www-authenticate header
+                                        NethCTIToken = utils.GenerateLegacyToken(resp, username, password)
+                                        if NethCTIToken == "" </span><span class="cov0" title="0">{
+                                                logs.Log("[AUTH] Failed to generate NethCTIToken")
+                                                return nil, jwt.ErrFailedAuthentication
+                                        }</span>
+
+                                        // Retry the request with the new Authorization header
+                                        <span class="cov0" title="0">netCtiMeURL := configuration.Config.V1Protocol + "://" + configuration.Config.V1ApiEndpoint + configuration.Config.V1ApiPath + "/user/me"
+                                        req, _ := http.NewRequest("GET", netCtiMeURL, nil) // Use GET for /user/me
+                                        req.Header.Set("Authorization", NethCTIToken)
+                                        // print request headers
+                                        resp, err = client.Do(req)
+                                        if err != nil </span><span class="cov0" title="0">{
+                                                logs.Log("[AUTH] Failed to retry request to NetCTI")
+                                                return nil, jwt.ErrFailedAuthentication
+                                        }</span>
+                                        <span class="cov0" title="0">defer resp.Body.Close()</span>
+                                }
+                        }
+
+                        <span class="cov0" title="0">if resp.StatusCode != http.StatusOK </span><span class="cov0" title="0">{
+                                logs.Log("[ERROR][AUTH] Authentication failed for user " + username + " with status: " + resp.Status)
+                                return nil, jwt.ErrFailedAuthentication
+                        }</span>
+
+                        // Login is successful. Middleware returns a JWT.
+                        // Check if user session already exists (multi-session support)
+                        <span class="cov0" title="0">existingSession, sessionExists := store.UserSessions[username]
+
+                        if sessionExists </span><span class="cov0" title="0">{
+                                // Reuse existing session (keep existing tokens, update NethCTIToken)
+                                // Note: New login does NOT inherit OTP_Verified status - each JWT token will be verified independently
+                                existingSession.NethCTIToken = NethCTIToken
+                                logs.Log("[INFO][AUTH] authentication success for user " + username + " (reusing existing session with " + fmt.Sprint(len(existingSession.JWTTokens)) + " existing tokens)")
+                                return existingSession, nil
+                        }</span> else<span class="cov0" title="0"> {
+                                // Create a new user session object
+                                store.UserSessions[username] = &amp;models.UserSession{
+                                        Username:     username,
+                                        JWTTokens:    nil,
+                                        NethCTIToken: NethCTIToken,
+                                        OTP_Verified: false,
+                                }
+                                logs.Log("[INFO][AUTH] authentication success for user " + username + " (new session created)")
+                                return store.UserSessions[username], nil
+                        }</span>
+                },
+                PayloadFunc: func(data interface{}) jwt.MapClaims <span class="cov0" title="0">{
+                        // read current user
+                        if userSession, ok := data.(*models.UserSession); ok </span><span class="cov0" title="0">{
+                                // check if user require 2fa
+                                status, _ := methods.GetUserStatus(userSession.Username)
+
+                                // create claims map
+                                // Note: otp_verified is always false on initial login
+                                // It will be set to true only after OTP verification via regenerateUserToken
+                                return jwt.MapClaims{
+                                        identityKey:    userSession.Username,
+                                        "2fa":          status == "1",
+                                        "otp_verified": false,
+                                }
+                        }</span>
+
+                        // return claims map
+                        <span class="cov0" title="0">return jwt.MapClaims{}</span>
+                },
+                IdentityHandler: func(c *gin.Context) interface{} <span class="cov0" title="0">{
+                        // handle identity and extract claims
+                        claims := jwt.ExtractClaims(c)
+
+                        username := claims[identityKey].(string)
+
+                        // return username
+                        return username
+                }</span>,
+                Authorizator: func(data interface{}, c *gin.Context) bool <span class="cov0" title="0">{
+                        // Extract claims and session info
+                        claims := jwt.ExtractClaims(c)
+                        username := claims[identityKey].(string)
+
+                        reqMethod := c.Request.Method
+                        reqURI := c.Request.RequestURI
+                        JWTToken := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
+                        userSession := store.UserSessions[username]
+
+                        // Check if session exists and token is valid
+                        if userSession == nil || !utils.Contains(JWTToken, userSession.JWTTokens) </span><span class="cov0" title="0">{
+                                // Try API key authentication as fallback
+                                if !methods.AuthenticateAPIKey(username, JWTToken) </span><span class="cov0" title="0">{
+                                        logs.Log("[ERROR][AUTH] authorization failed for user " + username + " (session not found or invalid token). " + reqMethod + " " + reqURI)
+                                        return false
+                                }</span>
+                                // API key auth succeeded, skip 2FA checks
+                                <span class="cov0" title="0">logs.Log("[INFO][AUTH] API key authentication success for user " + username)
+                                return true</span>
+                        }
+
+                        <span class="cov0" title="0">isOTPVerifyEndpoint := strings.Contains(c.Request.RequestURI, "/verify-otp")
+
+                        // Check 2FA requirement (only for JWT token authentication, not API key)
+                        // Use the otp_verified claim from the JWT token (not from session)
+                        if !isOTPVerifyEndpoint </span><span class="cov0" title="0">{
+                                has2FA, has2FAExists := claims["2fa"].(bool)
+                                otpVerified, otpVerifiedExists := claims["otp_verified"].(bool)
+
+                                // If 2FA is enabled but OTP claim doesn't exist or is false, deny access
+                                if has2FAExists &amp;&amp; has2FA &amp;&amp; (!otpVerifiedExists || !otpVerified) </span><span class="cov0" title="0">{
+                                        logs.Log("[ERROR][AUTH] authorization failed for user " + username + " (2FA required but OTP not verified in token). " + reqMethod + " " + reqURI)
+                                        return false
+                                }</span>
+                        }
+
+                        <span class="cov0" title="0">reqBody := ""
+                        if reqMethod == "POST" || reqMethod == "PUT" </span><span class="cov0" title="0">{
+                                // extract body
+                                var buf bytes.Buffer
+                                tee := io.TeeReader(c.Request.Body, &amp;buf)
+                                body, _ := io.ReadAll(tee)
+                                c.Request.Body = io.NopCloser(&amp;buf)
+
+                                // convert to map and flat it
+                                var jsonDyn map[string]interface{}
+                                json.Unmarshal(body, &amp;jsonDyn)
+                                in, _ := flat.Flatten(jsonDyn, nil)
+
+                                // search for sensitve data, in sensitive list
+                                for k := range in </span><span class="cov0" title="0">{
+                                        for _, s := range configuration.Config.SensitiveList </span><span class="cov0" title="0">{
+                                                if strings.Contains(strings.ToLower(k), strings.ToLower(s)) </span><span class="cov0" title="0">{
+                                                        in[k] = "XXX"
+                                                }</span>
+                                        }
+                                }
+
+                                // unflat the map
+                                <span class="cov0" title="0">out, _ := flat.Unflatten(in, nil)
+
+                                // convert to json string
+                                jsonOut, _ := json.Marshal(out)
+
+                                // compose string
+                                reqBody = string(jsonOut)</span>
+                        }
+
+                        <span class="cov0" title="0">logs.Log("[INFO][AUTH] authorization success for user " + claims["id"].(string) + ". " + reqMethod + " " + reqURI + " " + reqBody)
+
+                        return true</span>
+                },
+                LoginResponse: func(c *gin.Context, code int, token string, t time.Time) <span class="cov0" title="0">{
+                        // Extract the JWT token from the Authorization header
+                        tokenObj, _ := InstanceJWT().ParseTokenString(token)
+                        claims := jwt.ExtractClaimsFromToken(tokenObj)
+
+                        // Store the JWT token in the UserSession
+                        store.UserSessions[claims[identityKey].(string)].JWTTokens = append(store.UserSessions[claims[identityKey].(string)].JWTTokens, token)
+                        c.JSON(200, gin.H{"code": 200, "expire": t, "token": token})
+                }</span>,
+                LogoutResponse: func(c *gin.Context, code int) <span class="cov0" title="0">{
+                        // Extract the JWT token from the Authorization header
+                        JWTToken := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
+                        tokenObj, _ := InstanceJWT().ParseTokenString(JWTToken)
+                        claims := jwt.ExtractClaimsFromToken(tokenObj)
+                        username := claims[identityKey].(string)
+
+                        userSession := store.UserSessions[username]
+
+                        if userSession != nil </span><span class="cov0" title="0">{
+                                // Remove only this specific token from the user's token array
+                                if utils.Contains(JWTToken, userSession.JWTTokens) </span><span class="cov0" title="0">{
+                                        userSession.JWTTokens = utils.Remove(JWTToken, userSession.JWTTokens)
+                                        logs.Log("[INFO][AUTH] Logged out token for user " + username)
+
+                                        // If no more tokens, delete the entire session
+                                        if len(userSession.JWTTokens) == 0 </span><span class="cov0" title="0">{
+                                                delete(store.UserSessions, username)
+                                                logs.Log("[INFO][AUTH] Deleted session for user " + username + " (no more active tokens)")
+                                        }</span>
+                                }
+                        }
+
+                        <span class="cov0" title="0">c.JSON(200, gin.H{"code": 200})</span>
+                },
+                Unauthorized: func(c *gin.Context, code int, message string) <span class="cov0" title="0">{
+                        c.JSON(code, structs.Map(models.StatusUnauthorized{
+                                Code:    code,
+                                Message: message,
+                                Data:    nil,
+                        }))
+                }</span>,
+                TokenLookup:   "header: Authorization, query: jwt",
+                TokenHeadName: "Bearer",
+                TimeFunc:      time.Now,
+        })
+
+        // check middleware errors
+        <span class="cov0" title="0">if errDefine != nil </span><span class="cov0" title="0">{
+                logs.Log("[AUTH] middleware definition error")
+        }</span>
+
+        // init middleware
+        <span class="cov0" title="0">errInit := authMiddleware.MiddlewareInit()
+
+        // check error on initialization
+        if errInit != nil </span><span class="cov0" title="0">{
+                logs.Log("[AUTH] middleware initialization error")
+        }</span>
+
+        // return object
+        <span class="cov0" title="0">return authMiddleware</span>
+}
+</pre>
+		
+		<pre class="file" id="file12" style="display: none">/*
+ * Copyright (C) 2025 Nethesis S.r.l.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
+package mqtt
+
+import (
+        "fmt"
+        "time"
+
+        mqtt "github.com/eclipse/paho.mqtt.golang"
+        "github.com/nethesis/nethcti-middleware/configuration"
+        "github.com/nethesis/nethcti-middleware/logs"
+)
+
+// MessageHandler represents a generic handler for MQTT messages
+type MessageHandler func(topic string, payload []byte) interface{}
+
+// WebSocketMessage represents the generic message sent to WebSocket clients
+type WebSocketMessage struct {
+        Type string      `json:"type"`
+        Data interface{} `json:"data"`
+}
+
+var (
+        client           mqtt.Client
+        websocketChannel chan WebSocketMessage
+        handlers         map[string]MessageHandler
+)
+
+// Init initializes the MQTT client with basic connection
+func Init() chan WebSocketMessage <span class="cov0" title="0">{
+        if !configuration.Config.MQTTEnabled </span><span class="cov0" title="0">{
+                logs.Log("[INFO][MQTT] MQTT disabled - missing credentials")
+                return nil
+        }</span>
+
+        <span class="cov0" title="0">websocketChannel = make(chan WebSocketMessage, 100)
+        handlers = make(map[string]MessageHandler)
+
+        // MQTT client options
+        opts := mqtt.NewClientOptions()
+        opts.AddBroker(fmt.Sprintf("tcp://%s:%s", configuration.Config.MQTTHost, configuration.Config.MQTTPort))
+        opts.SetClientID("nethcti-middleware")
+        opts.SetUsername(configuration.Config.MQTTUsername)
+        opts.SetPassword(configuration.Config.MQTTPassword)
+        opts.SetAutoReconnect(true)
+        opts.SetConnectRetry(true)
+        opts.SetConnectRetryInterval(5 * time.Second)
+
+        // Connection lost handler
+        opts.SetConnectionLostHandler(func(client mqtt.Client, err error) </span><span class="cov0" title="0">{
+                logs.Log(fmt.Sprintf("[WARNING][MQTT] Connection lost: %v", err))
+        }</span>)
+
+        // On connect handler
+        <span class="cov0" title="0">opts.SetOnConnectHandler(func(client mqtt.Client) </span><span class="cov0" title="0">{
+                logs.Log("[INFO][MQTT] Connected to MQTT broker")
+
+                // Re-subscribe to all registered topics after reconnection
+                for topic := range handlers </span><span class="cov0" title="0">{
+                        subscribeToTopic(topic)
+                }</span>
+        })
+
+        // Create and start client
+        <span class="cov0" title="0">client = mqtt.NewClient(opts)
+
+        // Start connection in non-blocking mode
+        // The client will retry automatically in background thanks to SetAutoReconnect and SetConnectRetry
+        token := client.Connect()
+
+        // Don't wait for connection to complete - let it happen in background
+        // This prevents blocking the main thread if MQTT broker is unavailable
+        go func() </span><span class="cov0" title="0">{
+                if token.Wait() &amp;&amp; token.Error() != nil </span><span class="cov0" title="0">{
+                        logs.Log(fmt.Sprintf("[ERROR][MQTT] Failed to connect to MQTT broker: %v", token.Error()))
+                        logs.Log("[INFO][MQTT] Will retry connection in background...")
+                }</span>
+        }()
+
+        <span class="cov0" title="0">logs.Log("[INFO][MQTT] MQTT client initialized - connecting in background")
+        return websocketChannel</span>
+}
+
+// SubscribeToTopic subscribes to a topic with a custom handler
+func SubscribeToTopic(topic string, handler MessageHandler) error <span class="cov0" title="0">{
+        if client == nil || !client.IsConnected() </span><span class="cov0" title="0">{
+                return fmt.Errorf("MQTT client not connected")
+        }</span>
+
+        // Store handler for reconnection scenarios
+        <span class="cov0" title="0">handlers[topic] = handler
+
+        return subscribeToTopic(topic)</span>
+}
+
+// subscribeToTopic performs the actual subscription
+func subscribeToTopic(topic string) error <span class="cov0" title="0">{
+        token := client.Subscribe(topic, 0, func(client mqtt.Client, msg mqtt.Message) </span><span class="cov0" title="0">{
+                handleMessage(msg.Topic(), msg.Payload())
+        }</span>)
+
+        <span class="cov0" title="0">if token.Wait() &amp;&amp; token.Error() != nil </span><span class="cov0" title="0">{
+                logs.Log(fmt.Sprintf("[ERROR][MQTT] Failed to subscribe to %s: %v", topic, token.Error()))
+                return token.Error()
+        }</span>
+
+        <span class="cov0" title="0">logs.Log(fmt.Sprintf("[INFO][MQTT] Subscribed to topic: %s", topic))
+        return nil</span>
+}
+
+// handleMessage routes messages to appropriate handlers
+func handleMessage(topic string, payload []byte) <span class="cov0" title="0">{
+        handler, exists := handlers[topic]
+        if !exists </span><span class="cov0" title="0">{
+                logs.Log(fmt.Sprintf("[WARNING][MQTT] No handler found for topic: %s", topic))
+                return
+        }</span>
+
+        // Process message with handler
+        <span class="cov0" title="0">processedData := handler(topic, payload)
+        if processedData == nil </span><span class="cov0" title="0">{
+                return // Handler decided not to forward this message
+        }</span>
+
+        // Create WebSocket message
+        <span class="cov0" title="0">wsMessage := WebSocketMessage{
+                Type: topic,
+                Data: processedData,
+        }
+
+        // Send to WebSocket channel
+        select </span>{
+        case websocketChannel &lt;- wsMessage:<span class="cov0" title="0"></span>
+                // Message forwarded successfully
+        default:<span class="cov0" title="0">
+                logs.Log(fmt.Sprintf("[ERROR][MQTT] WebSocket channel full, dropping message from topic: %s", topic))</span>
+        }
+}
+
+// Close closes the MQTT client
+func Close() <span class="cov0" title="0">{
+        if client != nil &amp;&amp; client.IsConnected() </span><span class="cov0" title="0">{
+                client.Disconnect(250)
+                logs.Log("[INFO][MQTT] MQTT client disconnected")
+        }</span>
+        <span class="cov0" title="0">if websocketChannel != nil </span><span class="cov0" title="0">{
+                close(websocketChannel)
+        }</span>
+}
+</pre>
+		
+		<pre class="file" id="file13" style="display: none">/*
+ * Copyright (C) 2025 Nethesis S.r.l.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
+package mqtt
+
+import (
+        "encoding/json"
+
+        "github.com/nethesis/nethcti-middleware/logs"
+)
+
+// TranscriptionMessage represents the JSON payload from satellite/transcription topic
+type TranscriptionMessage struct {
+        UniqueID                 string  `json:"uniqueid"`
+        Transcription            string  `json:"transcription"`
+        Timestamp                float64 `json:"timestamp"`
+        SpeakerName              string  `json:"speaker_name"`
+        SpeakerNumber            string  `json:"speaker_number"`
+        SpeakerCounterpartName   string  `json:"speaker_counterpart_name"`
+        SpeakerCounterpartNumber string  `json:"speaker_counterpart_number"`
+        IsFinal                  bool    `json:"is_final"`
+}
+
+// InitTranscriptionSubscription sets up subscription for satellite/transcription topic
+func InitTranscriptionSubscription() error <span class="cov0" title="0">{
+        return SubscribeToTopic("satellite/transcription", handleTranscriptionMessage)
+}</span>
+
+// handleTranscriptionMessage processes transcription messages
+func handleTranscriptionMessage(topic string, payload []byte) interface{} <span class="cov0" title="0">{
+        var transcription TranscriptionMessage
+        if err := json.Unmarshal(payload, &amp;transcription); err != nil </span><span class="cov0" title="0">{
+                logs.Log("[ERROR][MQTT] Failed to parse transcription message: " + err.Error())
+                return nil
+        }</span>
+
+        // You can add filtering logic here
+        // For example, only forward final transcriptions:
+        // if !transcription.IsFinal {
+        //     return nil
+        // }
+
+        // You can add enrichment/processing here
+        // For example, add metadata, transform data, etc.
+
+        <span class="cov0" title="0">return transcription</span>
+}
+</pre>
+		
+		<pre class="file" id="file14" style="display: none">/*
+ * Copyright (C) 2025 Nethesis S.r.l.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
+package socket
+
+import (
+        "encoding/json"
+        "fmt"
+        "sync"
+
+        "github.com/gorilla/websocket"
+        "github.com/nethesis/nethcti-middleware/logs"
+        "github.com/nethesis/nethcti-middleware/mqtt"
+)
+
+// UserConnection represents a WebSocket connection with user data
+type UserConnection struct {
+        Conn                 *websocket.Conn
+        Username             string
+        DisplayName          string
+        PhoneNumbers         []string
+        AccessKeyId          string
+        TranscriptionEnabled bool
+}
+
+// ConnectionManager manages all active WebSocket connections
+type ConnectionManager struct {
+        connections map[*websocket.Conn]*UserConnection
+        mutex       sync.RWMutex
+}
+
+var connManager = &amp;ConnectionManager{
+        connections: make(map[*websocket.Conn]*UserConnection),
+}
+
+// AddConnection adds a new connection to the manager
+func (cm *ConnectionManager) AddConnection(conn *websocket.Conn, user *UserConnection) <span class="cov0" title="0">{
+        cm.mutex.Lock()
+        defer cm.mutex.Unlock()
+        user.Conn = conn
+        cm.connections[conn] = user
+}</span>
+
+// RemoveConnection removes a connection from the manager
+func (cm *ConnectionManager) RemoveConnection(conn *websocket.Conn) <span class="cov0" title="0">{
+        cm.mutex.Lock()
+        defer cm.mutex.Unlock()
+        delete(cm.connections, conn)
+}</span>
+
+// GetConnection gets connection data for a specific connection
+func (cm *ConnectionManager) GetConnection(conn *websocket.Conn) (*UserConnection, bool) <span class="cov0" title="0">{
+        cm.mutex.RLock()
+        defer cm.mutex.RUnlock()
+        user, exists := cm.connections[conn]
+        return user, exists
+}</span>
+
+// GetAllConnections returns all active connections
+func (cm *ConnectionManager) GetAllConnections() map[*websocket.Conn]*UserConnection <span class="cov0" title="0">{
+        cm.mutex.RLock()
+        defer cm.mutex.RUnlock()
+        result := make(map[*websocket.Conn]*UserConnection)
+        for conn, user := range cm.connections </span><span class="cov0" title="0">{
+                result[conn] = user
+        }</span>
+        <span class="cov0" title="0">return result</span>
+}
+
+// IsAuthorizedForTranscription checks if a user is authorized to receive a transcription
+func (cm *ConnectionManager) IsAuthorizedForTranscription(conn *websocket.Conn, speakerName, speakerNumber, counterpartName, counterpartNumber string) bool <span class="cov0" title="0">{
+        user, exists := cm.GetConnection(conn)
+        if !exists </span><span class="cov0" title="0">{
+                return false
+        }</span>
+
+        // Check if the user matches the speaker
+        <span class="cov0" title="0">if user.DisplayName == speakerName </span><span class="cov0" title="0">{
+                return true
+        }</span>
+
+        <span class="cov0" title="0">for _, number := range user.PhoneNumbers </span><span class="cov0" title="0">{
+                if number == speakerNumber </span><span class="cov0" title="0">{
+                        return true
+                }</span>
+        }
+
+        // Check if the user matches the counterpart
+        <span class="cov0" title="0">if user.DisplayName == counterpartName </span><span class="cov0" title="0">{
+                return true
+        }</span>
+
+        <span class="cov0" title="0">for _, number := range user.PhoneNumbers </span><span class="cov0" title="0">{
+                if number == counterpartNumber </span><span class="cov0" title="0">{
+                        return true
+                }</span>
+        }
+
+        <span class="cov0" title="0">return false</span>
+}
+
+// BroadcastMQTTMessage sends an MQTT message to all authorized connections
+func (cm *ConnectionManager) BroadcastMQTTMessage(messageType string, data interface{}) <span class="cov0" title="0">{
+        cm.mutex.RLock()
+        defer cm.mutex.RUnlock()
+
+        for conn, user := range cm.connections </span><span class="cov0" title="0">{
+                // Check authorization for transcription messages
+                if messageType == "satellite/transcription" </span><span class="cov0" title="0">{
+                        // Skip if transcription is not enabled for this user
+                        if !user.TranscriptionEnabled </span><span class="cov0" title="0">{
+                                continue</span>
+                        }
+
+                        // Try to parse as different types
+                        <span class="cov0" title="0">if transcriptionMsg, ok := data.(mqtt.TranscriptionMessage); ok </span><span class="cov0" title="0">{
+                                speakerName := transcriptionMsg.SpeakerName
+                                speakerNumber := transcriptionMsg.SpeakerNumber
+                                counterpartName := transcriptionMsg.SpeakerCounterpartName
+                                counterpartNumber := transcriptionMsg.SpeakerCounterpartNumber
+
+                                // Apply authorization - check if user is involved in the conversation
+                                if speakerName != "" || speakerNumber != "" || counterpartName != "" || counterpartNumber != "" </span><span class="cov0" title="0">{
+                                        // Skip if user is not authorized for this transcription
+                                        if !cm.IsAuthorizedForTranscription(conn, speakerName, speakerNumber, counterpartName, counterpartNumber) </span><span class="cov0" title="0">{
+                                                continue</span>
+                                        }
+                                }
+                        } else<span class="cov0" title="0"> if transcriptionData, ok := data.(map[string]interface{}); ok </span><span class="cov0" title="0">{
+                                speakerName, speakerNameOk := transcriptionData["speaker_name"].(string)
+                                speakerNumber, speakerNumberOk := transcriptionData["speaker_number"].(string)
+                                counterpartName, counterpartNameOk := transcriptionData["speaker_counterpart_name"].(string)
+                                counterpartNumber, counterpartNumberOk := transcriptionData["speaker_counterpart_number"].(string)
+
+                                // Only apply authorization if we have conversation info
+                                if speakerNameOk || speakerNumberOk || counterpartNameOk || counterpartNumberOk </span><span class="cov0" title="0">{
+                                        // Skip if user is not authorized for this transcription
+                                        if !cm.IsAuthorizedForTranscription(conn, speakerName, speakerNumber, counterpartName, counterpartNumber) </span><span class="cov0" title="0">{
+                                                continue</span>
+                                        }
+                                }
+                        } else<span class="cov0" title="0"> if jsonData, ok := data.(string); ok </span><span class="cov0" title="0">{
+                                // Try to parse JSON string
+                                var transcriptionData map[string]interface{}
+                                if err := json.Unmarshal([]byte(jsonData), &amp;transcriptionData); err == nil </span><span class="cov0" title="0">{
+                                        speakerName, speakerNameOk := transcriptionData["speaker_name"].(string)
+                                        speakerNumber, speakerNumberOk := transcriptionData["speaker_number"].(string)
+                                        counterpartName, counterpartNameOk := transcriptionData["speaker_counterpart_name"].(string)
+                                        counterpartNumber, counterpartNumberOk := transcriptionData["speaker_counterpart_number"].(string)
+
+                                        // Only apply authorization if we have conversation info
+                                        if speakerNameOk || speakerNumberOk || counterpartNameOk || counterpartNumberOk </span><span class="cov0" title="0">{
+                                                // Skip if user is not authorized for this transcription
+                                                if !cm.IsAuthorizedForTranscription(conn, speakerName, speakerNumber, counterpartName, counterpartNumber) </span><span class="cov0" title="0">{
+                                                        continue</span>
+                                                }
+                                        }
+                                } else<span class="cov0" title="0"> {
+                                        logs.Log(fmt.Sprintf("[ERROR][BROADCAST] Failed to parse JSON string: %v", err))
+                                }</span>
+                        }
+                }
+
+                // Send message to this connection
+                <span class="cov0" title="0">go func(conn *websocket.Conn, user *UserConnection) </span><span class="cov0" title="0">{
+                        // Convert to socket.io format: 42["transcription", {...}]
+                        socketIOPayload, err := json.Marshal([]interface{}{messageType, data})
+                        if err != nil </span><span class="cov0" title="0">{
+                                logs.Log(fmt.Sprintf("[ERROR][BROADCAST] Failed to marshal message: %v", err))
+                                return
+                        }</span>
+
+                        <span class="cov0" title="0">finalMsg := append([]byte("42"), socketIOPayload...)
+
+                        // Send message (ignore errors, connection will be cleaned up elsewhere)
+                        conn.WriteMessage(websocket.TextMessage, finalMsg)</span>
+                }(conn, user)
+        }
+}
+</pre>
+		
+		<pre class="file" id="file15" style="display: none">package socket
+
+import (
+        "encoding/json"
+        "fmt"
+        "net/http"
+        "net/url"
+        "strings"
+
+        "github.com/gin-gonic/gin"
+        "github.com/gorilla/websocket"
+        "github.com/nethesis/nethcti-middleware/configuration"
+        "github.com/nethesis/nethcti-middleware/logs"
+        "github.com/nethesis/nethcti-middleware/methods"
+        "github.com/nethesis/nethcti-middleware/mqtt"
+        "github.com/nethesis/nethcti-middleware/store"
+)
+
+var mqttChannel chan mqtt.WebSocketMessage
+
+// SetMQTTChannel sets the MQTT channel for forwarding messages to WebSocket clients
+func SetMQTTChannel(ch chan mqtt.WebSocketMessage) <span class="cov0" title="0">{
+        mqttChannel = ch
+        // Start global MQTT message handler
+        go handleMQTTMessages()
+}</span>
+
+// handleMQTTMessages processes MQTT messages and broadcasts them to authorized connections
+func handleMQTTMessages() <span class="cov0" title="0">{
+        for mqttMsg := range mqttChannel </span><span class="cov0" title="0">{
+                connManager.BroadcastMQTTMessage(mqttMsg.Type, mqttMsg.Data)
+        }</span>
+}
+
+func WsProxyHandler(c *gin.Context) <span class="cov0" title="0">{
+        protocol := "wss"
+        if configuration.Config.V1Protocol == "http" </span><span class="cov0" title="0">{
+                protocol = "ws"
+        }</span>
+
+        // Upgrade client connection
+        <span class="cov0" title="0">upgrader := websocket.Upgrader{
+                CheckOrigin: func(r *http.Request) bool </span><span class="cov0" title="0">{ return true }</span>,
+        }
+        <span class="cov0" title="0">clientConn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
+        if err != nil </span><span class="cov0" title="0">{
+                c.String(http.StatusInternalServerError, "WebSocket upgrade failed: %v", err)
+                return
+        }</span>
+        <span class="cov0" title="0">defer clientConn.Close()
+        defer connManager.RemoveConnection(clientConn)
+
+        // Connect to backend
+        backendURL := url.URL{
+                Scheme:   protocol,
+                Host:     configuration.Config.V1WsEndpoint,
+                Path:     configuration.Config.V1WsPath + "/",
+                RawQuery: c.Request.URL.RawQuery,
+        }
+        backendConn, _, err := websocket.DefaultDialer.Dial(backendURL.String(), nil)
+        if err != nil </span><span class="cov0" title="0">{
+                c.String(http.StatusBadGateway, "Failed to connect to backend WebSocket: %v", err)
+                return
+        }</span>
+        <span class="cov0" title="0">defer backendConn.Close()
+
+        errc := make(chan error, 3)
+
+        // Client → Backend
+        go func() </span><span class="cov0" title="0">{
+                for </span><span class="cov0" title="0">{
+                        msgType, msg, err := clientConn.ReadMessage()
+                        if err != nil </span><span class="cov0" title="0">{
+                                errc &lt;- err
+                                return
+                        }</span>
+
+                        // Intercept transcription control messages
+                        <span class="cov0" title="0">if msgType == websocket.TextMessage </span><span class="cov0" title="0">{
+                                msgStr := string(msg)
+
+                                if strings.HasPrefix(msgStr, "42[\"start_transcription\"") </span><span class="cov0" title="0">{
+                                        if user, exists := connManager.GetConnection(clientConn); exists </span><span class="cov0" title="0">{
+                                                user.TranscriptionEnabled = true
+                                                logs.Log(fmt.Sprintf("[INFO][WS] Transcription enabled for user %s", user.Username))
+                                        }</span>
+                                        <span class="cov0" title="0">continue</span> // Don't forward to backend
+                                }
+
+                                <span class="cov0" title="0">if strings.HasPrefix(msgStr, "42[\"stop_transcription\"") </span><span class="cov0" title="0">{
+                                        if user, exists := connManager.GetConnection(clientConn); exists </span><span class="cov0" title="0">{
+                                                user.TranscriptionEnabled = false
+                                                logs.Log(fmt.Sprintf("[INFO][WS] Transcription disabled for user %s", user.Username))
+                                        }</span>
+                                        <span class="cov0" title="0">continue</span> // Don't forward to backend
+                                }
+                        }
+
+                        // Intercept socket.io login message type: 42["login", {...}]
+                        <span class="cov0" title="0">if msgType == websocket.TextMessage &amp;&amp; strings.HasPrefix(string(msg), "42[\"login\"") </span><span class="cov0" title="0">{
+                                var payload []interface{}
+                                if err := json.Unmarshal(msg[2:], &amp;payload); err == nil &amp;&amp; len(payload) &gt; 1 </span><span class="cov0" title="0">{
+                                        // payload[0] should be "login", payload[1] the JSON
+                                        if loginData, ok := payload[1].(map[string]interface{}); ok </span><span class="cov0" title="0">{
+                                                // Check if accessKeyId exists and is valid
+                                                accessKeyId, ok := loginData["accessKeyId"].(string)
+                                                if ok </span><span class="cov0" title="0">{
+                                                        session, sessionExists := store.UserSessions[accessKeyId]
+                                                        apiKeyExists := methods.AuthenticateAPIKey(accessKeyId, loginData["token"].(string))
+
+                                                        if sessionExists </span><span class="cov0" title="0">{
+                                                                // Extract only the token from the string "username:token"
+                                                                tokenParts := strings.SplitN(session.NethCTIToken, ":", 2)[1]
+                                                                if tokenParts != "" </span><span class="cov0" title="0">{
+                                                                        loginData["token"] = tokenParts
+
+                                                                        // Get real user info from API
+                                                                        userInfo, err := methods.GetUserInfo(session.NethCTIToken)
+                                                                        displayName := session.Username
+                                                                        phoneNumbers := []string{}
+
+                                                                        if err == nil &amp;&amp; userInfo != nil </span><span class="cov0" title="0">{
+                                                                                displayName = userInfo.DisplayName
+                                                                                phoneNumbers = userInfo.PhoneNumbers
+                                                                        }</span> else<span class="cov0" title="0"> {
+                                                                                logs.Log(fmt.Sprintf("[ERROR][WS] Failed to get user info for %s: %v", session.Username, err))
+                                                                        }</span>
+
+                                                                        // Register the connection with user data
+                                                                        <span class="cov0" title="0">user := &amp;UserConnection{
+                                                                                Username:             session.Username,
+                                                                                AccessKeyId:          accessKeyId,
+                                                                                DisplayName:          displayName,
+                                                                                PhoneNumbers:         phoneNumbers,
+                                                                                TranscriptionEnabled: false,
+                                                                        }
+                                                                        connManager.AddConnection(clientConn, user)
+
+                                                                        // Re-encode the message
+                                                                        newPayload, _ := json.Marshal([]interface{}{payload[0], loginData})
+                                                                        msg = append([]byte("42"), newPayload...)</span>
+                                                                }
+                                                        } else<span class="cov0" title="0"> if apiKeyExists </span><span class="cov0" title="0">{
+                                                                // Get the full phone island token (username:token format)
+                                                                phoneIslandTokenFull, err := methods.GetPhoneIslandToken(loginData["token"].(string), false)
+
+                                                                if err == nil &amp;&amp; phoneIslandTokenFull != "" </span><span class="cov0" title="0">{
+                                                                        // Extract username and token
+                                                                        parts := strings.SplitN(phoneIslandTokenFull, ":", 2)
+                                                                        username := "api_user"
+                                                                        phoneIslandToken := phoneIslandTokenFull
+
+                                                                        if len(parts) == 2 </span><span class="cov0" title="0">{
+                                                                                username = parts[0]
+                                                                                phoneIslandToken = parts[1]
+                                                                        }</span> else<span class="cov0" title="0"> {
+                                                                                logs.Log(fmt.Sprintf("[WARNING][WS] Could not extract username from phone island token, using api_user"))
+                                                                        }</span>
+
+                                                                        <span class="cov0" title="0">loginData["token"] = phoneIslandToken
+
+                                                                        // For API key users, try to get user info using the phone island token
+                                                                        userInfo, err := methods.GetUserInfo(phoneIslandTokenFull)
+
+                                                                        displayName := username
+                                                                        phoneNumbers := []string{}
+
+                                                                        if err == nil &amp;&amp; userInfo != nil </span><span class="cov0" title="0">{
+                                                                                username = userInfo.Username
+                                                                                displayName = userInfo.DisplayName
+                                                                                phoneNumbers = userInfo.PhoneNumbers
+                                                                        }</span> else<span class="cov0" title="0"> {
+                                                                                logs.Log(fmt.Sprintf("[ERROR][WS] Failed to get API key user info: %v", err))
+                                                                        }</span>
+
+                                                                        // Register the connection with API key user data
+                                                                        <span class="cov0" title="0">user := &amp;UserConnection{
+                                                                                Username:             username,
+                                                                                AccessKeyId:          accessKeyId,
+                                                                                DisplayName:          displayName,
+                                                                                PhoneNumbers:         phoneNumbers,
+                                                                                TranscriptionEnabled: false,
+                                                                        }
+                                                                        connManager.AddConnection(clientConn, user)
+
+                                                                        // Re-encode the message
+                                                                        newPayload, _ := json.Marshal([]interface{}{payload[0], loginData})
+                                                                        msg = append([]byte("42"), newPayload...)</span>
+                                                                } else<span class="cov0" title="0"> {
+                                                                        logs.Log(fmt.Sprintf("[ERROR][WS] Failed to get phone island token: %v", err))
+                                                                }</span>
+                                                        }
+                                                }
+                                        }
+                                }
+                        }
+
+                        <span class="cov0" title="0">err = backendConn.WriteMessage(msgType, msg)
+                        if err != nil </span><span class="cov0" title="0">{
+                                errc &lt;- err
+                                return
+                        }</span>
+                }
+        }()
+
+        // Backend → Client
+        <span class="cov0" title="0">go func() </span><span class="cov0" title="0">{
+                for </span><span class="cov0" title="0">{
+                        msgType, msg, err := backendConn.ReadMessage()
+                        if err != nil </span><span class="cov0" title="0">{
+                                errc &lt;- err
+                                return
+                        }</span>
+
+                        <span class="cov0" title="0">err = clientConn.WriteMessage(msgType, msg)
+                        if err != nil </span><span class="cov0" title="0">{
+                                errc &lt;- err
+                                return
+                        }</span>
+                }
+        }()
+
+        <span class="cov0" title="0">&lt;-errc</span>
+}
+</pre>
+		
+		<pre class="file" id="file16" style="display: none">/*
+ * Copyright (C) 2025 Nethesis S.r.l.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
+package store
+
+import (
+        "context"
+
+        "github.com/nethesis/nethcti-middleware/db"
+        "github.com/nethesis/nethcti-middleware/logs"
+)
+
+// PhonebookEntry represents a phonebook contact from cti_phonebook table.
+type PhonebookEntry struct {
+        ID             int64
+        OwnerID        string
+        Type           string
+        HomeEmail      string
+        WorkEmail      string
+        HomePhone      string
+        WorkPhone      string
+        CellPhone      string
+        Fax            string
+        Title          string
+        Company        string
+        Notes          string
+        Name           string
+        HomeStreet     string
+        HomePOB        string
+        HomeCity       string
+        HomeProvince   string
+        HomePostalCode string
+        HomeCountry    string
+        WorkStreet     string
+        WorkPOB        string
+        WorkCity       string
+        WorkProvince   string
+        WorkPostalCode string
+        WorkCountry    string
+        URL            string
+        Extension      string
+        SpeedDialNum   string
+}
+
+// BatchInsertPhonebookEntries inserts multiple phonebook entries in a transaction.
+func BatchInsertPhonebookEntries(ctx context.Context, entries []*PhonebookEntry) (int, int, error) <span class="cov0" title="0">{
+        if len(entries) == 0 </span><span class="cov0" title="0">{
+                return 0, 0, nil
+        }</span>
+
+        <span class="cov0" title="0">tx, err := db.DB.BeginTx(ctx, nil)
+        if err != nil </span><span class="cov0" title="0">{
+                return 0, 0, err
+        }</span>
+        <span class="cov0" title="0">defer tx.Rollback()
+
+        query := `
+                INSERT INTO cti_phonebook (
+                        owner_id, type, homeemail, workemail, homephone, workphone, cellphone, fax,
+                        title, company, notes, name, homestreet, homepob, homecity, homeprovince,
+                        homepostalcode, homecountry, workstreet, workpob, workcity, workprovince,
+                        workpostalcode, workcountry, url, extension, speeddial_num
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `
+
+        successful := 0
+        failed := 0
+
+        for _, entry := range entries </span><span class="cov0" title="0">{
+                _, err := tx.ExecContext(ctx, query,
+                        entry.OwnerID, entry.Type, entry.HomeEmail, entry.WorkEmail, entry.HomePhone,
+                        entry.WorkPhone, entry.CellPhone, entry.Fax, entry.Title, entry.Company, entry.Notes,
+                        entry.Name, entry.HomeStreet, entry.HomePOB, entry.HomeCity, entry.HomeProvince,
+                        entry.HomePostalCode, entry.HomeCountry, entry.WorkStreet, entry.WorkPOB,
+                        entry.WorkCity, entry.WorkProvince, entry.WorkPostalCode, entry.WorkCountry,
+                        entry.URL, entry.Extension, entry.SpeedDialNum,
+                )
+                if err != nil </span><span class="cov0" title="0">{
+                        logs.Log("[PHONEBOOK] Failed to insert entry for " + entry.Name + ": " + err.Error())
+                        failed++
+                }</span> else<span class="cov0" title="0"> {
+                        successful++
+                }</span>
+        }
+
+        <span class="cov0" title="0">err = tx.Commit()
+        if err != nil </span><span class="cov0" title="0">{
+                return 0, len(entries), err
+        }</span>
+
+        <span class="cov0" title="0">return successful, failed, nil</span>
+}
+</pre>
+		
+		<pre class="file" id="file17" style="display: none">/*
+ * Copyright (C) 2025 Nethesis S.r.l.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
+package store
+
+import (
+        "github.com/nethesis/nethcti-middleware/models"
+)
+
+var UserSessions map[string]*models.UserSession
+
+func UserSessionInit() map[string]*models.UserSession <span class="cov0" title="0">{
+        UserSessions = make(map[string]*models.UserSession)
+        return UserSessions
+}</span>
+</pre>
+		
+		<pre class="file" id="file18" style="display: none">/*
+ * Copyright (C) 2025 Nethesis S.r.l.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
+package utils
+
+import (
+        "bytes"
+        "encoding/base64"
+        "encoding/json"
+        "net/http"
+        "testing"
+        "time"
+
+        "github.com/pquerna/otp/totp"
+        "github.com/stretchr/testify/assert"
+)
+
+func PerformLogin(testServerURL string) string <span class="cov0" title="0">{
+        return PerformLoginWithCredentials(testServerURL, "testuser", "testpass")
+}</span>
+
+func PerformLoginWithCredentials(testServerURL, username, password string) string <span class="cov0" title="0">{
+        loginData := map[string]string{
+                "username": username,
+                "password": password,
+        }
+        jsonData, _ := json.Marshal(loginData)
+
+        resp, err := http.Post(testServerURL+"/login", "application/json", bytes.NewBuffer(jsonData))
+        if err != nil </span><span class="cov0" title="0">{
+                return ""
+        }</span>
+        <span class="cov0" title="0">defer resp.Body.Close()
+
+        var response map[string]interface{}
+        json.NewDecoder(resp.Body).Decode(&amp;response)
+        token, _ := response["token"].(string)
+        return token</span>
+}
+
+func Setup2FA(testServerURL string, token string, t *testing.T) string <span class="cov0" title="0">{
+        client := &amp;http.Client{}
+
+        reqQRCode, _ := http.NewRequest("GET", testServerURL+"/2fa/qr-code", nil)
+        reqQRCode.Header.Set("Authorization", "Bearer "+token)
+        respQRCode, err := client.Do(reqQRCode)
+        assert.NoError(t, err)
+        defer respQRCode.Body.Close()
+        assert.Equal(t, http.StatusOK, respQRCode.StatusCode)
+
+        var qrResp map[string]interface{}
+        err = json.NewDecoder(respQRCode.Body).Decode(&amp;qrResp)
+        assert.NoError(t, err)
+        data := qrResp["data"].(map[string]interface{})
+        otpSecret := data["key"].(string)
+        assert.NotEmpty(t, otpSecret)
+
+        return otpSecret
+}</span>
+
+func Verify2FA(testServerURL string, otp string, token string, t *testing.T) string <span class="cov0" title="0">{
+        client := &amp;http.Client{}
+
+        otpData := map[string]string{
+                "username": "testuser",
+                "otp":      otp,
+        }
+
+        jsonData, _ := json.Marshal(otpData)
+        reqVerify, _ := http.NewRequest("POST", testServerURL+"/2fa/verify-otp", bytes.NewBuffer(jsonData))
+        reqVerify.Header.Set("Content-Type", "application/json")
+        reqVerify.Header.Set("Authorization", "Bearer "+token)
+        respVerify, err := client.Do(reqVerify)
+        assert.NoError(t, err)
+        defer respVerify.Body.Close()
+        assert.Equal(t, http.StatusOK, respVerify.StatusCode)
+
+        var response map[string]interface{}
+        err = json.NewDecoder(respVerify.Body).Decode(&amp;response)
+        assert.NoError(t, err)
+        data, _ := response["data"].(map[string]interface{})
+        newToken, _ := data["token"].(string)
+
+        return newToken
+}</span>
+
+// decodeJWTPart decodes a JWT base64url part
+func DecodeJWTPart(part string) ([]byte, error) <span class="cov0" title="0">{
+        decoded, err := base64.RawURLEncoding.DecodeString(part)
+        if err != nil </span><span class="cov0" title="0">{
+                decoded, err = base64.URLEncoding.DecodeString(part)
+        }</span>
+        <span class="cov0" title="0">return decoded, err</span>
+}
+
+// GenerateOTP generates a TOTP code for the given secret.
+func GenerateOTP(secret string) string <span class="cov0" title="0">{
+        code, err := totp.GenerateCode(secret, time.Now())
+        if err != nil </span><span class="cov0" title="0">{
+                return ""
+        }</span>
+
+        <span class="cov0" title="0">return code</span>
+}
+</pre>
+		
+		<pre class="file" id="file19" style="display: none">/*
+ * Copyright (C) 2025 Nethesis S.r.l.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
+package utils
+
+import (
+        "crypto/hmac"
+        "crypto/sha1"
+        "encoding/hex"
+        "net/http"
+        "strconv"
+        "strings"
+        "time"
+)
+
+func GenerateLegacyToken(res *http.Response, username, password string) string <span class="cov0" title="0">{
+        wwwAuth := res.Header.Get("Www-Authenticate")
+        parts := strings.Split(wwwAuth, " ")
+        if len(parts) &lt; 2 </span><span class="cov0" title="0">{
+                return ""
+        }</span>
+
+        <span class="cov0" title="0">nonce := parts[1]
+        message := username + ":" + password + ":" + nonce
+
+        mac := hmac.New(sha1.New, []byte(password))
+        mac.Write([]byte(message))
+        token := hex.EncodeToString(mac.Sum(nil))
+
+        token = username + ":" + token
+
+        return token</span>
+}
+
+func Contains(a string, values []string) bool <span class="cov0" title="0">{
+        for _, b := range values </span><span class="cov0" title="0">{
+                if b == a </span><span class="cov0" title="0">{
+                        return true
+                }</span>
+        }
+        <span class="cov0" title="0">return false</span>
+}
+
+func Remove(a string, values []string) []string <span class="cov0" title="0">{
+        for i, v := range values </span><span class="cov0" title="0">{
+                if v == a </span><span class="cov0" title="0">{
+                        return append(values[:i], values[i+1:]...)
+                }</span>
+        }
+        <span class="cov0" title="0">return values</span>
+}
+
+func EpochToHumanDate(epochTime int) string <span class="cov0" title="0">{
+        i, err := strconv.ParseInt(strconv.Itoa(epochTime), 10, 64)
+        if err != nil </span><span class="cov0" title="0">{
+                return "-"
+        }</span>
+        <span class="cov0" title="0">tm := time.Unix(i, 0)
+        return tm.Format("2006-01-02 15:04:05")</span>
+}
+</pre>
+		
+		</div>
+	</body>
+	<script>
+	(function() {
+		var files = document.getElementById('files');
+		var visible;
+		files.addEventListener('change', onChange, false);
+		function select(part) {
+			if (visible)
+				visible.style.display = 'none';
+			visible = document.getElementById(part);
+			if (!visible)
+				return;
+			files.value = part;
+			visible.style.display = 'block';
+			location.hash = part;
+		}
+		function onChange() {
+			select(files.value);
+			window.scrollTo(0, 0);
+		}
+		if (location.hash != "") {
+			select(location.hash.substr(1));
+		}
+		if (!visible) {
+			select("file0");
+		}
+	})();
+	</script>
+</html>

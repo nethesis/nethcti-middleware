@@ -8,6 +8,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	_ "embed"
 	"fmt"
 	"time"
 
@@ -21,11 +22,17 @@ var (
 	sqlOpenFunc = sql.Open
 )
 
+//go:embed upgrade.sql
+var upgradeSchemaSQL string
+
+//go:embed create.sql
+var createSchema string
+
 // Init initializes the database connection pool with the configured MariaDB settings.
 // It performs health checks and creates necessary schema.
 func Init() error {
 	dsn := fmt.Sprintf(
-		"%s:%s@tcp(%s:%s)/%s?parseTime=true",
+		"%s:%s@tcp(%s:%s)/%s?parseTime=true&multiStatements=true",
 		configuration.Config.PhonebookMariaDBUser,
 		configuration.Config.PhonebookMariaDBPassword,
 		configuration.Config.PhonebookMariaDBHost,
@@ -58,9 +65,14 @@ func Init() error {
 	logs.Log("[DB] Database connection established successfully")
 
 	// Create schema if it doesn't exist
-	err = createSchema()
+	err = loadCreateSchema()
 	if err != nil {
 		logs.Log("[CRITICAL][DB] Failed to create schema: " + err.Error())
+		return err
+	}
+	err = loadUpgradeSchema()
+	if err != nil {
+		logs.Log("[CRITICAL][DB] Failed to upgrade schema: " + err.Error())
 		return err
 	}
 
@@ -75,62 +87,31 @@ func Close() error {
 	return nil
 }
 
-// createSchema creates the necessary database schema for the middleware.
-func createSchema() error {
+// loadCreateSchema creates the necessary database schema for the middleware.
+func loadCreateSchema() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// Create phonebook table
-	createPhonebookTable := `
-	CREATE TABLE IF NOT EXISTS cti_phonebook (
-		id int(11) NOT NULL AUTO_INCREMENT,
-		owner_id varchar(255) NOT NULL DEFAULT '',
-		type varchar(255) NOT NULL DEFAULT '',
-		homeemail varchar(255) DEFAULT NULL,
-		workemail varchar(255) DEFAULT NULL,
-		homephone varchar(25) DEFAULT NULL,
-		workphone varchar(25) DEFAULT NULL,
-		cellphone varchar(25) DEFAULT NULL,
-		fax varchar(25) DEFAULT NULL,
-		title varchar(255) DEFAULT NULL,
-		company varchar(255) DEFAULT NULL,
-		notes text DEFAULT NULL,
-		name varchar(255) DEFAULT NULL,
-		homestreet varchar(255) DEFAULT NULL,
-		homepob varchar(10) DEFAULT NULL,
-		homecity varchar(255) DEFAULT NULL,
-		homeprovince varchar(255) DEFAULT NULL,
-		homepostalcode varchar(255) DEFAULT NULL,
-		homecountry varchar(255) DEFAULT NULL,
-		workstreet varchar(255) DEFAULT NULL,
-		workpob varchar(10) DEFAULT NULL,
-		workcity varchar(255) DEFAULT NULL,
-		workprovince varchar(255) DEFAULT NULL,
-		workpostalcode varchar(255) DEFAULT NULL,
-		workcountry varchar(255) DEFAULT NULL,
-		url varchar(255) DEFAULT NULL,
-		extension varchar(255) DEFAULT NULL,
-		speeddial_num varchar(255) DEFAULT NULL,
-		PRIMARY KEY (id),
-		KEY owner_idx (owner_id),
-		KEY wemail_idx (workemail),
-		KEY hemail_idx (homeemail),
-		KEY name_idx (name),
-		KEY hphone_idx (homephone),
-		KEY wphone_idx (workphone),
-		KEY cphone_idx (cellphone),
-		KEY extension_idx (extension),
-		KEY fax_idx (fax),
-		KEY company_idx (company)
-	) ENGINE=MyISAM DEFAULT CHARSET=utf8mb3
-	`
-
-	_, err := DB.ExecContext(ctx, createPhonebookTable)
+	_, err := DB.ExecContext(ctx, createSchema)
 	if err != nil {
 		return err
 	}
 
 	logs.Log("[DB] Schema created/verified successfully")
+	return nil
+}
+
+// loadUpgradeSchema upgrades the database schema to the latest version.
+func loadUpgradeSchema() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	_, err := DB.ExecContext(ctx, upgradeSchemaSQL)
+	if err != nil {
+		return err
+	}
+
+	logs.Log("[DB] Schema upgraded successfully")
 	return nil
 }
 

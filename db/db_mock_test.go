@@ -17,6 +17,8 @@ func TestInitWithMockDB(t *testing.T) {
 
 	mock.ExpectPing()
 	mock.ExpectExec(`(?s).*CREATE TABLE IF NOT EXISTS cti_phonebook.*`).WillReturnResult(sqlmock.NewResult(0, 0))
+	// the repository contains a no-op/comment upgrade.sql; expect it to be executed (no-op)
+	mock.ExpectExec(`(?s).*No upgrade statements.*`).WillReturnResult(sqlmock.NewResult(0, 0))
 
 	oldOpen := sqlOpenFunc
 	sqlOpenFunc = func(driverName, dataSourceName string) (*sql.DB, error) {
@@ -30,7 +32,7 @@ func TestInitWithMockDB(t *testing.T) {
 		PhonebookMariaDBPassword: "pass",
 		PhonebookMariaDBHost:     "127.0.0.1",
 		PhonebookMariaDBPort:     "3306",
-		PhonebookMariaDBDatabase: "testdb",
+		PhonebookMariaDBDatabase: "nethcti3",
 	}
 	defer func() { configuration.Config = prevConfig }()
 
@@ -152,7 +154,7 @@ func applyTestConfig() func() {
 		PhonebookMariaDBPassword: "pass",
 		PhonebookMariaDBHost:     "127.0.0.1",
 		PhonebookMariaDBPort:     "3306",
-		PhonebookMariaDBDatabase: "testdb",
+		PhonebookMariaDBDatabase: "nethcti3",
 	}
 	return func() { configuration.Config = prev }
 }
