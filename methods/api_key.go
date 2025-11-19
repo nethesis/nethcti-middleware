@@ -116,6 +116,20 @@ func PhoneIslandTokenRemove(c *gin.Context) {
 		return
 	}
 
+	// Read subtype from request body
+	var requestBody struct {
+		Subtype string `json:"subtype"`
+	}
+	if err := c.ShouldBindJSON(&requestBody); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "invalid request body"})
+		return
+	}
+
+	subtype := requestBody.Subtype
+	if subtype == "" {
+		subtype = "web"
+	}
+
 	// Call legacy endpoint to remove persistent token (Phone Island session invalidation)
 	userSession, ok := store.UserSessions[username]
 	if !ok || userSession.NethCTIToken == "" {
@@ -127,7 +141,7 @@ func PhoneIslandTokenRemove(c *gin.Context) {
 	removePayload := struct {
 		Type    string `json:"type"`
 		Subtype string `json:"subtype"`
-	}{Type: "phone-island", Subtype: "web"}
+	}{Type: "phone-island", Subtype: subtype}
 	removePayloadBytes, _ := json.Marshal(removePayload)
 	req, err := http.NewRequest("POST", legacyURL, bytes.NewBuffer(removePayloadBytes))
 	if err != nil {
