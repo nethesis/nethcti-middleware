@@ -81,16 +81,20 @@ func WsProxyHandler(c *gin.Context) {
 
 				if strings.HasPrefix(msgStr, "42[\"start_transcription\"") {
 					if user, exists := connManager.GetConnection(clientConn); exists {
-						user.TranscriptionEnabled = true
-						logs.Log(fmt.Sprintf("[INFO][WS] Transcription enabled for user %s", user.Username))
+						if !user.TranscriptionEnabled {
+							user.TranscriptionEnabled = true
+							logs.Log(fmt.Sprintf("[INFO][WS] Transcription enabled for user %s", user.Username))
+						}
 					}
 					continue // Don't forward to backend
 				}
 
 				if strings.HasPrefix(msgStr, "42[\"stop_transcription\"") {
 					if user, exists := connManager.GetConnection(clientConn); exists {
-						user.TranscriptionEnabled = false
-						logs.Log(fmt.Sprintf("[INFO][WS] Transcription disabled for user %s", user.Username))
+						if user.TranscriptionEnabled {
+							user.TranscriptionEnabled = false
+							logs.Log(fmt.Sprintf("[INFO][WS] Transcription disabled for user %s", user.Username))
+						}
 					}
 					continue // Don't forward to backend
 				}
