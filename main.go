@@ -117,6 +117,12 @@ func createRouter() *gin.Engine {
 	router.NoRoute(func(c *gin.Context) {
 		path := c.Request.URL.Path
 
+		// Serve static assets through legacy V1 without enforcing JWT auth
+		if strings.HasPrefix(path, "/static/") {
+			methods.ProxyV1Request(c, path, true)
+			return
+		}
+
 		// Check if this is a FreePBX admin transparent API call
 		userHeader := c.GetHeader("User")
 		secretKeyHeader := c.GetHeader("Secretkey")
@@ -144,7 +150,7 @@ func createRouter() *gin.Engine {
 		if isFreePBXAdmin && isFreePBXAPI {
 			// Handle FreePBX API call - add authorization_user header and forward directly
 			c.Request.Header.Set("Authorization-User", "admin")
-			methods.ProxyV1Request(c, path)
+			methods.ProxyV1Request(c, path, false)
 		} else {
 			// Apply JWT middleware for regular APIs
 			middleware.InstanceJWT().MiddlewareFunc()(c)
@@ -152,7 +158,7 @@ func createRouter() *gin.Engine {
 				return
 			}
 			// Fallback to proxy logic for legacy V1 API
-			methods.ProxyV1Request(c, path)
+			methods.ProxyV1Request(c, path, false)
 		}
 	})
 

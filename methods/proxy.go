@@ -6,6 +6,7 @@
 package methods
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -22,7 +23,7 @@ import (
 )
 
 // ProxyV1Request forwards requests to the legacy V1 API
-func ProxyV1Request(c *gin.Context, path string) {
+func ProxyV1Request(c *gin.Context, path string, allowAnonymous bool) {
 	// Check if V1 endpoint is configured
 	if configuration.Config.V1ApiEndpoint == "" {
 		c.JSON(http.StatusServiceUnavailable, gin.H{
@@ -36,6 +37,9 @@ func ProxyV1Request(c *gin.Context, path string) {
 	if path == "" {
 		path = "/"
 	}
+
+	requester := ""
+	authType := "unknown"
 
 	// Build the forwarding URL
 	url := configuration.Config.V1Protocol + "://" + configuration.Config.V1ApiEndpoint + configuration.Config.V1ApiPath + path
@@ -69,11 +73,17 @@ func ProxyV1Request(c *gin.Context, path string) {
 	// Check if this is a FreePBX API call (has Authorization-User header)
 	authorizationUser := c.GetHeader("Authorization-User")
 	isFreePBXCall := authorizationUser != ""
+	nethCTIToken := ""
 
-	if isFreePBXCall {
+	switch {
+	case allowAnonymous:
+		requester = "anonymous-static"
+		authType = "static-bypass"
+	case isFreePBXCall:
+		requester = authorizationUser
+		authType = "freepbx"
 		// For FreePBX calls, don't add Authorization header - the Authorization-User header is enough
-		logs.Log("[INFO][PROXY] FreePBX API call for user: " + authorizationUser)
-	} else {
+	default:
 		// Regular JWT-based authentication flow
 		JWTToken := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
 		if JWTToken == "" {
@@ -87,10 +97,12 @@ func ProxyV1Request(c *gin.Context, path string) {
 		// Extract claims from the JWT token
 		claims := jwt.ExtractClaims(c)
 		username := claims["id"].(string)
-		nethCTIToken := ""
+		requester = username
+		isAPIKeyRequest := AuthenticateAPIKey(username, JWTToken)
 
 		// Check if the request is authenticated with an API key
-		if AuthenticateAPIKey(username, JWTToken) {
+		if isAPIKeyRequest {
+			authType = "api-key"
 			// If authenticated with API key, retrieve the Phone Island token
 			nethCTIToken, err = GetPhoneIslandToken(JWTToken, false)
 			if err != nil {
@@ -102,17 +114,22 @@ func ProxyV1Request(c *gin.Context, path string) {
 				return
 			}
 		} else {
+			authType = "jwt-session"
 			// If not authenticated with API key, use the NethCTI token from the user session
 			userSession := store.UserSessions[username]
 			nethCTIToken = userSession.NethCTIToken
 		}
+	}
 
+	if nethCTIToken != "" {
 		// Add the NetCTI token to the request headers
 		req.Header.Set("Authorization", nethCTIToken)
 	}
 
 	// Copy query parameters
 	req.URL.RawQuery = c.Request.URL.RawQuery
+
+	forwardURL := req.URL.String()
 
 	// Create HTTP client with timeout
 	client := &http.Client{
@@ -122,7 +139,7 @@ func ProxyV1Request(c *gin.Context, path string) {
 	// Forward the request
 	resp, err := client.Do(req)
 	if err != nil {
-		logs.Log("failed to forward request to V1 API")
+		logs.Log(fmt.Sprintf("[ERROR][PROXY][V1] request failed method=%s url=%s requester=%s auth=%s err=%v", c.Request.Method, forwardURL, requester, authType, err))
 		c.JSON(http.StatusBadGateway, gin.H{
 			"code":    502,
 			"message": "Failed to reach V1 API",
@@ -138,11 +155,17 @@ func ProxyV1Request(c *gin.Context, path string) {
 		}
 	}
 
+	// Determine message based on allowAnonymous
+	message := "API not found"
+	if allowAnonymous {
+		message = "File not found"
+	}
+
 	// Check if V1 API returned 404 and provide a more complete response
 	if resp.StatusCode == http.StatusNotFound {
 		c.JSON(http.StatusNotFound, structs.Map(models.StatusNotFound{
 			Code:    404,
-			Message: "API not found",
+			Message: message,
 			Data:    nil,
 		}))
 		return
