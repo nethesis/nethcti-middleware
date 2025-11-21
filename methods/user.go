@@ -16,67 +16,22 @@ import (
 	"github.com/nethesis/nethcti-middleware/logs"
 )
 
-// Extension represents a phone extension
+// Extension represents a phone extension (only ID is used)
 type Extension struct {
-	ID          string          `json:"id"`
-	Type        string          `json:"type"`
-	Secret      string          `json:"secret"`
-	Username    string          `json:"username"`
-	Description string          `json:"description"`
-	Actions     map[string]bool `json:"actions"`
+	ID string `json:"id"`
 }
 
-// Endpoints represents all endpoint types
+// Endpoints represents endpoint types (only extension and mainextension are used)
 type Endpoints struct {
-	Email         []interface{} `json:"email"`
-	Jabber        []interface{} `json:"jabber"`
-	Extension     []Extension   `json:"extension"`
-	Cellphone     []interface{} `json:"cellphone"`
-	Voicemail     []interface{} `json:"voicemail"`
-	MainExtension []Extension   `json:"mainextension"`
+	Extension     []Extension `json:"extension"`
+	MainExtension []Extension `json:"mainextension"`
 }
 
-// DefaultDevice represents the default device
-type DefaultDevice struct {
-	ID          string          `json:"id"`
-	Type        string          `json:"type"`
-	Secret      string          `json:"secret"`
-	Username    string          `json:"username"`
-	Description string          `json:"description"`
-	Actions     map[string]bool `json:"actions"`
-}
-
-// Profile represents user profile with permissions
-type Profile struct {
-	ID                        string                 `json:"id"`
-	Name                      string                 `json:"name"`
-	MacroPermissions          map[string]interface{} `json:"macro_permissions"`
-	OutboundRoutesPermissions []interface{}          `json:"outbound_routes_permissions"`
-}
-
-// Settings represents user settings
-type Settings struct {
-	DesktopNotifications bool   `json:"desktop_notifications"`
-	OpenCcard            string `json:"open_ccard"`
-	ChatNotifications    bool   `json:"chat_notifications"`
-	DefaultExtension     string `json:"default_extension"`
-}
-
-// UserInfo represents complete user information from the API
+// UserInfo represents user information from the API (only fields we need)
 type UserInfo struct {
-	Name                  string        `json:"name"`
-	Username              string        `json:"username"`
-	MainPresence          string        `json:"mainPresence"`
-	Presence              string        `json:"presence"`
-	Endpoints             Endpoints     `json:"endpoints"`
-	PresenceOnBusy        string        `json:"presenceOnBusy"`
-	PresenceOnUnavailable string        `json:"presenceOnUnavailable"`
-	RecallOnBusy          string        `json:"recallOnBusy"`
-	Profile               Profile       `json:"profile"`
-	DefaultDevice         DefaultDevice `json:"default_device"`
-	LKHash                string        `json:"lkhash"`
-	ProxyFQDN             string        `json:"proxy_fqdn"`
-	Settings              Settings      `json:"settings"`
+	Name      string    `json:"name"`
+	Username  string    `json:"username"`
+	Endpoints Endpoints `json:"endpoints"`
 
 	// Computed fields for easier access
 	DisplayName  string   `json:"-"`
