@@ -1,0 +1,3 @@
+-- No upgrade statements
+-- This file intentionally left blank to indicate no schema upgrades are required.
+-- You can add SQL statements here to be executed during startup when needed.

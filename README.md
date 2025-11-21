@@ -15,6 +15,12 @@ The application can be configured using the following environment variables:
 | `NETHVOICE_MIDDLEWARE_SENSITIVE_LIST` | Comma-separated list of sensitive field names for logging | `password,secret,token,passphrase,private,key` |
 | `NETHVOICE_MIDDLEWARE_SECRETS_DIR` | Directory path for storing secrets | `/var/lib/whale/secrets` |
 | `NETHVOICE_MIDDLEWARE_ISSUER_2FA` | Issuer name for 2FA tokens | `NethVoice` |
+| `NETHVOICE_MIDDLEWARE_FREEPBX_APIS` | Comma-separated list of FreePBX APIs that bypass JWT | See default APIs in code |
+| `PHONEBOOK_MARIADB_HOST` | MariaDB server hostname | `localhost` |
+| `PHONEBOOK_MARIADB_PORT` | MariaDB server port | **Required** |
+| `PHONEBOOK_MARIADB_USER` | MariaDB username | `root` |
+| `PHONEBOOK_MARIADB_PASSWORD` | MariaDB password | **Required** |
+| `PHONEBOOK_MARIADB_DB` | MariaDB database name | `nethcti3` |
 
 ## Testing
 
@@ -22,6 +28,7 @@ The application can be configured using the following environment variables:
 
 - Go 1.24 or later
 - `oathtool` package (for 2FA testing)
+- MariaDB 10.5+ or MySQL 8.0+ (for phonebook and persistence features)
 
 Install oathtool on Ubuntu/Debian:
 ```bash
@@ -57,6 +64,28 @@ The test suite covers:
 
 ## Container Management
 
+### MariaDB Setup
+
+Before running the middleware, ensure MariaDB is available and configured:
+
+**Option 1: MariaDB Container**
+
+```bash
+podman run -d --name mariadb \
+  --env MARIADB_ROOT_PASSWORD=your-secure-password \
+  --env MARIADB_DATABASE=nethcti_middleware \
+  -p 3306:3306 \
+  mariadb:latest
+```
+
+**Option 2: MariaDB on Host**
+
+Ensure MariaDB service is running:
+```bash
+systemctl start mariadb
+# or for Docker/system MariaDB container
+```
+
 ### Stop and Clean Up
 
 Stop the existing container and clean up system resources:
@@ -87,6 +116,18 @@ podman run -d -p 8080:8080 --name nethcti-container \
   --env NETHVOICE_MIDDLEWARE_V1_API_PATH=/webrest \
   --env NETHVOICE_MIDDLEWARE_V1_WS_PATH=/socket.io \
   --env NETHVOICE_MIDDLEWARE_SECRETS_DIR=/var/log/nethcti \
+  --env PHONEBOOK_MARIADB_HOST=mariadb \
+  --env PHONEBOOK_MARIADB_PORT=3306 \
+  --env PHONEBOOK_MARIADB_USER=root \
+  --env PHONEBOOK_MARIADB_PASSWORD=your-secure-password \
   --volume ./data:/var/log/nethcti \
   --replace nethcti-middleware
-```
+
+### Connection Pool Configuration
+
+The middleware uses a connection pool with the following defaults:
+- Max open connections: 25
+- Max idle connections: 5
+- Connection max lifetime: 5 minutes
+
+These can be adjusted in `db/db.go` if needed for your workload.
