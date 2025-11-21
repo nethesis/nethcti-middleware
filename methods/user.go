@@ -54,12 +54,43 @@ type Profile struct {
 	OutboundRoutesPermissions []interface{}          `json:"outbound_routes_permissions"`
 }
 
+// FlexBool is a custom type that can unmarshal from both bool and string
+type FlexBool bool
+
+// UnmarshalJSON implements json.Unmarshaler for FlexBool
+func (fb *FlexBool) UnmarshalJSON(data []byte) error {
+	// Try to unmarshal as bool first
+	var b bool
+	if err := json.Unmarshal(data, &b); err == nil {
+		*fb = FlexBool(b)
+		return nil
+	}
+
+	// Try to unmarshal as string
+	var s string
+	if err := json.Unmarshal(data, &s); err == nil {
+		// Handle string values: "true", "false", ""
+		switch s {
+		case "true", "1":
+			*fb = FlexBool(true)
+		case "false", "0", "":
+			*fb = FlexBool(false)
+		default:
+			// Any other non-empty string is treated as true
+			*fb = FlexBool(s != "")
+		}
+		return nil
+	}
+
+	return fmt.Errorf("cannot unmarshal FlexBool from %s", string(data))
+}
+
 // Settings represents user settings
 type Settings struct {
-	DesktopNotifications bool   `json:"desktop_notifications"`
-	OpenCcard            string `json:"open_ccard"`
-	ChatNotifications    bool   `json:"chat_notifications"`
-	DefaultExtension     string `json:"default_extension"`
+	DesktopNotifications FlexBool `json:"desktop_notifications"`
+	OpenCcard            string   `json:"open_ccard"`
+	ChatNotifications    FlexBool `json:"chat_notifications"`
+	DefaultExtension     string   `json:"default_extension"`
 }
 
 // UserInfo represents complete user information from the API
