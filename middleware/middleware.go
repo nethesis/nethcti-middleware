@@ -169,17 +169,37 @@ func InitJWT() *jwt.GinJWTMiddleware {
 				// check if user require 2fa
 				status, _ := methods.GetUserStatus(userSession.Username)
 
-				// create claims map
+				// create base claims map
 				// Note: otp_verified is always false on initial login
 				// It will be set to true only after OTP verification via regenerateUserToken
-				return jwt.MapClaims{
+				claims := jwt.MapClaims{
 					identityKey:    userSession.Username,
 					"2fa":          status == "1",
 					"otp_verified": false,
 				}
+
+				// Load user profile and inject all capabilities into claims
+				profile, err := store.GetUserProfile(userSession.Username)
+				if err != nil {
+					logs.Log(fmt.Sprintf("[AUTHZ][WARN] Failed to load profile for user %s: %v", userSession.Username, err))
+				} else {
+					// Add profile metadata
+					claims["profile_id"] = profile.ID
+					claims["profile_name"] = profile.Name
+
+					// Inject all capabilities as individual claims
+					for capability, value := range profile.Capabilities {
+						claims[capability] = value
+					}
+
+					logs.Log(fmt.Sprintf("[AUTHZ] Injected %d capabilities into JWT for user %s (profile: %s)",
+						len(profile.Capabilities), userSession.Username, profile.Name))
+				}
+
+				return claims
 			}
 
-			// return claims map
+			// return empty claims map
 			return jwt.MapClaims{}
 		},
 		IdentityHandler: func(c *gin.Context) interface{} {
