@@ -50,9 +50,11 @@ type rawUser struct {
 }
 
 var (
-	profiles     map[string]*ProfileData
-	users        map[string]*UserProfile
-	profileMutex sync.RWMutex
+	profiles         map[string]*ProfileData
+	users            map[string]*UserProfile
+	profileMutex     sync.RWMutex
+	profilesFilePath string
+	usersFilePath    string
 )
 
 // InitProfiles loads profiles and users from JSON files
@@ -66,6 +68,10 @@ func InitProfiles(profilesPath, usersPath string) error {
 	if err != nil {
 		return fmt.Errorf("users path: %w", err)
 	}
+
+	// Store file paths for reload functionality
+	profilesFilePath = profAbs
+	usersFilePath = usersAbs
 
 	if err := loadProfiles(profAbs); err != nil {
 		return err
@@ -112,6 +118,31 @@ func GetUserProfile(username string) (*ProfileData, error) {
 	}
 
 	return profile, nil
+}
+
+// ReloadProfiles reloads profiles and users from JSON files and broadcasts a WebSocket notification
+func ReloadProfiles() error {
+	// Try to reload both files
+	profilesErr := loadProfiles(profilesFilePath)
+	usersErr := loadUsers(usersFilePath)
+
+	// If both failed, return error and keep old data in memory
+	if profilesErr != nil && usersErr != nil {
+		logs.Log(fmt.Sprintf("[AUTHZ][ERROR] Failed to reload profiles: %v", profilesErr))
+		logs.Log(fmt.Sprintf("[AUTHZ][ERROR] Failed to reload users: %v", usersErr))
+		return fmt.Errorf("reload failed for both profiles and users")
+	}
+
+	// Log individual errors but continue if one succeeded
+	if profilesErr != nil {
+		logs.Log(fmt.Sprintf("[AUTHZ][WARN] Failed to reload profiles (keeping previous data): %v", profilesErr))
+	}
+	if usersErr != nil {
+		logs.Log(fmt.Sprintf("[AUTHZ][WARN] Failed to reload users (keeping previous data): %v", usersErr))
+	}
+
+	logs.Log("[AUTHZ] Profile reload completed successfully")
+	return nil
 }
 
 func loadProfiles(path string) error {

@@ -142,3 +142,83 @@ go test -v ./middleware -run TestRequireCapabilities
 ```
 
 These tests inject capabilities into JWT claims and verify the middleware correctly allows/denies access.
+
+## Token Refresh
+
+The middleware supports token refresh to obtain a new JWT with the currently-loaded profile data. This allows clients to refresh their capabilities without logging in again.
+
+### Refresh via API Endpoint
+
+Authenticated users can refresh their JWT token by calling the refresh endpoint:
+
+```bash
+curl -X POST http://localhost:8080/refresh \
+  -H "Authorization: Bearer <jwt_token>"
+```
+
+**Response:**
+```json
+{
+  "code": 200,
+  "message": "profile reloaded and token refreshed",
+  "data": {
+    "token": "new.jwt.token",
+    "expire": "2025-12-10T15:30:00Z"
+  }
+}
+```
+
+The endpoint:
+1. Reads the current profile data from memory (no file reload)
+2. Regenerates the JWT token with fresh capabilities
+3. Returns the new token to the client
+
+### Profile Reload via Signal
+
+Trigger a global profile reload by sending the `SIGUSR1` signal to the middleware process:
+
+```bash
+kill -USR1 <middleware_pid>
+```
+
+When the signal is received:
+1. Both profile files are reloaded from disk into memory
+2. All connected WebSocket clients receive a `profile_reload_global` notification
+3. New login attempts will receive the updated capabilities
+4. Existing JWT tokens remain valid but reflect old capabilities until refreshed via the `/refresh` endpoint
+
+### Error Handling
+
+If JSON parsing fails during SIGUSR1 reload:
+- **Old profiles are retained in memory** - the system continues operating with the previous configuration
+- **Error is logged** with details: `[SIGNAL][ERROR] Failed to reload profiles on SIGUSR1: ...`
+- **Successful parts are updated** - if users.json is valid but profiles.json is invalid, users are reloaded and old profiles retained
+
+This ensures the service remains stable even if configuration files become temporarily invalid.
+
+### WebSocket Notifications
+
+When profiles are reloaded globally via SIGUSR1 signal, connected clients receive a WebSocket message in socket.io format:
+
+**Global profile reload** (SIGUSR1 signal):
+```
+42["profile_reload_global", {"trigger": "signal"}]
+```
+
+Clients should listen for this message and optionally refresh their local state or notify the user that profiles have been updated globally. Users can then call `/refresh` to obtain a new JWT token with the updated capabilities.
+
+### Example Workflow
+
+1. Update `profiles.json` and/or `users.json` with new capabilities
+2. Send SIGUSR1 to the middleware process to reload profiles from disk:
+   ```bash
+   kill -USR1 $(pgrep -f nethcti-middleware)
+   ```
+3. All users connected via WebSocket receive a `profile_reload_global` notification
+4. Users can optionally call `/refresh` to get a new JWT token with updated capabilities:
+   ```bash
+   curl -X POST http://localhost:8080/refresh \
+     -H "Authorization: Bearer <old_token>"
+   ```
+5. New API calls with the refreshed token use the updated capabilities
+

@@ -35,6 +35,11 @@ var connManager = &ConnectionManager{
 	connections: make(map[*websocket.Conn]*UserConnection),
 }
 
+// GetConnectionManager returns the global connection manager instance
+func GetConnectionManager() *ConnectionManager {
+	return connManager
+}
+
 // AddConnection adds a new connection to the manager
 func (cm *ConnectionManager) AddConnection(conn *websocket.Conn, user *UserConnection) {
 	cm.mutex.Lock()
@@ -176,6 +181,61 @@ func (cm *ConnectionManager) BroadcastMQTTMessage(messageType string, data inter
 
 			// Send message (ignore errors, connection will be cleaned up elsewhere)
 			conn.WriteMessage(websocket.TextMessage, finalMsg)
+		}(conn, user)
+	}
+}
+
+// BroadcastToUser sends a WebSocket message to all connections for a specific user
+func (cm *ConnectionManager) BroadcastToUser(username string, messageType string, data interface{}) {
+	cm.mutex.RLock()
+	defer cm.mutex.RUnlock()
+
+	for conn, user := range cm.connections {
+		// Only send to connections of the specified user
+		if user.Username != username {
+			continue
+		}
+
+		// Send message to this connection
+		go func(conn *websocket.Conn, user *UserConnection) {
+			// Convert to socket.io format: 42["messageType", {...}]
+			socketIOPayload, err := json.Marshal([]interface{}{messageType, data})
+			if err != nil {
+				logs.Log(fmt.Sprintf("[ERROR][BROADCAST] Failed to marshal message for user %s: %v", username, err))
+				return
+			}
+
+			finalMsg := append([]byte("42"), socketIOPayload...)
+
+			// Send message (ignore errors, connection will be cleaned up elsewhere)
+			if err := conn.WriteMessage(websocket.TextMessage, finalMsg); err != nil {
+				logs.Log(fmt.Sprintf("[WARN][BROADCAST] Failed to send message to user %s: %v", username, err))
+			}
+		}(conn, user)
+	}
+}
+
+// BroadcastGlobal sends a WebSocket message to all connected clients without authorization checks
+func (cm *ConnectionManager) BroadcastGlobal(messageType string, data interface{}) {
+	cm.mutex.RLock()
+	defer cm.mutex.RUnlock()
+
+	for conn, user := range cm.connections {
+		// Send message to this connection
+		go func(conn *websocket.Conn, user *UserConnection) {
+			// Convert to socket.io format: 42["messageType", {...}]
+			socketIOPayload, err := json.Marshal([]interface{}{messageType, data})
+			if err != nil {
+				logs.Log(fmt.Sprintf("[ERROR][BROADCAST] Failed to marshal message: %v", err))
+				return
+			}
+
+			finalMsg := append([]byte("42"), socketIOPayload...)
+
+			// Send message (ignore errors, connection will be cleaned up elsewhere)
+			if err := conn.WriteMessage(websocket.TextMessage, finalMsg); err != nil {
+				logs.Log(fmt.Sprintf("[WARN][BROADCAST] Failed to send global message: %v", err))
+			}
 		}(conn, user)
 	}
 }

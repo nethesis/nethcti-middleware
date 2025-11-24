@@ -22,6 +22,10 @@ components:
       scheme: bearer
       bearerFormat: JWT
       description: JWT token obtained from /login endpoint
+    superAdminAuth:
+      type: http
+      scheme: bearer
+      description: Super admin bearer token for administrative endpoints
 
   schemas:
     LoginRequest:
@@ -231,6 +235,61 @@ paths:
           description: Successful logout
         '401':
           description: Unauthorized
+
+  /refresh:
+    post:
+      summary: Refresh JWT token with current profile capabilities
+      operationId: refreshToken
+      tags:
+        - Authentication
+      security:
+        - bearerAuth: []
+      description: |
+        Refresh the JWT token to obtain a new token with the currently-loaded profile data.
+        This endpoint does NOT reload profile files from disk; it uses the profiles already in memory.
+        
+        Use this endpoint to:
+        - Get a new token after capabilities have been updated via SIGUSR1 signal
+        - Extend token expiration time
+        - Update 2FA status in the token
+        
+        The new token will have the same username and profile but with current timestamp and renewed expiration.
+      responses:
+        '200':
+          description: Token refreshed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: "profile reloaded and token refreshed"
+                  data:
+                    type: object
+                    properties:
+                      token:
+                        type: string
+                        description: New JWT bearer token
+                      expire:
+                        type: string
+                        format: date-time
+                        description: Token expiration timestamp
+        '400':
+          description: Invalid token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized or token invalid
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /2fa/status:
     get:
@@ -468,12 +527,102 @@ paths:
         '401':
           description: Unauthorized
 
+  /admin/reload:
+    post:
+      summary: Reload profiles and users (Super Admin only)
+      operationId: reloadProfiles
+      tags:
+        - Administration
+      description: |
+        Global profile reload endpoint for super administrators.
+        
+        This endpoint triggers a reload of all profiles and users from configuration files.
+        All connected WebSocket clients are notified of the profile reload via broadcast message.
+        
+        Users with active sessions should call /refresh to update their JWT tokens with new capabilities.
+        
+        Security: Requires two factors of authentication:
+        1. IP Whitelist - Request must come from an allowed IP/CIDR range (default: 127.0.0.0/8)
+        2. Bearer Token - Must provide valid super admin token in Authorization header
+        
+        The IP check occurs first and returns 403 Forbidden if the client IP is not whitelisted.
+        If the IP is allowed, bearer token validation is performed.
+      security:
+        - superAdminAuth: []
+      responses:
+        '200':
+          description: Profiles reloaded successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: "profiles reloaded successfully"
+                  data:
+                    type: object
+                    properties:
+                      trigger:
+                        type: string
+                        enum: [api, signal]
+                        description: What triggered the reload (api for HTTP endpoint, signal for SIGUSR1)
+        '401':
+          description: Unauthorized - invalid or missing super admin token (only checked if IP is whitelisted)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 401
+                  message:
+                    type: string
+                    example: "super admin authentication required"
+        '403':
+          description: Forbidden - client IP is not in the super admin allowed IP whitelist
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 403
+                  message:
+                    type: string
+                    example: "access denied: IP not in allowed list"
+                  data:
+                    type: "null"
+        '500':
+          description: Failed to reload profiles
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 500
+                  message:
+                    type: string
+                    example: "failed to reload profiles"
+                  data:
+                    type: string
+                    description: Error details
+
 tags:
   - name: Authentication
-    description: Login and session management
+    description: Login, logout, and token management
   - name: Two-Factor Authentication
     description: TOTP-based 2FA management
   - name: Phonebook
     description: Phonebook management and CSV import
   - name: Phone Island Integration
     description: Phone Island token and authentication
+  - name: Administration
+    description: Administrative operations requiring super admin authentication

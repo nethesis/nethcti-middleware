@@ -7,8 +7,11 @@ package main
 
 import (
 	"io"
+	"os"
+	"os/signal"
 	"regexp"
 	"strings"
+	"syscall"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-contrib/gzip"
@@ -54,6 +57,9 @@ func main() {
 		return
 	}
 
+	// Setup signal handler for SIGUSR1 to reload profiles
+	go setupSignalHandler()
+
 	// Init MQTT and setup transcription subscription
 	mqttCh := mqtt.Init()
 	if mqttCh != nil {
@@ -74,6 +80,19 @@ func main() {
 
 	// Run server
 	router.Run(configuration.Config.ListenAddress)
+}
+
+// broadcastReloadNotification is a middleware that broadcasts profile reload notification to all connected clients via WebSocket
+func broadcastReloadNotification() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Check if broadcast flag was set by SuperAdminReload
+		if broadcast, exists := c.Get("broadcast_reload"); exists && broadcast.(bool) {
+			// Broadcast notification to all connected WebSocket clients
+			socket.GetConnectionManager().BroadcastGlobal("profile_reload_global", gin.H{
+				"trigger": "api",
+			})
+		}
+	}
 }
 
 func createRouter() *gin.Engine {
@@ -109,6 +128,9 @@ func createRouter() *gin.Engine {
 	api.POST("/login", middleware.InstanceJWT().LoginHandler)
 	api.GET("/ws/", socket.WsProxyHandler)
 
+	// Super admin reload endpoint (no JWT required)
+	api.POST("/admin/reload", middleware.RequireSuperAdmin(), methods.SuperAdminReload, broadcastReloadNotification())
+
 	// Authentication required endpoints
 	api.Use(middleware.InstanceJWT().MiddlewareFunc())
 	{
@@ -126,6 +148,9 @@ func createRouter() *gin.Engine {
 		api.POST("/authentication/phone_island_token_login", methods.PhoneIslandTokenLogin)
 		api.POST("/authentication/persistent_token_remove", methods.PhoneIslandTokenRemove)
 		api.GET("/authentication/phone_island_token_check", methods.PhoneIslandTokenCheck)
+
+		// Token refresh endpoint
+		api.POST("/refresh", methods.ReloadProfileAndToken)
 
 		// Logout endpoint
 		api.POST("/logout", middleware.InstanceJWT().LogoutHandler)
@@ -175,4 +200,23 @@ func createRouter() *gin.Engine {
 	})
 
 	return router
+}
+
+// setupSignalHandler sets up SIGUSR1 listener for profile reload
+func setupSignalHandler() {
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGUSR1)
+
+	for range sigChan {
+		logs.Log("[SIGNAL] Received SIGUSR1 signal, reloading profiles...")
+		if err := store.ReloadProfiles(); err != nil {
+			logs.Log("[SIGNAL][ERROR] Failed to reload profiles on SIGUSR1: " + err.Error())
+		} else {
+			logs.Log("[SIGNAL] Profile reload completed successfully from SIGUSR1")
+			// Broadcast notification to all connected users via WebSocket
+			socket.GetConnectionManager().BroadcastGlobal("profile_reload_global", gin.H{
+				"trigger": "signal",
+			})
+		}
+	}
 }

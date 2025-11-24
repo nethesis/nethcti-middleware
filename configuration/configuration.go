@@ -15,15 +15,17 @@ import (
 )
 
 type Configuration struct {
-	ListenAddress string   `json:"listen_address"`
-	Secret_jwt    string   `json:"secret"`
-	V1Protocol    string   `json:"v1_protocol"`
-	V1ApiEndpoint string   `json:"v1_api_endpoint"`
-	V1WsEndpoint  string   `json:"v1_ws_endpoint"`
-	V1ApiPath     string   `json:"v1_api_path"`
-	V1WsPath      string   `json:"v1_ws_path"`
-	SensitiveList []string `json:"sensitive_list"`
-	FreePBXAPIs   []string `json:"freepbx_apis"`
+	ListenAddress        string   `json:"listen_address"`
+	Secret_jwt           string   `json:"secret"`
+	SuperAdminToken      string   `json:"super_admin_token"`
+	SuperAdminAllowedIPs []string `json:"super_admin_allowed_ips"`
+	V1Protocol           string   `json:"v1_protocol"`
+	V1ApiEndpoint        string   `json:"v1_api_endpoint"`
+	V1WsEndpoint         string   `json:"v1_ws_endpoint"`
+	V1ApiPath            string   `json:"v1_api_path"`
+	V1WsPath             string   `json:"v1_ws_path"`
+	SensitiveList        []string `json:"sensitive_list"`
+	FreePBXAPIs          []string `json:"freepbx_apis"`
 
 	SecretsDir string `json:"secrets_dir"`
 	Issuer2FA  string `json:"issuer_2fa"`
@@ -189,6 +191,29 @@ func Init() {
 
 	// Load or generate JWT secret
 	Config.Secret_jwt = loadOrGenerateJWTSecret(Config.SecretsDir)
+
+	// Load or generate super admin token from environment variable or file
+	if os.Getenv("NETHVOICE_MIDDLEWARE_SUPER_ADMIN_TOKEN") != "" {
+		Config.SuperAdminToken = os.Getenv("NETHVOICE_MIDDLEWARE_SUPER_ADMIN_TOKEN")
+		logs.Log("[INFO][CONFIG] Loaded super admin token from NETHVOICE_MIDDLEWARE_SUPER_ADMIN_TOKEN environment variable")
+	} else {
+		Config.SuperAdminToken = "CHANGEME"
+		logs.Log("[WARNING][CONFIG] NETHVOICE_MIDDLEWARE_SUPER_ADMIN_TOKEN variable is not set; using default token 'CHANGEME'")
+	}
+
+	// Load super admin allowed IPs with CIDR support
+	if os.Getenv("NETHVOICE_MIDDLEWARE_SUPER_ADMIN_ALLOW_IPS") != "" {
+		ipsString := os.Getenv("NETHVOICE_MIDDLEWARE_SUPER_ADMIN_ALLOW_IPS")
+		Config.SuperAdminAllowedIPs = strings.Split(ipsString, ",")
+		// Trim whitespace from each IP/CIDR
+		for i, ip := range Config.SuperAdminAllowedIPs {
+			Config.SuperAdminAllowedIPs[i] = strings.TrimSpace(ip)
+		}
+		logs.Log("[INFO][CONFIG] Super admin allowed IPs: " + strings.Join(Config.SuperAdminAllowedIPs, ", "))
+	} else {
+		Config.SuperAdminAllowedIPs = []string{"127.0.0.0/8"}
+		logs.Log("[WARNING][CONFIG] NETHVOICE_MIDDLEWARE_SUPER_ADMIN_ALLOW_IPS variable is not set; using default IP range 127.0.0.0/8")
+	}
 
 	// Set MariaDB host
 	if os.Getenv("PHONEBOOK_MARIADB_HOST") != "" {

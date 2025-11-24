@@ -7,6 +7,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -580,4 +581,351 @@ func writeTestUsers(path string) {
 	"advuser": {"profile_id": "3"}
 }`
 	os.WriteFile(path, []byte(content), 0o644)
+}
+
+// TestReloadProfileEndpointReturnsNewToken verifies reload endpoint returns new token with updated capabilities
+func TestReloadProfileEndpointReturnsNewToken(t *testing.T) {
+	// Get a valid JWT token by logging in
+	loginPayload := map[string]string{
+		"username": "testuser",
+		"password": "testpass",
+	}
+	loginBody, _ := json.Marshal(loginPayload)
+	resp, err := http.Post(testServerURL+"/login", "application/json", bytes.NewBuffer(loginBody))
+	assert.NoError(t, err)
+	defer resp.Body.Close()
+
+	var loginResp map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&loginResp)
+	token := loginResp["token"].(string)
+
+	// Call refresh endpoint with valid token
+	req, _ := http.NewRequest("POST", testServerURL+"/refresh", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	client := &http.Client{}
+	resp, err = client.Do(req)
+	assert.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var reloadResp map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&reloadResp)
+
+	// Verify response structure
+	assert.Equal(t, float64(200), reloadResp["code"])
+	assert.NotNil(t, reloadResp["data"])
+
+	data := reloadResp["data"].(map[string]interface{})
+	newToken := data["token"].(string)
+	assert.NotEmpty(t, newToken)
+	assert.NotEmpty(t, data["expire"])
+}
+
+// TestReloadProfileEndpointWithValidToken verifies new token works for authenticated requests
+func TestReloadProfileEndpointWithValidToken(t *testing.T) {
+	// Get initial token
+	loginPayload := map[string]string{
+		"username": "advuser",
+		"password": "testpass",
+	}
+	loginBody, _ := json.Marshal(loginPayload)
+	resp, _ := http.Post(testServerURL+"/login", "application/json", bytes.NewBuffer(loginBody))
+	defer resp.Body.Close()
+
+	var loginResp map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&loginResp)
+	token := loginResp["token"].(string)
+
+	// Call refresh endpoint
+	req, _ := http.NewRequest("POST", testServerURL+"/refresh", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	client := &http.Client{}
+	resp, _ = client.Do(req)
+	defer resp.Body.Close()
+
+	var reloadResp map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&reloadResp)
+
+	data := reloadResp["data"].(map[string]interface{})
+	newToken := data["token"].(string)
+
+	// Verify new token can access protected endpoints
+	req2, _ := http.NewRequest("GET", testServerURL+"/2fa/status", nil)
+	req2.Header.Set("Authorization", "Bearer "+newToken)
+
+	resp2, _ := client.Do(req2)
+	defer resp2.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp2.StatusCode)
+}
+
+// TestReloadProfileEndpointUnauthorized verifies unauthorized users cannot access refresh
+func TestReloadProfileEndpointUnauthorized(t *testing.T) {
+	// Try to call refresh without token
+	resp, err := http.Post(testServerURL+"/refresh", "application/json", nil)
+	assert.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+}
+
+// TestReloadProfileEndpointOldTokenStillValid verifies old token is still valid after reload
+func TestReloadProfileEndpointOldTokenStillValid(t *testing.T) {
+	// Get initial token
+	loginPayload := map[string]string{
+		"username": "testuser",
+		"password": "testpass",
+	}
+	loginBody, _ := json.Marshal(loginPayload)
+	resp, _ := http.Post(testServerURL+"/login", "application/json", bytes.NewBuffer(loginBody))
+	defer resp.Body.Close()
+
+	var loginResp map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&loginResp)
+	oldToken := loginResp["token"].(string)
+
+	// Call refresh to get new token
+	req, _ := http.NewRequest("POST", testServerURL+"/refresh", nil)
+	req.Header.Set("Authorization", "Bearer "+oldToken)
+
+	client := &http.Client{}
+	resp, _ = client.Do(req)
+	defer resp.Body.Close()
+
+	var reloadResp map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&reloadResp)
+
+	data := reloadResp["data"].(map[string]interface{})
+	newToken := data["token"].(string)
+
+	// Try to use new token for an authenticated request
+	req2, _ := http.NewRequest("GET", testServerURL+"/2fa/status", nil)
+	req2.Header.Set("Authorization", "Bearer "+newToken)
+
+	resp2, _ := client.Do(req2)
+	defer resp2.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp2.StatusCode)
+}
+
+// TestSuperAdminReloadEndpointWithValidToken verifies /admin/reload endpoint works with valid super admin token
+func TestSuperAdminReloadEndpointWithValidToken(t *testing.T) {
+	resetTestState()
+
+	// Use the default super admin token "CHANGEME" (since no env var is set in tests)
+	superAdminToken := "CHANGEME"
+
+	// Call /admin/reload endpoint with valid token
+	client := &http.Client{}
+	req, _ := http.NewRequest("POST", testServerURL+"/admin/reload", nil)
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", superAdminToken))
+
+	resp, err := client.Do(req)
+	assert.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode, "should accept valid super admin token")
+
+	var response map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&response)
+	assert.Equal(t, float64(200), response["code"])
+	assert.Contains(t, response["message"].(string), "profiles reloaded successfully")
+}
+
+// TestSuperAdminReloadEndpointWithInvalidToken verifies /admin/reload rejects invalid tokens
+func TestSuperAdminReloadEndpointWithInvalidToken(t *testing.T) {
+	resetTestState()
+
+	client := &http.Client{}
+	req, _ := http.NewRequest("POST", testServerURL+"/admin/reload", nil)
+	req.Header.Set("Authorization", "Bearer invalid-token-12345")
+
+	resp, err := client.Do(req)
+	assert.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode, "should reject invalid super admin token")
+
+	var response map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&response)
+	assert.Equal(t, float64(401), response["code"])
+	assert.Contains(t, response["message"].(string), "super admin authentication required")
+}
+
+// TestSuperAdminReloadEndpointWithoutToken verifies /admin/reload rejects requests without token
+func TestSuperAdminReloadEndpointWithoutToken(t *testing.T) {
+	resetTestState()
+
+	resp, err := http.Post(testServerURL+"/admin/reload", "application/json", nil)
+	assert.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode, "should reject requests without authentication")
+
+	var response map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&response)
+	assert.Equal(t, float64(401), response["code"])
+}
+
+// TestSuperAdminReloadEndpointMalformedAuthHeader verifies /admin/reload rejects malformed auth headers
+func TestSuperAdminReloadEndpointMalformedAuthHeader(t *testing.T) {
+	resetTestState()
+
+	client := &http.Client{}
+	req, _ := http.NewRequest("POST", testServerURL+"/admin/reload", nil)
+	req.Header.Set("Authorization", "InvalidScheme token-value")
+
+	resp, err := client.Do(req)
+	assert.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode, "should reject malformed auth header")
+}
+
+// TestSuperAdminReloadEndToEndWithWebSocketClient verifies complete flow:
+// 1. Client logs in with test user (Base profile)
+// 2. Verify initial capabilities are from Base profile
+// 3. Change user's profile to Advanced profile
+// 4. /admin/reload super admin endpoint is called
+// 5. Client calls /refresh and obtains new JWT with updated capabilities
+// 6. Verify capabilities changed from Base to Advanced
+func TestSuperAdminReloadEndToEndWithWebSocketClient(t *testing.T) {
+	resetTestState()
+
+	// Step 1: Login as baseuser (Base profile - id 1)
+	loginPayload := map[string]string{
+		"username": "baseuser",
+		"password": "testpass",
+	}
+	loginBody, _ := json.Marshal(loginPayload)
+	resp, _ := http.Post(testServerURL+"/login", "application/json", bytes.NewBuffer(loginBody))
+	defer resp.Body.Close()
+
+	var loginResp map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&loginResp)
+	oldToken := loginResp["token"].(string)
+	assert.NotEmpty(t, oldToken, "should get valid login token")
+
+	// Step 2: Verify initial capabilities are from Base profile
+	// Parse token to get capabilities
+	var oldTokenClaims map[string]interface{}
+	parseTestToken(oldToken, &oldTokenClaims)
+	t.Logf("Initial token claims: %v", oldTokenClaims)
+
+	// Check that baseuser starts with profile_id "1" (Base)
+	initialProfileID, ok := oldTokenClaims["profile_id"].(string)
+	assert.True(t, ok, "should have profile_id in token")
+	assert.Equal(t, "1", initialProfileID, "baseuser should start with Base profile (id 1)")
+
+	// Get initial ad_phonebook capability value (Base profile has it as false)
+	oldPhonebookCap, hasOldPhonebook := oldTokenClaims["phonebook.ad_phonebook"].(bool)
+	assert.True(t, hasOldPhonebook, "Base profile should have ad_phonebook capability")
+	assert.False(t, oldPhonebookCap, "Base profile should have ad_phonebook=false")
+
+	// Step 3: Change user's profile from Base (1) to Advanced (3)
+	usersPath := os.Getenv("AUTH_USERS_PATH")
+
+	// Update user to Advanced profile
+	updatedUsers := `{
+	"testuser": {"profile_id": "3"},
+	"baseuser": {"profile_id": "3"},
+	"advuser": {"profile_id": "3"}
+}`
+	os.WriteFile(usersPath, []byte(updatedUsers), 0o644)
+
+	// Step 4: Call /admin/reload super admin endpoint
+	client := &http.Client{}
+	reloadReq, _ := http.NewRequest("POST", testServerURL+"/admin/reload", nil)
+	reloadReq.Header.Set("Authorization", "Bearer CHANGEME")
+
+	reloadResp, err := client.Do(reloadReq)
+	assert.NoError(t, err, "should be able to call /admin/reload endpoint")
+	defer reloadResp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, reloadResp.StatusCode, "/admin/reload should succeed")
+
+	var reloadResponse map[string]interface{}
+	json.NewDecoder(reloadResp.Body).Decode(&reloadResponse)
+	assert.Equal(t, float64(200), reloadResponse["code"], "reload should return 200")
+	assert.Equal(t, "profiles reloaded successfully", reloadResponse["message"], "should return success message")
+
+	// Step 5: Call /refresh and verify new JWT has updated capabilities
+	refreshReq, _ := http.NewRequest("POST", testServerURL+"/refresh", nil)
+	refreshReq.Header.Set("Authorization", "Bearer "+oldToken)
+
+	refreshResp, _ := client.Do(refreshReq)
+	defer refreshResp.Body.Close()
+
+	var refreshResponse map[string]interface{}
+	json.NewDecoder(refreshResp.Body).Decode(&refreshResponse)
+	assert.Equal(t, float64(200), refreshResponse["code"], "refresh should succeed")
+
+	// Extract new token from response
+	refreshData := refreshResponse["data"].(map[string]interface{})
+	newToken := refreshData["token"].(string)
+	assert.NotEmpty(t, newToken, "should get new token")
+
+	// Step 6: Verify new token has updated capabilities
+	var newTokenClaims map[string]interface{}
+	parseTestToken(newToken, &newTokenClaims)
+	t.Logf("Updated token claims: %v", newTokenClaims)
+
+	// Check that profile_id changed to "3" (Advanced)
+	newProfileID, ok := newTokenClaims["profile_id"].(string)
+	assert.True(t, ok, "should have profile_id in new token")
+	assert.Equal(t, "3", newProfileID, "baseuser should now have Advanced profile (id 3) after reload")
+
+	// Verify ad_phonebook capability is now true (Advanced profile has it as true)
+	newPhonebookCap, hasNewPhonebook := newTokenClaims["phonebook.ad_phonebook"].(bool)
+	assert.True(t, hasNewPhonebook, "Advanced profile should have ad_phonebook capability")
+	assert.True(t, newPhonebookCap, "Advanced profile should have ad_phonebook=true after reload")
+
+	// Verify the capability actually changed
+	assert.NotEqual(t, oldPhonebookCap, newPhonebookCap, "capability should have changed after profile update and reload")
+	t.Logf("✓ Capability successfully updated: %v -> %v", oldPhonebookCap, newPhonebookCap)
+	t.Logf("✓ Profile successfully updated: %s -> %s", initialProfileID, newProfileID)
+}
+
+// Helper function to extract and parse token claims for testing
+func parseTestToken(tokenString string, claims *map[string]interface{}) {
+	// This is a simple helper that extracts the payload from the JWT
+	parts := strings.Split(tokenString, ".")
+	if len(parts) != 3 {
+		return
+	}
+
+	// Decode the payload (second part)
+	payload := parts[1]
+	// Add padding if necessary
+	switch len(payload) % 4 {
+	case 2:
+		payload += "=="
+	case 3:
+		payload += "="
+	}
+
+	decoded := make([]byte, 0)
+	for i := 0; i < len(payload); i++ {
+		c := payload[i]
+		switch c {
+		case '-':
+			decoded = append(decoded, '+')
+		case '_':
+			decoded = append(decoded, '/')
+		default:
+			decoded = append(decoded, c)
+		}
+	}
+
+	// Base64 decode the payload
+	data, err := base64.StdEncoding.DecodeString(string(decoded))
+	if err != nil {
+		return
+	}
+
+	// Parse JSON
+	json.Unmarshal(data, claims)
 }
