@@ -10,6 +10,7 @@ Designed to run inside NethServer 8.
 ## Development Environment
 
 The development environment is based on Go and Podman.
+
 1.  **Prerequisites**:
     *   Go (version 1.24 or later)
     *   Podman
@@ -27,30 +28,27 @@ The development environment is based on Go and Podman.
         ```bash
         go build -o whale
         ```
-    *   To build the Docker container image:
+    *   To build the container image:
         ```bash
         podman build -t nethcti-middleware .
         ```
 
-4. **Testing**
-    * ALWAYS start mariadb container before starting tests
-        ```bash
-         podman run -d --rm --name mariadb-test -e MYSQL_ROOT_PASSWORD=root -e MYSQL_DATABASE=nethcti3 \
-         -p 3306:3306 docker.io/library/mariadb:10.8.2
-        ```
-    * Run tests, but make sure that mariadb-test container is running
-        ```bash
-        go test -v -cover ./...
-        ```
-    * Generate coverage report
-        ```bash
-        go test -coverprofile=coverage.out ./...
-        go tool cover -html=coverage.out -o coverage.html
-        ```
-    * Stop the test mariadb container
-        ```bash
-        podman stop mariadb-test
-        ```
+## Code style
+
+- Always apply go fmt formatting before committing code:
+    ```bash
+    go fmt ./...
+    ```
+
+## Code conventions
+
+- Log errors using the logs package.
+- Use context.Context for request-scoped values and deadlines.
+- When logging, first add the priority level, then the component, e.g.:
+  ```go
+    logs.Log("[INFO][PROXY] FreePBX API call for user: " + authorizationUser)
+  ```
+- Valid logging levels are: DEBUG, INFO, WARNING, ERROR, CRITICAL.
 
 ## Testing Instructions
 
@@ -62,6 +60,28 @@ The project includes a dedicated test suite covering its core functionality.
 *   Run tests using the following command:
     ```bash
     go test ./...
+    ```
+
+### Testing steps
+
+1. ALWAYS start mariadb container before starting tests
+   ```bash
+    podman run -d --rm --name mariadb-nethcti -e MYSQL_ROOT_PASSWORD=root -e MYSQL_DATABASE=nethcti3 \
+    -p 3306:3306 docker.io/library/mariadb:10.8.2
+    ```
+2. Run tests, but make sure that mariadb-nethcti container is running
+    ```bash
+    go test ./...
+    go test ./... -v -cover
+    ```
+3. Generate coverage report
+    ```bash
+    go test ./... -coverprofile=coverage.out
+    go tool cover -html=coverage.out -o coverage.html
+    ```
+4. Stop the test mariadb container
+    ```bash
+    podman stop mariadb-test
     ```
 
 ## Definition of Done
