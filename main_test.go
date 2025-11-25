@@ -8,6 +8,8 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -18,6 +20,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 
+	"github.com/nethesis/nethcti-middleware/configuration"
 	"github.com/nethesis/nethcti-middleware/models"
 	"github.com/nethesis/nethcti-middleware/store"
 	"github.com/nethesis/nethcti-middleware/utils"
@@ -312,4 +315,473 @@ func TestDisable2FA(t *testing.T) {
 	defer resp.Body.Close()
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
+// Helper function to create a multipart request with CSV file and username
+func createPhonebookImportRequest(username, csvData string) (*http.Request, error) {
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+
+	// Add username field
+	if username != "" {
+		writer.WriteField("username", username)
+	}
+
+	// Add CSV file
+	part, err := writer.CreateFormFile("file", "phonebook.csv")
+	if err != nil {
+		return nil, err
+	}
+
+	io.WriteString(part, csvData)
+	writer.Close()
+
+	req, err := http.NewRequest("POST", testServerURL+"/admin/phonebook/import", body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	return req, nil
+}
+
+// TestAdminPhonebookImportWithValidTokenAndIP tests successful import with valid super admin credentials
+func TestAdminPhonebookImportWithValidTokenAndIP(t *testing.T) {
+	resetTestState()
+
+	// Set up super admin configuration
+	configuration.Config.SuperAdminToken = "test-super-admin-token"
+	configuration.Config.SuperAdminAllowedIPs = []string{"127.0.0.1"}
+
+	csvData := `name,workemail,workphone
+John Doe,john@example.com,5551234
+Jane Smith,jane@example.com,5555678`
+
+	req, _ := createPhonebookImportRequest("testuser", csvData)
+	req.Header.Set("Authorization", "Bearer test-super-admin-token")
+	req.RemoteAddr = "127.0.0.1:12345"
+
+	resp, err := http.DefaultClient.Do(req)
+	assert.NoError(t, err)
+	defer resp.Body.Close()
+
+	// Should be accepted by middleware and processed
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var response map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&response)
+
+	// Should contain import response fields
+	assert.Contains(t, response, "total_rows")
+	assert.Contains(t, response, "message")
+	assert.Contains(t, response, "imported_rows")
+	assert.Contains(t, response, "failed_rows")
+	assert.Contains(t, response, "skipped_rows")
+}
+
+// TestAdminPhonebookImportWithInvalidToken tests rejection with invalid super admin token
+func TestAdminPhonebookImportWithInvalidToken(t *testing.T) {
+	resetTestState()
+
+	configuration.Config.SuperAdminToken = "test-super-admin-token"
+	configuration.Config.SuperAdminAllowedIPs = []string{"127.0.0.1"}
+
+	csvData := `name,workemail
+John Doe,john@example.com`
+
+	req, _ := createPhonebookImportRequest("testuser", csvData)
+	req.Header.Set("Authorization", "Bearer wrong-token")
+	req.RemoteAddr = "127.0.0.1:12345"
+
+	resp, err := http.DefaultClient.Do(req)
+	assert.NoError(t, err)
+	defer resp.Body.Close()
+
+	// Should be rejected by middleware
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+	respBody, _ := io.ReadAll(resp.Body)
+	assert.Contains(t, string(respBody), "authentication required")
+}
+
+// TestAdminPhonebookImportWithoutToken tests rejection when no token is provided
+func TestAdminPhonebookImportWithoutToken(t *testing.T) {
+	resetTestState()
+
+	configuration.Config.SuperAdminToken = "test-super-admin-token"
+	configuration.Config.SuperAdminAllowedIPs = []string{"127.0.0.1"}
+
+	csvData := `name,workemail
+John Doe,john@example.com`
+
+	req, _ := createPhonebookImportRequest("testuser", csvData)
+	// No Authorization header
+	req.RemoteAddr = "127.0.0.1:12345"
+
+	resp, err := http.DefaultClient.Do(req)
+	assert.NoError(t, err)
+	defer resp.Body.Close()
+
+	// Should be rejected by middleware
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+}
+
+// TestAdminPhonebookImportWithInvalidIPAddress tests rejection from non-allowed IP
+func TestAdminPhonebookImportWithInvalidIPAddress(t *testing.T) {
+	resetTestState()
+
+	configuration.Config.SuperAdminToken = "test-super-admin-token"
+	configuration.Config.SuperAdminAllowedIPs = []string{"192.168.1.0/24"}
+
+	csvData := `name,workemail
+John Doe,john@example.com`
+
+	req, _ := createPhonebookImportRequest("testuser", csvData)
+	req.Header.Set("Authorization", "Bearer test-super-admin-token")
+	req.RemoteAddr = "10.0.0.1:12345" // Not in allowed IP range
+
+	resp, err := http.DefaultClient.Do(req)
+	assert.NoError(t, err)
+	defer resp.Body.Close()
+
+	// Should be rejected by middleware due to IP
+	assert.Equal(t, http.StatusForbidden, resp.StatusCode)
+	respBody, _ := io.ReadAll(resp.Body)
+	assert.Contains(t, string(respBody), "IP not in allowed list")
+}
+
+// TestAdminPhonebookImportWithCIDRAllowedIP tests access from IP within CIDR range
+func TestAdminPhonebookImportWithCIDRAllowedIP(t *testing.T) {
+	resetTestState()
+
+	configuration.Config.SuperAdminToken = "test-super-admin-token"
+	// Use 127.0.0.0/8 CIDR since httptest uses 127.0.0.1 by default
+	configuration.Config.SuperAdminAllowedIPs = []string{"127.0.0.0/8", "10.0.0.0/8"}
+
+	csvData := `name,workemail,workphone
+John Doe,john@example.com,5551234`
+
+	req, _ := createPhonebookImportRequest("testuser", csvData)
+	req.Header.Set("Authorization", "Bearer test-super-admin-token")
+	req.RemoteAddr = "127.0.0.1:12345" // Within CIDR range
+
+	resp, err := http.DefaultClient.Do(req)
+	assert.NoError(t, err)
+	defer resp.Body.Close()
+
+	// Should be allowed through
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
+// TestAdminPhonebookImportWithoutFile tests rejection when file is missing
+func TestAdminPhonebookImportWithoutFile(t *testing.T) {
+	resetTestState()
+
+	configuration.Config.SuperAdminToken = "test-super-admin-token"
+	configuration.Config.SuperAdminAllowedIPs = []string{"127.0.0.1"}
+
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	writer.WriteField("username", "testuser")
+	writer.Close()
+
+	req, _ := http.NewRequest("POST", testServerURL+"/admin/phonebook/import", body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("Authorization", "Bearer test-super-admin-token")
+	req.RemoteAddr = "127.0.0.1:12345"
+
+	resp, err := http.DefaultClient.Do(req)
+	assert.NoError(t, err)
+	defer resp.Body.Close()
+
+	// Should return error about missing file
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	respBody, _ := io.ReadAll(resp.Body)
+	assert.Contains(t, string(respBody), "file required")
+}
+
+// TestAdminPhonebookImportWithoutUsername tests rejection when username field is missing
+func TestAdminPhonebookImportWithoutUsername(t *testing.T) {
+	resetTestState()
+
+	configuration.Config.SuperAdminToken = "test-super-admin-token"
+	configuration.Config.SuperAdminAllowedIPs = []string{"127.0.0.1"}
+
+	csvData := `name,workemail
+John Doe,john@example.com`
+
+	buf := &bytes.Buffer{}
+	writer := multipart.NewWriter(buf)
+
+	part, _ := writer.CreateFormFile("file", "phonebook.csv")
+	io.WriteString(part, csvData)
+	writer.Close()
+
+	req, _ := http.NewRequest("POST", testServerURL+"/admin/phonebook/import", buf)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("Authorization", "Bearer test-super-admin-token")
+	req.RemoteAddr = "127.0.0.1:12345"
+
+	resp, err := http.DefaultClient.Do(req)
+	assert.NoError(t, err)
+	defer resp.Body.Close()
+
+	// Should return error about missing username
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	respBody, _ := io.ReadAll(resp.Body)
+	assert.Contains(t, string(respBody), "username field is required")
+}
+
+// TestAdminPhonebookImportInvalidCSVFormat tests rejection with invalid CSV format
+func TestAdminPhonebookImportInvalidCSVFormat(t *testing.T) {
+	resetTestState()
+
+	configuration.Config.SuperAdminToken = "test-super-admin-token"
+	configuration.Config.SuperAdminAllowedIPs = []string{"127.0.0.1"}
+
+	// CSV without required 'name' column
+	csvData := `workemail,workphone
+john@example.com,5551234`
+
+	req, _ := createPhonebookImportRequest("testuser", csvData)
+	req.Header.Set("Authorization", "Bearer test-super-admin-token")
+	req.RemoteAddr = "127.0.0.1:12345"
+
+	resp, err := http.DefaultClient.Do(req)
+	assert.NoError(t, err)
+	defer resp.Body.Close()
+
+	// Should return error about missing 'name' column
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	respBody, _ := io.ReadAll(resp.Body)
+	assert.Contains(t, string(respBody), "must have 'name' column")
+}
+
+// TestAdminPhonebookImportWithMultipleRows tests successful import of multiple contacts
+func TestAdminPhonebookImportWithMultipleRows(t *testing.T) {
+	resetTestState()
+
+	configuration.Config.SuperAdminToken = "test-super-admin-token"
+	configuration.Config.SuperAdminAllowedIPs = []string{"127.0.0.1"}
+
+	csvData := `name,workemail,workphone,title,company
+John Doe,john@example.com,5551234,Manager,Acme Corp
+Jane Smith,jane@example.com,5555678,Engineer,Tech Inc
+Bob Johnson,bob@example.com,5559999,Developer,Dev Co`
+
+	req, _ := createPhonebookImportRequest("testuser", csvData)
+	req.Header.Set("Authorization", "Bearer test-super-admin-token")
+	req.RemoteAddr = "127.0.0.1:12345"
+
+	resp, err := http.DefaultClient.Do(req)
+	assert.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var response map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&response)
+
+	// Should report 3 total rows
+	assert.Equal(t, float64(3), response["total_rows"].(float64))
+	assert.Contains(t, response["message"], "completed")
+}
+
+// TestAdminPhonebookImportCSVWithSpecialCharacters tests handling of special characters
+func TestAdminPhonebookImportCSVWithSpecialCharacters(t *testing.T) {
+	resetTestState()
+
+	configuration.Config.SuperAdminToken = "test-super-admin-token"
+	configuration.Config.SuperAdminAllowedIPs = []string{"127.0.0.1"}
+
+	csvData := `name,company,notes
+José García,Acme & Corp,"Note with, comma"
+François Müller,Société Générale,Café`
+
+	req, _ := createPhonebookImportRequest("testuser", csvData)
+	req.Header.Set("Authorization", "Bearer test-super-admin-token")
+	req.RemoteAddr = "127.0.0.1:12345"
+
+	resp, err := http.DefaultClient.Do(req)
+	assert.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var response map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&response)
+
+	assert.Equal(t, float64(2), response["total_rows"].(float64))
+}
+
+// TestAdminPhonebookImportResponseFormat tests that response contains all required fields
+func TestAdminPhonebookImportResponseFormat(t *testing.T) {
+	resetTestState()
+
+	configuration.Config.SuperAdminToken = "test-super-admin-token"
+	configuration.Config.SuperAdminAllowedIPs = []string{"127.0.0.1"}
+
+	csvData := `name,workemail
+John Doe,john@example.com`
+
+	req, _ := createPhonebookImportRequest("testuser", csvData)
+	req.Header.Set("Authorization", "Bearer test-super-admin-token")
+	req.RemoteAddr = "127.0.0.1:12345"
+
+	resp, err := http.DefaultClient.Do(req)
+	assert.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var response map[string]interface{}
+	err = json.NewDecoder(resp.Body).Decode(&response)
+	assert.NoError(t, err)
+
+	// Verify all required fields are present in response
+	assert.Contains(t, response, "message")
+	assert.Contains(t, response, "total_rows")
+	assert.Contains(t, response, "imported_rows")
+	assert.Contains(t, response, "failed_rows")
+	assert.Contains(t, response, "skipped_rows")
+}
+
+// TestAdminPhonebookImportWithMixedCaseHeaders tests case-insensitive column headers
+func TestAdminPhonebookImportWithMixedCaseHeaders(t *testing.T) {
+	resetTestState()
+
+	configuration.Config.SuperAdminToken = "test-super-admin-token"
+	configuration.Config.SuperAdminAllowedIPs = []string{"127.0.0.1"}
+
+	// Mixed case headers
+	csvData := `NAME,WorkEmail,WORKPHONE,Title
+John Doe,john@example.com,5551234,Manager`
+
+	req, _ := createPhonebookImportRequest("testuser", csvData)
+	req.Header.Set("Authorization", "Bearer test-super-admin-token")
+	req.RemoteAddr = "127.0.0.1:12345"
+
+	resp, err := http.DefaultClient.Do(req)
+	assert.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var response map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&response)
+
+	// Should parse successfully even with mixed case headers
+	assert.Equal(t, float64(1), response["total_rows"].(float64))
+}
+
+// TestAdminPhonebookImportWithValidTypes tests valid type values (private/public)
+func TestAdminPhonebookImportWithValidTypes(t *testing.T) {
+	resetTestState()
+
+	configuration.Config.SuperAdminToken = "test-super-admin-token"
+	configuration.Config.SuperAdminAllowedIPs = []string{"127.0.0.1"}
+
+	csvData := `name,type,workemail
+John Doe,private,john@example.com
+Jane Smith,public,jane@example.com
+Bob Johnson,,bob@example.com`
+
+	req, _ := createPhonebookImportRequest("testuser", csvData)
+	req.Header.Set("Authorization", "Bearer test-super-admin-token")
+	req.RemoteAddr = "127.0.0.1:12345"
+
+	resp, err := http.DefaultClient.Do(req)
+	assert.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var response map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&response)
+
+	// All 3 rows should be parsed (empty type defaults to 'private')
+	assert.Equal(t, float64(3), response["total_rows"].(float64))
+}
+
+// TestAdminPhonebookImportWithInvalidType tests rejection of invalid type values
+func TestAdminPhonebookImportWithInvalidType(t *testing.T) {
+	resetTestState()
+
+	configuration.Config.SuperAdminToken = "test-super-admin-token"
+	configuration.Config.SuperAdminAllowedIPs = []string{"127.0.0.1"}
+
+	csvData := `name,type,workemail
+John Doe,invalid_type,john@example.com`
+
+	req, _ := createPhonebookImportRequest("testuser", csvData)
+	req.Header.Set("Authorization", "Bearer test-super-admin-token")
+	req.RemoteAddr = "127.0.0.1:12345"
+
+	resp, err := http.DefaultClient.Do(req)
+	assert.NoError(t, err)
+	defer resp.Body.Close()
+
+	// Should return 400 when all rows are skipped due to invalid type
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+
+	var response map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&response)
+
+	// Should report 1 row that was skipped due to invalid type
+	assert.Greater(t, response["skipped_rows"].(float64), float64(0))
+}
+
+// TestAdminPhonebookImportWithEmptyNames tests skipping rows with empty name field
+func TestAdminPhonebookImportWithEmptyNames(t *testing.T) {
+	resetTestState()
+
+	configuration.Config.SuperAdminToken = "test-super-admin-token"
+	configuration.Config.SuperAdminAllowedIPs = []string{"127.0.0.1"}
+
+	csvData := `name,workemail,workphone
+John Doe,john@example.com,5551234
+,jane@example.com,5555678
+Jane Smith,jane2@example.com,5555679`
+
+	req, _ := createPhonebookImportRequest("testuser", csvData)
+	req.Header.Set("Authorization", "Bearer test-super-admin-token")
+	req.RemoteAddr = "127.0.0.1:12345"
+
+	resp, err := http.DefaultClient.Do(req)
+	assert.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var response map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&response)
+
+	// Should have 2 total rows parsed, 1 skipped (empty name)
+	assert.Equal(t, float64(3), response["total_rows"].(float64))
+	assert.Greater(t, response["skipped_rows"].(float64), float64(0))
+}
+
+// TestAdminPhonebookImportWithAllFields tests CSV with all possible fields
+func TestAdminPhonebookImportWithAllFields(t *testing.T) {
+	resetTestState()
+
+	configuration.Config.SuperAdminToken = "test-super-admin-token"
+	configuration.Config.SuperAdminAllowedIPs = []string{"127.0.0.1"}
+
+	csvData := `name,type,workemail,homeemail,workphone,homephone,cellphone,fax,title,company,notes,homestreet,homepob,homecity,homeprovince,homepostalcode,homecountry,workstreet,workpob,workcity,workprovince,workpostalcode,workcountry,url,extension,speeddial_num
+John Doe,private,john@work.com,john@home.com,555-1234,555-1111,555-9999,555-2222,Manager,Acme Corp,Senior manager,123 Home St,PO123,HomeCity,HP,12345,HomeCountry,456 Work Ave,PO456,WorkCity,WP,54321,WorkCountry,https://example.com,1001,101`
+
+	req, _ := createPhonebookImportRequest("testuser", csvData)
+	req.Header.Set("Authorization", "Bearer test-super-admin-token")
+	req.RemoteAddr = "127.0.0.1:12345"
+
+	resp, err := http.DefaultClient.Do(req)
+	assert.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var response map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&response)
+
+	assert.Equal(t, float64(1), response["total_rows"].(float64))
 }

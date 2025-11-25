@@ -7,9 +7,11 @@ package middleware
 
 import (
 	"bytes"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -317,4 +319,86 @@ func InitJWT() *jwt.GinJWTMiddleware {
 
 	// return object
 	return authMiddleware
+}
+
+// RequireSuperAdmin middleware validates super admin bearer token with constant-time comparison
+func RequireSuperAdmin() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Step 1: Check IP whitelist first
+		clientIP := c.ClientIP()
+		isIPAllowed := false
+
+		for _, allowed := range configuration.Config.SuperAdminAllowedIPs {
+			// Check if it's a CIDR range
+			if strings.Contains(allowed, "/") {
+				_, ipnet, err := net.ParseCIDR(allowed)
+				if err != nil {
+					logs.Log("[WARNING][AUTH] Invalid CIDR notation in allowed IPs: " + allowed)
+					continue
+				}
+				if ipnet.Contains(net.ParseIP(clientIP)) {
+					isIPAllowed = true
+					break
+				}
+			} else {
+				// Direct IP comparison
+				if clientIP == allowed {
+					isIPAllowed = true
+					break
+				}
+			}
+		}
+
+		if !isIPAllowed {
+			logs.Log("[ERROR][AUTH] super admin access denied: IP " + clientIP + " not in allowed list")
+			c.AbortWithStatusJSON(http.StatusForbidden, structs.Map(models.StatusForbidden{
+				Code:    http.StatusForbidden,
+				Message: "access denied: IP not in allowed list",
+				Data:    nil,
+			}))
+			return
+		}
+
+		// Step 2: Check bearer token
+		// Get Authorization header
+		authHeader := c.GetHeader("Authorization")
+
+		// Extract bearer token
+		var providedToken string
+		if authHeader != "" {
+			const bearerScheme = "Bearer "
+			if len(authHeader) > len(bearerScheme) && strings.HasPrefix(authHeader, bearerScheme) {
+				providedToken = authHeader[len(bearerScheme):]
+			}
+		}
+
+		// Get expected super admin token from configuration
+		expectedToken := configuration.Config.SuperAdminToken
+
+		// Perform constant-time comparison to prevent timing attacks
+		// If either is empty, comparison will return false
+		if expectedToken == "" || providedToken == "" {
+			logs.Log("[ERROR][AUTH] super admin authentication failed: missing or empty token")
+			c.AbortWithStatusJSON(http.StatusUnauthorized, structs.Map(models.StatusUnauthorized{
+				Code:    http.StatusUnauthorized,
+				Message: "super admin authentication required",
+				Data:    nil,
+			}))
+			return
+		}
+
+		// Constant-time comparison prevents timing attacks
+		if subtle.ConstantTimeCompare([]byte(providedToken), []byte(expectedToken)) != 1 {
+			logs.Log("[ERROR][AUTH] super admin authentication failed: invalid token")
+			c.AbortWithStatusJSON(http.StatusUnauthorized, structs.Map(models.StatusUnauthorized{
+				Code:    http.StatusUnauthorized,
+				Message: "super admin authentication required",
+				Data:    nil,
+			}))
+			return
+		}
+
+		logs.Log("[INFO][AUTH] super admin authentication success")
+		c.Next()
+	}
 }

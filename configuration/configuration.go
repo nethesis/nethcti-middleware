@@ -41,6 +41,10 @@ type Configuration struct {
 	MiddlewareMariaDBUser     string `json:"nethvoice_middleware_mariadb_user"`
 	MiddlewareMariaDBPassword string `json:"nethvoice_middleware_mariadb_password"`
 	MiddlewareMariaDBDatabase string `json:"nethvoice_middleware_mariadb_database"`
+
+	// Super Admin Configuration
+	SuperAdminToken      string   `json:"super_admin_token"`
+	SuperAdminAllowedIPs []string `json:"super_admin_allowed_ips"`
 }
 
 var Config = Configuration{}
@@ -224,5 +228,26 @@ func Init() {
 		Config.MiddlewareMariaDBDatabase = os.Getenv("NETHVOICE_MIDDLEWARE_MARIADB_DATABASE")
 	} else {
 		Config.MiddlewareMariaDBDatabase = "nethcti3"
+	}
+
+	// Load or generate super admin token from environment variable or file
+	if os.Getenv("NETHVOICE_MIDDLEWARE_SUPER_ADMIN_TOKEN") != "" {
+		Config.SuperAdminToken = os.Getenv("NETHVOICE_MIDDLEWARE_SUPER_ADMIN_TOKEN")
+	} else {
+		Config.SuperAdminToken = uuid.New().String()
+		logs.Log("[WARN][ENV] NETHVOICE_MIDDLEWARE_SUPER_ADMIN_TOKEN variable is not set; generated random token")
+	}
+
+	// Load super admin allowed IPs with CIDR support
+	if os.Getenv("NETHVOICE_MIDDLEWARE_SUPER_ADMIN_ALLOW_IPS") != "" {
+		ipsString := os.Getenv("NETHVOICE_MIDDLEWARE_SUPER_ADMIN_ALLOW_IPS")
+		Config.SuperAdminAllowedIPs = strings.Split(ipsString, ",")
+		// Trim whitespace from each IP/CIDR
+		for i, ip := range Config.SuperAdminAllowedIPs {
+			Config.SuperAdminAllowedIPs[i] = strings.TrimSpace(ip)
+		}
+	} else {
+		Config.SuperAdminAllowedIPs = []string{"127.0.0.0/8"}
+		logs.Log("[INFO][ENV] NETHVOICE_MIDDLEWARE_SUPER_ADMIN_ALLOW_IPS variable is not set; using default IP range 127.0.0.0/8")
 	}
 }
