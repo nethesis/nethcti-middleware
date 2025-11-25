@@ -128,8 +128,9 @@ func createRouter() *gin.Engine {
 	api.POST("/login", middleware.InstanceJWT().LoginHandler)
 	api.GET("/ws/", socket.WsProxyHandler)
 
-	// Super admin reload endpoint (no JWT required)
-	api.POST("/admin/reload", middleware.RequireSuperAdmin(), methods.SuperAdminReload, broadcastReloadNotification())
+	// Super admin endpoints (no JWT required) - must be registered on router, not api group
+	router.POST("/admin/reload", middleware.RequireSuperAdmin(), methods.SuperAdminReload, broadcastReloadNotification())
+	router.POST("/admin/phonebook/import", middleware.RequireSuperAdmin(), methods.AdminImportPhonebookCSV)
 
 	// Authentication required endpoints
 	api.Use(middleware.InstanceJWT().MiddlewareFunc())

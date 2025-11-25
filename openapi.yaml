@@ -615,6 +615,132 @@ paths:
                     type: string
                     description: Error details
 
+  /admin/phonebook/import:
+    post:
+      summary: Import phonebook contacts (Super Admin only)
+      operationId: adminImportPhonebook
+      tags:
+        - Administration
+      description: |
+        Admin phonebook import endpoint for super administrators.
+        
+        This endpoint allows super administrators to import phonebook contacts from a CSV file
+        into any target user's phonebook. The target username must be provided as a form field.
+        
+        CSV Format: Requires multipart/form-data with:
+        - Field "username" (string, required): Target username to import contacts for
+        - Field "file" (binary, required): CSV file with contact data
+        
+        CSV Columns (case-insensitive): name (required),
+        and optional: workemail, homeemail, workphone, homephone, cellphone, fax, title,
+        company, notes, homestreet, homepob, homecity, homeprovince, homepostalcode,
+        homecountry, workstreet, workpob, workcity, workprovince, workpostalcode,
+        workcountry, url, extension, speeddial_num, type (optional, default: private).
+        
+        Security: Requires two factors of authentication:
+        1. IP Whitelist - Request must come from an allowed IP/CIDR range (default: 127.0.0.0/8)
+        2. Bearer Token - Must provide valid super admin token in Authorization header
+
+
+        All admin phonebook imports are logged for audit purposes:
+        ```
+        [ADMIN][PHONEBOOK] Super admin imported 9 contacts for user john.smith (profile: Advanced, total_rows: 10, failed: 0, skipped: 1)
+        ```
+      security:
+        - superAdminAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - username
+                - file
+              properties:
+                username:
+                  type: string
+                  description: Target username to import contacts for
+                  example: john.smith
+                file:
+                  type: string
+                  format: binary
+                  description: CSV file containing phonebook contacts
+      responses:
+        '200':
+          description: Phonebook import completed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "phonebook import completed"
+                  total_rows:
+                    type: integer
+                    example: 10
+                  imported_rows:
+                    type: integer
+                    example: 9
+                  failed_rows:
+                    type: integer
+                    example: 0
+                  skipped_rows:
+                    type: integer
+                    example: 1
+                  error_messages:
+                    type: array
+                    items:
+                      type: string
+                    example: ["Row 5: invalid type 'business' (must be 'private' or 'public')"]
+        '400':
+          description: Bad request - missing username field or invalid CSV
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "username field is required"
+        '401':
+          description: Unauthorized - invalid or missing super admin token
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 401
+                  message:
+                    type: string
+                    example: "super admin authentication required"
+        '403':
+          description: Forbidden - client IP is not in the super admin allowed IP whitelist
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 403
+                  message:
+                    type: string
+                    example: "access denied: IP not in allowed list"
+        '404':
+          description: Not found - target user does not exist
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "target user not found"
+
 tags:
   - name: Authentication
     description: Login, logout, and token management

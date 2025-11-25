@@ -31,45 +31,24 @@ type PhonebookImportResponse struct {
 	ErrorMessages []string `json:"error_messages,omitempty"`
 }
 
-// ImportPhonebookCSV handles CSV phonebook imports.
-// Supports all phonebook fields: name (required), and optional: type, workemail, homeemail, workphone, homephone,
-// cellphone, fax, title, company, notes, homestreet, homepob, homecity, homeprovince, homepostalcode, homecountry,
-// workstreet, workpob, workcity, workprovince, workpostalcode, workcountry, url, extension, speeddial_num.
-// The handler requires JWT authentication and associates imports with the authenticated user.
-func ImportPhonebookCSV(c *gin.Context) {
-	// Extract user from JWT claims
-	claims := jwt.ExtractClaims(c)
-	username, ok := claims["id"].(string)
-	if !ok || username == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"message": "invalid user in token"})
-		return
-	}
-
-	// Get the uploaded file
-	file, _, err := c.Request.FormFile("file")
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"message": "file required", "error": err.Error()})
-		return
-	}
-	defer file.Close()
-
+// parsePhonebookCSV parses and validates a CSV file, returning parsed phonebook entries without OwnerID set.
+// Caller is responsible for setting OwnerID on returned entries before persistence.
+func parsePhonebookCSV(file io.Reader) ([]*store.PhonebookEntry, *PhonebookImportResponse, error) {
 	// Parse CSV
 	reader := csv.NewReader(file)
 
 	// Read header
 	header, err := reader.Read()
 	if err != nil {
-		logs.Log("[PHONEBOOK] CSV header read error: " + err.Error())
-		c.JSON(http.StatusBadRequest, gin.H{"message": "invalid CSV file", "error": err.Error()})
-		return
+		return nil, nil, fmt.Errorf("CSV header read error: %w", err)
 	}
 
 	// Validate header format: must have at least "name"
 	if len(header) < 1 {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"message": "CSV must have at least 'name' column",
-		})
-		return
+		return nil, &PhonebookImportResponse{
+			Message:       "phonebook import failed",
+			ErrorMessages: []string{"CSV must have at least 'name' column"},
+		}, nil
 	}
 
 	// Build column index map (case-insensitive)
@@ -81,10 +60,10 @@ func ImportPhonebookCSV(c *gin.Context) {
 
 	// Validate required "name" column
 	if _, hasName := columnIndices["name"]; !hasName {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"message": "CSV must have 'name' column",
-		})
-		return
+		return nil, &PhonebookImportResponse{
+			Message:       "phonebook import failed",
+			ErrorMessages: []string{"CSV must have 'name' column"},
+		}, nil
 	}
 
 	// Parse and import records
@@ -138,9 +117,8 @@ func ImportPhonebookCSV(c *gin.Context) {
 			}
 		}
 
-		// Extract all available fields
+		// Extract all available fields (OwnerID will be set by caller)
 		entry := &store.PhonebookEntry{
-			OwnerID:        username,
 			Name:           name,
 			Type:           entryType,
 			WorkEmail:      getField("workemail"),
@@ -172,21 +150,139 @@ func ImportPhonebookCSV(c *gin.Context) {
 		entries = append(entries, entry)
 	}
 
-	// Perform batch import
-	successful, failed, err := store.BatchInsertPhonebookEntries(ctx, entries)
-	if err != nil {
-		logs.Log("[PHONEBOOK] Batch import error: " + err.Error())
-		errorMessages = append(errorMessages, "Database error: "+err.Error())
-	}
+	_ = ctx // context used above, keep reference
 
-	response := PhonebookImportResponse{
+	response := &PhonebookImportResponse{
 		Message:       "phonebook import completed",
 		TotalRows:     totalRows,
-		ImportedRows:  successful,
-		FailedRows:    failed,
+		ImportedRows:  0, // Will be set by caller after persistence
+		FailedRows:    0, // Will be set by caller after persistence
 		SkippedRows:   skippedRows,
 		ErrorMessages: errorMessages,
 	}
+
+	return entries, response, nil
+}
+
+// ImportPhonebookCSV handles CSV phonebook imports.
+// Supports all phonebook fields: name (required), and optional: type, workemail, homeemail, workphone, homephone,
+// cellphone, fax, title, company, notes, homestreet, homepob, homecity, homeprovince, homepostalcode, homecountry,
+// workstreet, workpob, workcity, workprovince, workpostalcode, workcountry, url, extension, speeddial_num.
+// The handler requires JWT authentication and associates imports with the authenticated user.
+func ImportPhonebookCSV(c *gin.Context) {
+	// Extract user from JWT claims
+	claims := jwt.ExtractClaims(c)
+	username, ok := claims["id"].(string)
+	if !ok || username == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"message": "invalid user in token"})
+		return
+	}
+
+	// Get the uploaded file
+	file, _, err := c.Request.FormFile("file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "file required", "error": err.Error()})
+		return
+	}
+	defer file.Close()
+
+	// Parse CSV using shared helper
+	entries, response, err := parsePhonebookCSV(file)
+	if err != nil {
+		logs.Log("[PHONEBOOK] CSV parsing error: " + err.Error())
+		c.JSON(http.StatusBadRequest, gin.H{"message": "invalid CSV file", "error": err.Error()})
+		return
+	}
+
+	// If response has errors but no entries were parsed, return error response
+	if len(entries) == 0 && len(response.ErrorMessages) > 0 {
+		c.JSON(http.StatusBadRequest, response)
+		return
+	}
+
+	// Set OwnerID for all entries to the authenticated user
+	for _, entry := range entries {
+		entry.OwnerID = username
+	}
+
+	// Perform batch import
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	successful, failed, err := store.BatchInsertPhonebookEntries(ctx, entries)
+	if err != nil {
+		logs.Log("[PHONEBOOK] Batch import error: " + err.Error())
+		response.ErrorMessages = append(response.ErrorMessages, "Database error: "+err.Error())
+	}
+
+	response.ImportedRows = successful
+	response.FailedRows = failed
+
+	c.JSON(http.StatusOK, response)
+}
+
+// AdminImportPhonebookCSV handles CSV phonebook imports for admin users.
+// Admin can import contacts into any target user's phonebook by specifying the username form field.
+// Requires super admin bearer token authentication.
+func AdminImportPhonebookCSV(c *gin.Context) {
+	// Get target username from form field
+	targetUsername := strings.TrimSpace(c.Request.FormValue("username"))
+	if targetUsername == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "username field is required"})
+		return
+	}
+
+	// Validate target user exists
+	profile, err := store.GetUserProfile(targetUsername)
+	if err != nil {
+		logs.Log("[ADMIN][PHONEBOOK] Admin import failed: user " + targetUsername + " not found")
+		c.JSON(http.StatusNotFound, gin.H{"message": "target user not found"})
+		return
+	}
+
+	// Get the uploaded file
+	file, _, err := c.Request.FormFile("file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "file required", "error": err.Error()})
+		return
+	}
+	defer file.Close()
+
+	// Parse CSV using shared helper
+	entries, response, err := parsePhonebookCSV(file)
+	if err != nil {
+		logs.Log("[ADMIN][PHONEBOOK] CSV parsing error: " + err.Error())
+		c.JSON(http.StatusBadRequest, gin.H{"message": "invalid CSV file", "error": err.Error()})
+		return
+	}
+
+	// If response has errors but no entries were parsed, return error response
+	if len(entries) == 0 && len(response.ErrorMessages) > 0 {
+		c.JSON(http.StatusBadRequest, response)
+		return
+	}
+
+	// Set OwnerID for all entries to the target user
+	for _, entry := range entries {
+		entry.OwnerID = targetUsername
+	}
+
+	// Perform batch import
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	successful, failed, err := store.BatchInsertPhonebookEntries(ctx, entries)
+	if err != nil {
+		logs.Log("[ADMIN][PHONEBOOK] Batch import error: " + err.Error())
+		response.ErrorMessages = append(response.ErrorMessages, "Database error: "+err.Error())
+	}
+
+	response.ImportedRows = successful
+	response.FailedRows = failed
+
+	// Log admin action with user profile info for audit trail
+	logs.Log(fmt.Sprintf("[ADMIN][PHONEBOOK] Super admin imported %d contacts for user %s (profile: %s, total_rows: %d, failed: %d, skipped: %d)",
+		successful, targetUsername, profile.Name, response.TotalRows, failed, response.SkippedRows))
 
 	c.JSON(http.StatusOK, response)
 }
