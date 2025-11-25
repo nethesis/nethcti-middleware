@@ -16,6 +16,7 @@ import (
 	"github.com/robfig/cron/v3"
 
 	"github.com/nethesis/nethcti-middleware/configuration"
+	"github.com/nethesis/nethcti-middleware/db"
 	"github.com/nethesis/nethcti-middleware/logs"
 	"github.com/nethesis/nethcti-middleware/methods"
 	"github.com/nethesis/nethcti-middleware/middleware"
@@ -30,6 +31,13 @@ func main() {
 
 	// Init configuration
 	configuration.Init()
+
+	// Init database
+	err := db.Init()
+	if err != nil {
+		logs.Log("[CRITICAL][DB] Failed to initialize database: " + err.Error())
+	}
+	defer db.Close()
 
 	// Init store
 	store.UserSessionInit()
