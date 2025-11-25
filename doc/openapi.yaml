@@ -1,0 +1,283 @@
+openapi: 3.0.0
+info:
+  title: NethCTI Middleware API
+  description: |
+    NethCTI Middleware provides authentication, 2FA, phonebook management, 
+    and integration with NethVoice/NethCTI systems.
+  version: 1.0.0
+  contact:
+    name: Nethesis
+    url: https://www.nethesis.it
+
+servers:
+  - url: http://localhost:8080
+    description: Local development server
+  - url: https://middleware.example.com
+    description: Production server
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token obtained from /login endpoint
+
+  schemas:
+    LoginRequest:
+      type: object
+      required:
+        - username
+        - password
+      properties:
+        username:
+          type: string
+          description: User login name
+        password:
+          type: string
+          format: password
+          description: User password
+
+    LoginResponse:
+      type: object
+      properties:
+        expire:
+          type: string
+          format: date-time
+        token:
+          type: string
+          description: JWT bearer token for subsequent requests
+
+    ErrorResponse:
+      type: object
+      properties:
+        message:
+          type: string
+        error:
+          type: string
+
+    TwoFAStatus:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        method:
+          type: string
+          enum: [totp]
+
+    QRCodeResponse:
+      type: object
+      properties:
+        qr_code:
+          type: string
+          format: byte
+          description: Base64-encoded QR code image
+
+    PhoneIslandTokenResponse:
+      type: object
+      properties:
+        token:
+          type: string
+
+paths:
+  /login:
+    post:
+      summary: User login
+      operationId: login
+      tags:
+        - Authentication
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Successful login
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '401':
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /logout:
+    post:
+      summary: User logout
+      operationId: logout
+      tags:
+        - Authentication
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Successful logout
+        '401':
+          description: Unauthorized
+
+  /2fa/status:
+    get:
+      summary: Get 2FA status
+      operationId: get2FAStatus
+      tags:
+        - Two-Factor Authentication
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Current 2FA status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TwoFAStatus'
+        '401':
+          description: Unauthorized
+
+  /2fa/qr-code:
+    get:
+      summary: Get 2FA QR code for TOTP setup
+      operationId: get2FAQRCode
+      tags:
+        - Two-Factor Authentication
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: QR code image
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QRCodeResponse'
+        '401':
+          description: Unauthorized
+
+  /2fa/verify-otp:
+    post:
+      summary: Verify OTP token and enable 2FA
+      operationId: verify2FAOTP
+      tags:
+        - Two-Factor Authentication
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - otp_code
+              properties:
+                otp_code:
+                  type: string
+                  description: 6-digit TOTP code
+      responses:
+        '200':
+          description: OTP verified successfully
+        '400':
+          description: Invalid OTP
+        '401':
+          description: Unauthorized
+
+  /2fa/disable:
+    post:
+      summary: Disable 2FA
+      operationId: disable2FA
+      tags:
+        - Two-Factor Authentication
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: 2FA disabled
+        '401':
+          description: Unauthorized
+
+  /2fa/recovery-codes:
+    post:
+      summary: Get 2FA recovery codes
+      operationId: get2FARecoveryCodes
+      tags:
+        - Two-Factor Authentication
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Recovery codes
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  recovery_codes:
+                    type: array
+                    items:
+                      type: string
+        '401':
+          description: Unauthorized
+
+  /authentication/phone_island_token_login:
+    post:
+      summary: Phone Island token login
+      operationId: phoneIslandTokenLogin
+      tags:
+        - Phone Island Integration
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Send an empty JSON object (`{}`) as the request body.
+      responses:
+        '200':
+          description: Token generated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PhoneIslandTokenResponse'
+        '401':
+          description: Unauthorized
+
+  /authentication/phone_island_token_check:
+    get:
+      summary: Check Phone Island token validity
+      operationId: phoneIslandTokenCheck
+      tags:
+        - Phone Island Integration
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Token is valid
+        '401':
+          description: Token invalid or expired
+
+  /authentication/persistent_token_remove:
+    post:
+      summary: Remove persistent token
+      operationId: phoneIslandTokenRemove
+      tags:
+        - Phone Island Integration
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Token removed
+        '401':
+          description: Unauthorized
+
+tags:
+  - name: Authentication
+    description: Login and session management
+  - name: Two-Factor Authentication
+    description: TOTP-based 2FA management
+  - name: Phone Island Integration
+    description: Integration endpoints for Phone Island features
