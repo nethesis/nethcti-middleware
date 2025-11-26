@@ -13,14 +13,17 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	jwtv4 "github.com/golang-jwt/jwt/v4"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/nethesis/nethcti-middleware/configuration"
+	"github.com/nethesis/nethcti-middleware/middleware"
 	"github.com/nethesis/nethcti-middleware/models"
 	"github.com/nethesis/nethcti-middleware/store"
 	"github.com/nethesis/nethcti-middleware/utils"
@@ -316,6 +319,8 @@ func TestDisable2FA(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 }
+
+// ** Phonebook Import Admin Endpoint Tests **
 
 // Helper function to create a multipart request with CSV file and username
 func createPhonebookImportRequest(username, csvData string) (*http.Request, error) {
@@ -785,3 +790,218 @@ John Doe,private,john@work.com,john@home.com,555-1234,555-1111,555-9999,555-2222
 
 	assert.Equal(t, float64(1), response["total_rows"].(float64))
 }
+
+// ** End of Phonebook Import Admin Endpoint Tests **
+
+// ** User Phonebook Import Endpoint Tests **
+
+// writeTempFileForTest helper to write test files
+func writeTempFileForTest(t *testing.T, name, content string) string {
+	t.Helper()
+	tmp := t.TempDir()
+	p := filepath.Join(tmp, name)
+	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		t.Fatalf("failed to write temp file: %v", err)
+	}
+	return p
+}
+
+// generateTestJWTWithCapabilities creates a signed JWT for the given username
+// Uses the middleware PayloadFunc to inject capabilities based on the user's profile
+func generateTestJWTWithCapabilities(username string) (string, error) {
+	// If a user session exists, use the middleware PayloadFunc so claims include injected capabilities
+	if sess, ok := store.UserSessions[username]; ok && sess != nil {
+		mw := middleware.InstanceJWT()
+		// PayloadFunc returns jwt.MapClaims
+		payload := mw.PayloadFunc(sess)
+		// ensure standard claims
+		payload["exp"] = time.Now().Add(time.Hour).Unix()
+		payload["iat"] = time.Now().Unix()
+
+		token := jwtv4.NewWithClaims(jwtv4.SigningMethodHS256, jwtv4.MapClaims(payload))
+		return token.SignedString([]byte(configuration.Config.Secret_jwt))
+	}
+
+	// fallback minimal token
+	claims := jwtv4.MapClaims{
+		"id":  username,
+		"exp": time.Now().Add(time.Hour).Unix(),
+		"iat": time.Now().Unix(),
+	}
+	token := jwtv4.NewWithClaims(jwtv4.SigningMethodHS256, claims)
+	return token.SignedString([]byte(configuration.Config.Secret_jwt))
+}
+
+// TestImportPhonebookCSV_Capability tests the /phonebook/import/ endpoint with different user permission levels
+// - user nopower: no phonebook access → denied (403)
+// - user smallpower: phonebook access but no ad_phonebook permission → denied (403)
+// - user superpower: phonebook access + ad_phonebook permission → allowed (200)
+func TestImportPhonebookCSV_Capability(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	// Ensure middleware uses test secret
+	configuration.Config.Secret_jwt = "test-phonebook-secret"
+	// Reset cached middleware to use new secret
+	middleware.ResetJWTMiddleware()
+
+	// Initialize store
+	store.UserSessionInit()
+
+	// Create test profiles with different capability levels
+	profilesJSON := `{
+		"nopower_profile": {
+			"id": "nopower_profile",
+			"name": "NoPhonebookAccess",
+			"macro_permissions": {}
+		},
+		"smallpower_profile": {
+			"id": "smallpower_profile",
+			"name": "PhonebookReadOnly",
+			"macro_permissions": {
+				"phonebook": {
+					"value": true,
+					"permissions": []
+				}
+			}
+		},
+		"superpower_profile": {
+			"id": "superpower_profile",
+			"name": "PhonebookAdmin",
+			"macro_permissions": {
+				"phonebook": {
+					"value": true,
+					"permissions": [
+						{"id": "12", "name": "ad_phonebook", "value": true}
+					]
+				}
+			}
+		}
+	}`
+
+	usersJSON := `{
+		"nopower": {"profile_id": "nopower_profile"},
+		"smallpower": {"profile_id": "smallpower_profile"},
+		"superpower": {"profile_id": "superpower_profile"}
+	}`
+
+	profFile := writeTempFileForTest(t, "profiles.json", profilesJSON)
+	usersFile := writeTempFileForTest(t, "users.json", usersJSON)
+
+	if err := store.InitProfiles(profFile, usersFile); err != nil {
+		t.Fatalf("InitProfiles failed: %v", err)
+	}
+
+	// Create user sessions for all test users
+	store.UserSessions["nopower"] = &models.UserSession{Username: "nopower"}
+	store.UserSessions["smallpower"] = &models.UserSession{Username: "smallpower"}
+	store.UserSessions["superpower"] = &models.UserSession{Username: "superpower"}
+
+	// Create test CSV content
+	csvContent := `name,workemail,cellphone
+John Doe,john@example.com,555-1234
+Jane Smith,jane@example.com,555-5678`
+
+	// Create router with the /phonebook/import/ endpoint protected by RequireCapabilities
+	router := gin.New()
+	router.Use(gin.LoggerWithWriter(gin.DefaultWriter), gin.Recovery())
+
+	apiGroup := router.Group("")
+	apiGroup.Use(middleware.InstanceJWT().MiddlewareFunc())
+	{
+		// The phonebook import endpoint requires phonebook.ad_phonebook capability
+		apiGroup.POST("/phonebook/import/", middleware.RequireCapabilities("phonebook.ad_phonebook"), func(c *gin.Context) {
+			// Mock response for successful import (normally methods.ImportPhonebookCSV)
+			c.JSON(http.StatusOK, map[string]interface{}{
+				"message":        "phonebook import completed",
+				"total_rows":     2,
+				"imported_rows":  2,
+				"failed_rows":    0,
+				"skipped_rows":   0,
+				"error_messages": nil,
+			})
+		})
+	}
+
+	// Test Case 1: User with no phonebook access should be denied
+	t.Run("nopower_denied", func(t *testing.T) {
+		token1, err := generateTestJWTWithCapabilities("nopower")
+		assert.NoError(t, err)
+		store.UserSessions["nopower"].JWTTokens = []string{token1}
+
+		// Create multipart form with CSV file
+		body := new(bytes.Buffer)
+		writer := multipart.NewWriter(body)
+		part, err := writer.CreateFormFile("file", "contacts.csv")
+		assert.NoError(t, err)
+		_, err = io.WriteString(part, csvContent)
+		assert.NoError(t, err)
+		writer.Close()
+
+		req, _ := http.NewRequest("POST", "/phonebook/import/", body)
+		req.Header.Set("Authorization", "Bearer "+token1)
+		req.Header.Set("Content-Type", writer.FormDataContentType())
+
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		// Should be denied due to missing phonebook.ad_phonebook capability
+		assert.Equal(t, http.StatusForbidden, w.Code, "nopower user should be denied with 403: got %d response %s", w.Code, w.Body.String())
+		assert.Contains(t, w.Body.String(), "forbidden: missing capability")
+	})
+
+	// Test Case 2: User with phonebook access but without ad_phonebook permission should be denied
+	t.Run("smallpower_denied", func(t *testing.T) {
+		token2, err := generateTestJWTWithCapabilities("smallpower")
+		assert.NoError(t, err)
+		store.UserSessions["smallpower"].JWTTokens = []string{token2}
+
+		// Create multipart form with CSV file
+		body := new(bytes.Buffer)
+		writer := multipart.NewWriter(body)
+		part, err := writer.CreateFormFile("file", "contacts.csv")
+		assert.NoError(t, err)
+		_, err = io.WriteString(part, csvContent)
+		assert.NoError(t, err)
+		writer.Close()
+
+		req, _ := http.NewRequest("POST", "/phonebook/import/", body)
+		req.Header.Set("Authorization", "Bearer "+token2)
+		req.Header.Set("Content-Type", writer.FormDataContentType())
+
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		// Should be denied due to missing ad_phonebook permission
+		assert.Equal(t, http.StatusForbidden, w.Code, "smallpower user should be denied with 403: got %d response %s", w.Code, w.Body.String())
+		assert.Contains(t, w.Body.String(), "forbidden: missing capability")
+	})
+
+	// Test Case 3: User with phonebook and ad_phonebook permission should be allowed
+	t.Run("superpower_allowed", func(t *testing.T) {
+		token3, err := generateTestJWTWithCapabilities("superpower")
+		assert.NoError(t, err)
+		store.UserSessions["superpower"].JWTTokens = []string{token3}
+
+		// Create multipart form with CSV file
+		body := new(bytes.Buffer)
+		writer := multipart.NewWriter(body)
+		part, err := writer.CreateFormFile("file", "contacts.csv")
+		assert.NoError(t, err)
+		_, err = io.WriteString(part, csvContent)
+		assert.NoError(t, err)
+		writer.Close()
+
+		req, _ := http.NewRequest("POST", "/phonebook/import/", body)
+		req.Header.Set("Authorization", "Bearer "+token3)
+		req.Header.Set("Content-Type", writer.FormDataContentType())
+
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		// Should be allowed (capability check passes) and reach the handler
+		assert.Equal(t, http.StatusOK, w.Code, "superpower user should be allowed with 200: got %d response %s", w.Code, w.Body.String())
+		assert.Contains(t, w.Body.String(), "phonebook import completed")
+	})
+}
+
+// ** End of User Phonebook Import Endpoint Tests **
