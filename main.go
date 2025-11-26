@@ -100,6 +100,7 @@ func createRouter() *gin.Engine {
 
 	// Super admin endpoints (no JWT required) - must be registered on router, not api group
 	router.POST("/admin/phonebook/import", middleware.RequireSuperAdmin(), methods.AdminImportPhonebookCSV)
+	router.POST("/admin/reload/profiles", middleware.RequireSuperAdmin(), methods.AdminReloadProfiles)
 
 	// Define api group
 	api := router.Group("")

@@ -422,6 +422,67 @@ paths:
                     type: string
                     example: "target user not found"
 
+  /admin/reload/profiles:
+    post:
+      summary: Reload profiles and users configuration (Super Admin only)
+      operationId: adminReloadProfiles
+      tags:
+        - Administration
+      description: |
+        Trigger a global reload of profiles and users configuration from the configured JSON files.
+        This endpoint is intended for super-administrators and will call the internal reload routine
+        to refresh in-memory profiles and users without restarting the service.
+      security:
+        - superAdminAuth: []
+      responses:
+        '200':
+          description: Profiles reloaded successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: "profiles reloaded successfully"
+                  data:
+                    type: empty object
+
+              examples:
+                success:
+                  summary: Successful reload example
+                  value:
+                    code: 200
+                    message: "profiles reloaded successfully"
+                    data:
+                      trigger: "api"
+        '500':
+          description: Internal server error when reload fails
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 500
+                  message:
+                    type: string
+                    example: "failed to reload profiles"
+                  data:
+                    type: string
+                    description: Error details
+              examples:
+                failure:
+                  summary: Failure example
+                  value:
+                    code: 500
+                    message: "failed to reload profiles"
+                    data: "parse profiles: invalid character 'i'"
+
 tags:
   - name: Authentication
     description: Login and session management
