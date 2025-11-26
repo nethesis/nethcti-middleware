@@ -49,6 +49,7 @@ type Configuration struct {
 	// Profiles and Users configuration paths
 	ProfilesConfigPath string `json:"profiles_config_path"`
 	UsersConfigPath    string `json:"users_config_path"`
+	TrustedProxy       string `json:"trusted_proxy"`
 }
 
 var Config = Configuration{}
@@ -266,5 +267,12 @@ func Init() {
 		Config.UsersConfigPath = os.Getenv("AUTH_USERS_PATH")
 	} else {
 		Config.UsersConfigPath = "/etc/nethcti/users.json"
+	}
+
+	// Trusted proxy (used by Gin to set trusted proxies)
+	if os.Getenv("NETHVOICE_MIDDLEWARE_TRUSTED_PROXY") != "" {
+		Config.TrustedProxy = os.Getenv("NETHVOICE_MIDDLEWARE_TRUSTED_PROXY")
+	} else {
+		Config.TrustedProxy = "127.0.0.1"
 	}
 }
