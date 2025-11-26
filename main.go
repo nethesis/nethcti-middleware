@@ -42,6 +42,9 @@ func main() {
 	// Init store
 	store.UserSessionInit()
 
+	// Init profiles and users
+	store.InitProfiles(configuration.Config.ProfilesConfigPath, configuration.Config.UsersConfigPath)
+
 	store.InitPersistence(configuration.Config.SecretsDir)
 	if err := store.LoadSessions(); err != nil {
 		logs.Log("[WARNING][PERSISTENCE] Failed to load sessions: " + err.Error())
