@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	jwt "github.com/appleboy/gin-jwt/v2"
 	"github.com/gin-gonic/gin"
 
 	"github.com/nethesis/nethcti-middleware/logs"
@@ -217,6 +218,64 @@ func AdminImportPhonebookCSV(c *gin.Context) {
 	// Log admin action with user profile info for audit trail
 	logs.Log(fmt.Sprintf("[INFO][PHONEBOOK] Admin imported %d contacts for user %s (total_rows: %d, failed: %d, skipped: %d)",
 		successful, targetUsername, response.TotalRows, failed, response.SkippedRows))
+
+	c.JSON(http.StatusOK, response)
+}
+
+// ImportPhonebookCSV handles CSV phonebook imports for the authenticated user.
+// Requires JWT bearer token authentication.
+func ImportPhonebookCSV(c *gin.Context) {
+	// Extract username from JWT claims
+	claims := jwt.ExtractClaims(c)
+	username, ok := claims["id"].(string)
+	if !ok || username == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "invalid user"})
+		return
+	}
+
+	// Get the uploaded file
+	file, _, err := c.Request.FormFile("file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "file required", "error": err.Error()})
+		return
+	}
+	defer file.Close()
+
+	// Parse CSV using shared helper
+	entries, response, err := parsePhonebookCSV(file)
+	if err != nil {
+		logs.Log("[ERROR][PHONEBOOK] CSV parsing error: " + err.Error())
+		c.JSON(http.StatusBadRequest, gin.H{"message": "invalid CSV file", "error": err.Error()})
+		return
+	}
+
+	// If response has errors but no entries were parsed, return error response
+	if len(entries) == 0 && len(response.ErrorMessages) > 0 {
+		c.JSON(http.StatusBadRequest, response)
+		return
+	}
+
+	// Set OwnerID for all entries to the authenticated user
+	for _, entry := range entries {
+		entry.OwnerID = username
+	}
+
+	// Perform batch import
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	successful, failed, err := store.BatchInsertPhonebookEntries(ctx, entries)
+	if err != nil {
+		logs.Log("[ERROR][PHONEBOOK] batch import error: " + err.Error())
+		response.ErrorMessages = append(response.ErrorMessages, "Database error: "+err.Error())
+	}
+
+	response.ImportedRows = successful
+	response.FailedRows = failed
+
+	// Log user action for audit trail
+	logs.Log(fmt.Sprintf("[INFO][PHONEBOOK] User %s imported %d contacts (total_rows: %d, failed: %d, skipped: %d)",
+		username, successful, response.TotalRows, failed, response.SkippedRows))
 
 	c.JSON(http.StatusOK, response)
 }

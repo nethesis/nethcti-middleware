@@ -38,6 +38,12 @@ type login struct {
 var jwtMiddleware *jwt.GinJWTMiddleware
 var identityKey = "id"
 
+// ResetJWTMiddleware clears the cached JWT middleware instance.
+// Used primarily in tests to force reinitialization with a different configuration.
+func ResetJWTMiddleware() {
+	jwtMiddleware = nil
+}
+
 func InstanceJWT() *jwt.GinJWTMiddleware {
 	if jwtMiddleware == nil {
 		jwtMiddleware = InitJWT()
@@ -171,17 +177,37 @@ func InitJWT() *jwt.GinJWTMiddleware {
 				// check if user require 2fa
 				status, _ := methods.GetUserStatus(userSession.Username)
 
-				// create claims map
+				// create base claims map
 				// Note: otp_verified is always false on initial login
 				// It will be set to true only after OTP verification via regenerateUserToken
-				return jwt.MapClaims{
+				claims := jwt.MapClaims{
 					identityKey:    userSession.Username,
 					"2fa":          status == "1",
 					"otp_verified": false,
 				}
+
+				// Load user profile and inject all capabilities into claims
+				profile, err := store.GetUserProfile(userSession.Username)
+				if err != nil {
+					logs.Log(fmt.Sprintf("[WARNING][AUTH] Failed to load profile for user %s: %v", userSession.Username, err))
+				} else {
+					// Add profile metadata
+					claims["profile_id"] = profile.ID
+					claims["profile_name"] = profile.Name
+
+					// Inject all capabilities as individual claims
+					for capability, value := range profile.Capabilities {
+						claims[capability] = value
+					}
+
+					logs.Log(fmt.Sprintf("[INFO][AUTH] Injected %d capabilities into JWT for user %s (profile: %s)",
+						len(profile.Capabilities), userSession.Username, profile.Name))
+				}
+
+				return claims
 			}
 
-			// return claims map
+			// return empty claims map
 			return jwt.MapClaims{}
 		},
 		IdentityHandler: func(c *gin.Context) interface{} {
@@ -400,5 +426,33 @@ func RequireSuperAdmin() gin.HandlerFunc {
 
 		logs.Log("[INFO][AUTH] super admin authentication success")
 		c.Next()
+	}
+}
+
+// RequireCapabilities ensures the JWT contains the requested capability claim set to true
+func RequireCapabilities(capability string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Extract claims from JWT
+		claims := jwt.ExtractClaims(c)
+		username, ok := claims["id"].(string)
+		if !ok || username == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"message": "invalid user"})
+			return
+		}
+
+		// capability may be present as a boolean claim
+		if val, ok := claims[capability]; ok {
+			if allowed, ok := val.(bool); ok && allowed {
+				c.Next()
+				return
+			}
+		}
+
+		logs.Log("[AUTH][ERROR] authorization failed for user " + username + ": missing or insufficient capability " + capability)
+		c.AbortWithStatusJSON(http.StatusForbidden, structs.Map(models.StatusForbidden{
+			Code:    http.StatusForbidden,
+			Message: "forbidden: missing capability",
+			Data:    nil,
+		}))
 	}
 }

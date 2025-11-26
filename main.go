@@ -42,6 +42,9 @@ func main() {
 	// Init store
 	store.UserSessionInit()
 
+	// Init profiles and users
+	store.InitProfiles(configuration.Config.ProfilesConfigPath, configuration.Config.UsersConfigPath)
+
 	store.InitPersistence(configuration.Config.SecretsDir)
 	if err := store.LoadSessions(); err != nil {
 		logs.Log("[WARNING][PERSISTENCE] Failed to load sessions: " + err.Error())
@@ -93,10 +96,15 @@ func createRouter() *gin.Engine {
 		corsConf.AllowHeaders = []string{"Authorization", "Content-Type", "Accept"}
 		corsConf.AllowAllOrigins = true
 		router.Use(cors.New(corsConf))
+	} else {
+		// This should not be strictly required:
+		// when deployed inside NethServer, Traefik already take care to avoid header forgery
+		router.SetTrustedProxies([]string{configuration.Config.TrustedProxy})
 	}
 
 	// Super admin endpoints (no JWT required) - must be registered on router, not api group
 	router.POST("/admin/phonebook/import", middleware.RequireSuperAdmin(), methods.AdminImportPhonebookCSV)
+	router.POST("/admin/reload/profiles", middleware.RequireSuperAdmin(), methods.AdminReloadProfiles)
 
 	// Define api group
 	api := router.Group("")
@@ -119,6 +127,9 @@ func createRouter() *gin.Engine {
 		api.POST("/authentication/phone_island_token_login", methods.PhoneIslandTokenLogin)
 		api.POST("/authentication/persistent_token_remove", methods.PhoneIslandTokenRemove)
 		api.GET("/authentication/phone_island_token_check", methods.PhoneIslandTokenCheck)
+
+		// Phonebook import API
+		api.POST("/phonebook/import", middleware.RequireCapabilities("phonebook.ad_phonebook"), methods.ImportPhonebookCSV)
 
 		// Logout endpoint
 		api.POST("/logout", middleware.InstanceJWT().LogoutHandler)
