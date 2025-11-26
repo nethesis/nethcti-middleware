@@ -15,6 +15,12 @@ The application can be configured using the following environment variables:
 | `NETHVOICE_MIDDLEWARE_SENSITIVE_LIST` | Comma-separated list of sensitive field names for logging | `password,secret,token,passphrase,private,key` |
 | `NETHVOICE_MIDDLEWARE_SECRETS_DIR` | Directory path for storing secrets | `/var/lib/whale/secrets` |
 | `NETHVOICE_MIDDLEWARE_ISSUER_2FA` | Issuer name for 2FA tokens | `NethVoice` |
+| `NETHVOICE_MIDDLEWARE_FREEPBX_APIS` | Comma-separated list of FreePBX APIs that bypass JWT | See default APIs in code |
+| `NETHVOICE_MIDDLEWARE_MARIADB_HOST` | MariaDB server hostname | `localhost` |
+| `NETHVOICE_MIDDLEWARE_MARIADB_PORT` | MariaDB server port | **Required** |
+| `NETHVOICE_MIDDLEWARE_MARIADB_USER` | MariaDB username | `root` |
+| `NETHVOICE_MIDDLEWARE_MARIADB_PASSWORD` | MariaDB password | **Required** |
+| `NETHVOICE_MIDDLEWARE_MARIADB_DATABASE` | MariaDB database name | `nethcti3` |
 
 ## Testing
 
@@ -22,6 +28,7 @@ The application can be configured using the following environment variables:
 
 - Go 1.24 or later
 - `oathtool` package (for 2FA testing)
+- MariaDB 10.5+ or MySQL 8.0+ (for phonebook and persistence features)
 
 Install oathtool on Ubuntu/Debian:
 ```bash
@@ -76,6 +83,16 @@ podman build -t nethcti-middleware .
 
 ### Run Container
 
+Before running the middleware, ensure MariaDB is available and configured:
+
+```bash
+podman run -d --name mariadb-nethcti \
+  --env MARIADB_ROOT_PASSWORD=your-secure-password \
+  --env MARIADB_DATABASE=nethcti_middleware \
+  -p 3306:3306 \
+  mariadb:latest
+```
+
 Run the container with environment configuration:
 
 ```bash
@@ -87,6 +104,9 @@ podman run -d -p 8080:8080 --name nethcti-container \
   --env NETHVOICE_MIDDLEWARE_V1_API_PATH=/webrest \
   --env NETHVOICE_MIDDLEWARE_V1_WS_PATH=/socket.io \
   --env NETHVOICE_MIDDLEWARE_SECRETS_DIR=/var/log/nethcti \
+  --env NETHVOICE_MIDDLEWARE_MARIADB_HOST=mariadb \
+  --env NETHVOICE_MIDDLEWARE_MARIADB_PORT=3306 \
+  --env NETHVOICE_MIDDLEWARE_MARIADB_USER=root \
+  --env NETHVOICE_MIDDLEWARE_MARIADB_PASSWORD=your-secure-password \
   --volume ./data:/var/log/nethcti \
   --replace nethcti-middleware
-```

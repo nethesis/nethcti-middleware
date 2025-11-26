@@ -34,6 +34,13 @@ type Configuration struct {
 	MQTTUsername string `json:"mqtt_username"`
 	MQTTPassword string `json:"mqtt_password"`
 	MQTTEnabled  bool   `json:"mqtt_enabled"`
+
+	// Middleware MariaDB Configuration for phonebook and persistence layer
+	MiddlewareMariaDBHost     string `json:"nethvoice_middleware_mariadb_host"`
+	MiddlewareMariaDBPort     string `json:"nethvoice_middleware_mariadb_port"`
+	MiddlewareMariaDBUser     string `json:"nethvoice_middleware_mariadb_user"`
+	MiddlewareMariaDBPassword string `json:"nethvoice_middleware_mariadb_password"`
+	MiddlewareMariaDBDatabase string `json:"nethvoice_middleware_mariadb_database"`
 }
 
 var Config = Configuration{}
@@ -179,4 +186,42 @@ func Init() {
 
 	// Load or generate JWT secret
 	Config.Secret_jwt = loadOrGenerateJWTSecret(Config.SecretsDir)
+
+	// Set MariaDB host
+	if os.Getenv("NETHVOICE_MIDDLEWARE_MARIADB_HOST") != "" {
+		Config.MiddlewareMariaDBHost = os.Getenv("NETHVOICE_MIDDLEWARE_MARIADB_HOST")
+	} else {
+		Config.MiddlewareMariaDBHost = "localhost"
+	}
+
+	// Set MariaDB user
+	if os.Getenv("NETHVOICE_MIDDLEWARE_MARIADB_USER") != "" {
+		Config.MiddlewareMariaDBUser = os.Getenv("NETHVOICE_MIDDLEWARE_MARIADB_USER")
+	} else {
+		Config.MiddlewareMariaDBUser = "root"
+	}
+
+	// Set MariaDB port (default to 3306 when not provided)
+	if os.Getenv("NETHVOICE_MIDDLEWARE_MARIADB_PORT") != "" {
+		Config.MiddlewareMariaDBPort = os.Getenv("NETHVOICE_MIDDLEWARE_MARIADB_PORT")
+	} else {
+		// Default to standard MariaDB port for local testing/environments
+		Config.MiddlewareMariaDBPort = "3306"
+		logs.Log("[WARN][ENV] NETHVOICE_MIDDLEWARE_MARIADB_PORT not set; defaulting to 3306")
+	}
+
+	// Set MariaDB password (default to 'root' for local test environments)
+	if os.Getenv("NETHVOICE_MIDDLEWARE_MARIADB_PASSWORD") != "" {
+		Config.MiddlewareMariaDBPassword = os.Getenv("NETHVOICE_MIDDLEWARE_MARIADB_PASSWORD")
+	} else {
+		Config.MiddlewareMariaDBPassword = "root"
+		logs.Log("[WARN][ENV] NETHVOICE_MIDDLEWARE_MARIADB_PASSWORD not set; defaulting to 'root' for local testing")
+	}
+
+	// Set MariaDB database name
+	if os.Getenv("NETHVOICE_MIDDLEWARE_MARIADB_DATABASE") != "" {
+		Config.MiddlewareMariaDBDatabase = os.Getenv("NETHVOICE_MIDDLEWARE_MARIADB_DATABASE")
+	} else {
+		Config.MiddlewareMariaDBDatabase = "nethcti3"
+	}
 }
