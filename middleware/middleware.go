@@ -38,6 +38,12 @@ type login struct {
 var jwtMiddleware *jwt.GinJWTMiddleware
 var identityKey = "id"
 
+// ResetJWTMiddleware clears the cached JWT middleware instance.
+// Used primarily in tests to force reinitialization with a different configuration.
+func ResetJWTMiddleware() {
+	jwtMiddleware = nil
+}
+
 func InstanceJWT() *jwt.GinJWTMiddleware {
 	if jwtMiddleware == nil {
 		jwtMiddleware = InitJWT()
@@ -420,5 +426,33 @@ func RequireSuperAdmin() gin.HandlerFunc {
 
 		logs.Log("[INFO][AUTH] super admin authentication success")
 		c.Next()
+	}
+}
+
+// RequireCapabilities ensures the JWT contains the requested capability claim set to true
+func RequireCapabilities(capability string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Extract claims from JWT
+		claims := jwt.ExtractClaims(c)
+		username, ok := claims["id"].(string)
+		if !ok || username == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"message": "invalid user"})
+			return
+		}
+
+		// capability may be present as a boolean claim
+		if val, ok := claims[capability]; ok {
+			if allowed, ok := val.(bool); ok && allowed {
+				c.Next()
+				return
+			}
+		}
+
+		logs.Log("[AUTH][ERROR] authorization failed for user " + username + ": missing or insufficient capability " + capability)
+		c.AbortWithStatusJSON(http.StatusForbidden, structs.Map(models.StatusForbidden{
+			Code:    http.StatusForbidden,
+			Message: "forbidden: missing capability",
+			Data:    nil,
+		}))
 	}
 }

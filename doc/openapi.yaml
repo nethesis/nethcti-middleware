@@ -301,6 +301,81 @@ paths:
         '401':
           description: Unauthorized
 
+  /phonebook/import/:
+    post:
+      summary: Import phonebook contacts for authenticated user
+      operationId: importPhonebook
+      tags:
+        - Phonebook
+      description: |
+        Import phonebook contacts for the authenticated user. The request must be
+        a multipart/form-data POST with a single file field named `file` containing
+        the CSV of contacts. The authenticated user's JWT must contain the
+        capability `phonebook.ad_phonebook` to allow import.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - file
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: CSV file containing phonebook contacts
+            examples:
+              sample_csv_upload:
+                summary: Example CSV multipart upload
+                value:
+                  file: "contacts.csv"
+                  csv_content: |
+                    name,workemail,cellphone
+                    John Doe,john@example.com,555-1234
+                    Jane Smith,jane@example.com,555-5678
+      responses:
+        '200':
+          description: Phonebook import completed for the authenticated user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PhonebookImportResponse'
+        '400':
+          description: Bad request - missing file or invalid CSV
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized - invalid or missing JWT
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 401
+                  message:
+                    type: string
+                    example: "authorization required"
+        '403':
+          description: Forbidden - missing capability (phonebook.ad_phonebook)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 403
+                  message:
+                    type: string
+                    example: "forbidden: missing capability"
+
   /admin/phonebook/import:
     post:
       summary: Import phonebook contacts (Super Admin only)

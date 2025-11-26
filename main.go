@@ -124,6 +124,9 @@ func createRouter() *gin.Engine {
 		api.POST("/authentication/persistent_token_remove", methods.PhoneIslandTokenRemove)
 		api.GET("/authentication/phone_island_token_check", methods.PhoneIslandTokenCheck)
 
+		// Phonebook import API
+		api.POST("/phonebook/import", middleware.RequireCapabilities("phonebook.ad_phonebook"), methods.ImportPhonebookCSV)
+
 		// Logout endpoint
 		api.POST("/logout", middleware.InstanceJWT().LogoutHandler)
 	}
