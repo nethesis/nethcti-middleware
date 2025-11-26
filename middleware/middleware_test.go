@@ -8,6 +8,8 @@ package middleware
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -15,6 +17,8 @@ import (
 
 	"github.com/nethesis/nethcti-middleware/configuration"
 	"github.com/nethesis/nethcti-middleware/logs"
+	"github.com/nethesis/nethcti-middleware/models"
+	"github.com/nethesis/nethcti-middleware/store"
 )
 
 func init() {
@@ -361,4 +365,83 @@ func TestRequireSuperAdminMultipleAllowedIPs(t *testing.T) {
 	req4.RemoteAddr = "172.16.0.1:12345"
 	router.ServeHTTP(w4, req4)
 	assert.Equal(t, http.StatusForbidden, w4.Code)
+}
+
+func writeTempFile(t *testing.T, name, content string) string {
+	t.Helper()
+	tmp := t.TempDir()
+	p := filepath.Join(tmp, name)
+	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		t.Fatalf("failed to write temp file: %v", err)
+	}
+	return p
+}
+
+// Test that PayloadFunc injects profile-related claims into the JWT claims map
+func TestPayloadFuncInjectsProfileClaims(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	// Ensure a deterministic JWT secret for the middleware
+	configuration.Config.Secret_jwt = "test-secret"
+
+	// Prepare a minimal profiles/users fixture
+	profilesJSON := `{
+		"p1": {"id":"p1","name":"Base","macro_permissions": {"phonebook": {"value": true, "permissions": [{"id":"12","name":"ad_phonebook","value":true}]}}}
+	}`
+
+	usersJSON := `{
+		"tuser": {"profile_id":"p1"}
+	}`
+
+	profFile := writeTempFile(t, "profiles.json", profilesJSON)
+	usersFile := writeTempFile(t, "users.json", usersJSON)
+
+	if err := store.InitProfiles(profFile, usersFile); err != nil {
+		t.Fatalf("InitProfiles failed: %v", err)
+	}
+
+	// Initialize session storage and set a session for the user
+	store.UserSessionInit()
+	store.UserSessions["tuser"] = &models.UserSession{Username: "tuser"}
+
+	// Obtain middleware and call PayloadFunc directly
+	mw := InstanceJWT()
+	claims := mw.PayloadFunc(store.UserSessions["tuser"])
+
+	// Validate injected claims
+	if got, ok := claims["profile_id"].(string); !ok || got != "p1" {
+		t.Fatalf("unexpected profile_id claim: got %v", claims["profile_id"])
+	}
+
+	if val, ok := claims["phonebook.ad_phonebook"].(bool); !ok || !val {
+		t.Fatalf("expected capability phonebook.ad_phonebook=true in claims, got %v", claims["phonebook.ad_phonebook"])
+	}
+
+	if val, ok := claims["phonebook"].(bool); !ok || !val {
+		t.Fatalf("expected capability phonebook=true in claims, got %v", claims["phonebook"])
+	}
+}
+
+// Test PayloadFunc when user profile cannot be loaded: it should not panic and should not inject profile claims
+func TestPayloadFuncHandlesMissingProfile(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	configuration.Config.Secret_jwt = "test-secret-2"
+
+	// Initialize empty profiles (use a temp non-existent file so loader falls back to embedded defaults)
+	store.UserSessionInit()
+	store.UserSessions["no_prof_user"] = &models.UserSession{Username: "no_prof_user"}
+
+	mw := InstanceJWT()
+	claims := mw.PayloadFunc(store.UserSessions["no_prof_user"])
+
+	// profile_id should not be injected when profile is missing
+	if _, ok := claims["profile_id"]; ok {
+		t.Fatalf("expected no profile_id claim when profile is missing, got %v", claims["profile_id"])
+	}
+
+	// capability keys should not be present
+	if _, ok := claims["phonebook.ad_phonebook"]; ok {
+		t.Fatalf("expected no capability claims when profile is missing, got phonebook.ad_phonebook")
+	}
 }
