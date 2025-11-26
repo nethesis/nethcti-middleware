@@ -96,6 +96,10 @@ func createRouter() *gin.Engine {
 		corsConf.AllowHeaders = []string{"Authorization", "Content-Type", "Accept"}
 		corsConf.AllowAllOrigins = true
 		router.Use(cors.New(corsConf))
+	} else {
+		// This should not be strictly required:
+		// when deployed inside NethServer, Traefik already take care to avoid header forgery
+		router.SetTrustedProxies([]string{configuration.Config.TrustedProxy})
 	}
 
 	// Super admin endpoints (no JWT required) - must be registered on router, not api group
