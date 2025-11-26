@@ -45,6 +45,10 @@ type Configuration struct {
 	// Super Admin Configuration
 	SuperAdminToken      string   `json:"super_admin_token"`
 	SuperAdminAllowedIPs []string `json:"super_admin_allowed_ips"`
+
+	// Profiles and Users configuration paths
+	ProfilesConfigPath string `json:"profiles_config_path"`
+	UsersConfigPath    string `json:"users_config_path"`
 }
 
 var Config = Configuration{}
@@ -249,5 +253,18 @@ func Init() {
 	} else {
 		Config.SuperAdminAllowedIPs = []string{"127.0.0.0/8"}
 		logs.Log("[INFO][ENV] NETHVOICE_MIDDLEWARE_SUPER_ADMIN_ALLOW_IPS variable is not set; using default IP range 127.0.0.0/8")
+	}
+
+	// Set authorization config paths
+	if os.Getenv("AUTH_PROFILES_PATH") != "" {
+		Config.ProfilesConfigPath = os.Getenv("AUTH_PROFILES_PATH")
+	} else {
+		Config.ProfilesConfigPath = "/etc/nethcti/profiles.json"
+	}
+
+	if os.Getenv("AUTH_USERS_PATH") != "" {
+		Config.UsersConfigPath = os.Getenv("AUTH_USERS_PATH")
+	} else {
+		Config.UsersConfigPath = "/etc/nethcti/users.json"
 	}
 }
