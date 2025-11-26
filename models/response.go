@@ -18,6 +18,12 @@ type StatusUnauthorized struct {
 	Data    interface{} `json:"data" structs:"data"`
 }
 
+type StatusForbidden struct {
+	Code    int         `json:"code" example:"403" structs:"code"`
+	Message string      `json:"message" example:"Forbidden" structs:"message"`
+	Data    interface{} `json:"data" structs:"data"`
+}
+
 type StatusNotFound struct {
 	Code    int         `json:"code" example:"404" structs:"code"`
 	Message string      `json:"message" example:"Not found" structs:"message"`
