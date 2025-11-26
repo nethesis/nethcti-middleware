@@ -21,6 +21,7 @@ The application can be configured using the following environment variables:
 | `NETHVOICE_MIDDLEWARE_MARIADB_USER` | MariaDB username | `root` |
 | `NETHVOICE_MIDDLEWARE_MARIADB_PASSWORD` | MariaDB password | **Required** |
 | `NETHVOICE_MIDDLEWARE_MARIADB_DATABASE` | MariaDB database name | `nethcti3` |
+| `NETHVOICE_MIDDLEWARE_TRUSTED_PROXY` | Trusted proxy IP or CIDR for Gin's [trusted proxies](https://gin-gonic.com/en/docs/deployment/#dont-trust-all-proxies) | `127.0.0.1` |
 
 ## Testing
 
