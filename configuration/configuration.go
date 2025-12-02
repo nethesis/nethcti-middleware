@@ -144,6 +144,7 @@ func Init() {
 			"/dbconn/test",
 			"/custcard/preview",
 			"/user/endpoints/all",
+			"/user/presence",
 			"/astproxy/extension",
 			"/astproxy/extensions",
 			"/astproxy/trunk",
