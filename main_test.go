@@ -61,6 +61,12 @@ func setupTestEnvironment() {
 	os.Setenv("NETHVOICE_MIDDLEWARE_ISSUER_2FA", "NetCTI-Test")
 	os.Setenv("NETHVOICE_MIDDLEWARE_SENSITIVE_LIST", "password,secret")
 
+	// Set database environment variables for testing
+	os.Setenv("NETHVOICE_MIDDLEWARE_MARIADB_HOST", "127.0.0.1")
+	os.Setenv("NETHVOICE_MIDDLEWARE_MARIADB_PORT", "3306")
+	os.Setenv("NETHVOICE_MIDDLEWARE_MARIADB_USER", "root")
+	os.Setenv("NETHVOICE_MIDDLEWARE_MARIADB_PASSWORD", "root")
+	os.Setenv("NETHVOICE_MIDDLEWARE_MARIADB_DATABASE", "nethcti3")
 	// Create test secrets directory
 	os.MkdirAll(os.Getenv("NETHVOICE_MIDDLEWARE_SECRETS_DIR"), 0700)
 
