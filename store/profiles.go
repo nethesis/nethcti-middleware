@@ -23,10 +23,12 @@ type ProfileData struct {
 	Capabilities map[string]bool
 }
 
-// UserProfile links a username to a profile
+// UserProfile links a username to a profile with extension information
 type UserProfile struct {
-	Username  string
-	ProfileID string
+	Username      string
+	ProfileID     string
+	MainExtension string
+	Extensions    []string
 }
 
 type rawProfile struct {
@@ -46,8 +48,21 @@ type rawPermission struct {
 	Value bool   `json:"value"`
 }
 
+type rawEndpoint struct {
+	Type     string `json:"type"`
+	User     string `json:"user"`
+	Password string `json:"password"`
+}
+
+type rawEndpoints struct {
+	MainExtension map[string]rawEndpoint `json:"mainextension"`
+	Extension     map[string]rawEndpoint `json:"extension"`
+}
+
 type rawUser struct {
-	ProfileID string `json:"profile_id"`
+	Name      string       `json:"name"`
+	ProfileID string       `json:"profile_id"`
+	Endpoints rawEndpoints `json:"endpoints"`
 }
 
 var (
@@ -132,6 +147,28 @@ func GetUserProfile(username string) (*ProfileData, error) {
 	}
 
 	return profile, nil
+}
+
+// GetChatUsers returns a list of users that have the nethvoice_cti.chat capability
+func GetChatUsers() (map[string]*UserProfile, error) {
+	profileMutex.RLock()
+	defer profileMutex.RUnlock()
+
+	chatUsers := make(map[string]*UserProfile)
+	for username, userProfile := range users {
+		profile, ok := profiles[userProfile.ProfileID]
+		if !ok {
+			// Skip users with invalid profiles
+			continue
+		}
+
+		// Check if user has chat capability
+		if profile.Capabilities["nethvoice_cti.chat"] {
+			chatUsers[username] = userProfile
+		}
+	}
+
+	return chatUsers, nil
 }
 
 // ReloadProfiles reloads profiles and users from JSON files, keeping old data on failure
@@ -247,9 +284,24 @@ func loadUsers(path string, profilesMap map[string]*ProfileData) (map[string]*Us
 			return nil, fmt.Errorf("user %s references unknown profile %s", username, ru.ProfileID)
 		}
 
+		// Extract main extension
+		var mainExt string
+		for extID := range ru.Endpoints.MainExtension {
+			mainExt = extID
+			break // Take first one
+		}
+
+		// Extract extensions
+		exts := make([]string, 0)
+		for extID := range ru.Endpoints.Extension {
+			exts = append(exts, extID)
+		}
+
 		result[username] = &UserProfile{
-			Username:  username,
-			ProfileID: ru.ProfileID,
+			Username:      username,
+			ProfileID:     ru.ProfileID,
+			MainExtension: mainExt,
+			Extensions:    exts,
 		}
 	}
 

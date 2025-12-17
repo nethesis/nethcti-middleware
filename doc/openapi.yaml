@@ -106,7 +106,102 @@ components:
             type: string
           description: List of error messages encountered during import
 
+    ChatUser:
+      type: object
+      description: Chat user information with extensions
+      properties:
+        user_name:
+          type: string
+          description: Username
+          example: giacomo
+        main_extension:
+          type: string
+          description: Primary extension number
+          example: "201"
+        sub_extensions:
+          type: array
+          items:
+            type: string
+          description: List of secondary extensions
+          example: ["91201", "92201"]
+
 paths:
+  /chat:
+    get:
+      summary: Get chat configuration
+      operationId: chatInfo
+      tags:
+        - Chat Integration
+      security:
+        - bearerAuth: []
+      description: |
+        Returns configuration for chat/Matrix integration for the authenticated user.
+        If NETHVOICE_MATRIX_BASE_URL is configured, returns the Matrix homeserver base URL
+        and Acrobits URL. Otherwise returns an empty object.
+        If the "users" query parameter is provided, also includes a list of all chat users
+        with their extensions.
+        The user must have the `nethvoice_cti.chat` capability to access this endpoint.
+      parameters:
+        - name: users
+          in: query
+          required: false
+          schema:
+            type: string
+          description: If provided, includes the list of chat users with their extensions in the response
+      responses:
+        '200':
+          description: Chat configuration
+          content:
+            application/json:
+              schema:
+                type: object
+                description: Chat configuration object
+                properties:
+                  matrix:
+                    type: object
+                    description: Matrix homeserver configuration
+                    properties:
+                      base_url:
+                        type: string
+                        description: Matrix homeserver base URL
+                        example: https://matrix.example.com
+                      acrobits_url:
+                        type: string
+                        description: Acrobits integration URL
+                        example: https://matrix.example.com/m2a
+                  users:
+                    type: array
+                    description: List of chat users (only included if users query parameter is provided)
+                    items:
+                      $ref: '#/components/schemas/ChatUser'
+              examples:
+                with_matrix:
+                  summary: Response when Matrix is configured (without users parameter)
+                  value:
+                    matrix:
+                      base_url: https://matrix.example.com
+                      acrobits_url: https://matrix.example.com/m2a
+                with_matrix_and_users:
+                  summary: Response with Matrix and users (with users query parameter)
+                  value:
+                    matrix:
+                      base_url: https://matrix.example.com
+                      acrobits_url: https://matrix.example.com/m2a
+                    users:
+                      - user_name: giacomo
+                        main_extension: "201"
+                        sub_extensions: ["91201", "92201"]
+                      - user_name: mario
+                        main_extension: "202"
+                        sub_extensions: ["91202"]
+                empty:
+                  summary: Response when Matrix is not configured
+                  value: {}
+        '401':
+          description: Unauthorized - invalid or missing JWT token
+        '403':
+          description: Forbidden - missing required capability (nethvoice_cti.chat)
+
   /login:
     post:
       summary: User login
@@ -559,6 +654,8 @@ paths:
                     data: "parse profiles: invalid character 'i'"
 
 tags:
+  - name: Chat Integration
+    description: Chat and Matrix integration
   - name: Authentication
     description: Login and session management
   - name: Two-Factor Authentication

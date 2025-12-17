@@ -131,6 +131,9 @@ func createRouter() *gin.Engine {
 		// Phonebook import API
 		api.POST("/phonebook/import", middleware.RequireCapabilities("phonebook.ad_phonebook"), methods.ImportPhonebookCSV)
 
+		// Chat APIs
+		api.GET("/chat", middleware.RequireCapabilities("nethvoice_cti.chat"), methods.ChatInfoHandler)
+
 		// Logout endpoint
 		api.POST("/logout", middleware.InstanceJWT().LogoutHandler)
 	}
