@@ -23,6 +23,7 @@ import (
 	"github.com/nethesis/nethcti-middleware/mqtt"
 	"github.com/nethesis/nethcti-middleware/socket"
 	"github.com/nethesis/nethcti-middleware/store"
+	"github.com/nethesis/nethcti-middleware/summary"
 )
 
 func main() {
@@ -38,6 +39,13 @@ func main() {
 		logs.Log("[CRITICAL][DB] Failed to initialize database: " + err.Error())
 	}
 	defer db.Close()
+
+	// Init satellite database
+	err = db.InitSatellite()
+	if err != nil {
+		logs.Log("[CRITICAL][DB] Failed to initialize satellite database: " + err.Error())
+	}
+	defer db.CloseSatellite()
 
 	// Init store
 	store.UserSessionInit()
@@ -59,6 +67,11 @@ func main() {
 			logs.Log("[WARNING][MQTT] Failed to subscribe to transcription topic: " + err.Error())
 		}
 	}
+
+	// Register summary notifier to broadcast over WebSocket
+	summary.SetSummaryNotifier(func(msg summary.SummaryMessage) {
+		socket.BroadcastSummaryMessage(msg)
+	})
 
 	// Create router
 	router := createRouter()
@@ -116,6 +129,9 @@ func createRouter() *gin.Engine {
 	// Authentication required endpoints
 	api.Use(middleware.InstanceJWT().MiddlewareFunc())
 	{
+		// Satellite transcripts summary watch
+		api.POST("/transcripts/summary/watch", methods.WatchCallSummary)
+
 		// 2FA
 		api.POST("/2fa/disable", methods.Disable2FA)
 		api.POST("/2fa/verify-otp", methods.VerifyOTP)

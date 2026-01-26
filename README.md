@@ -21,6 +21,11 @@ The application can be configured using the following environment variables:
 | `NETHVOICE_MIDDLEWARE_MARIADB_USER` | MariaDB username | `root` |
 | `NETHVOICE_MIDDLEWARE_MARIADB_PASSWORD` | MariaDB password | **Required** |
 | `NETHVOICE_MIDDLEWARE_MARIADB_DATABASE` | MariaDB database name | `nethcti3` |
+| `SATELLITE_PGSQL_HOST` | Satellite PostgreSQL hostname for transcripts | `localhost` |
+| `SATELLITE_PGSQL_PORT` | Satellite PostgreSQL port | `5432` |
+| `SATELLITE_PGSQL_USER` | Satellite PostgreSQL username | `satellite` |
+| `SATELLITE_PGSQL_PASSWORD` | Satellite PostgreSQL password | _(empty)_ |
+| `SATELLITE_PGSQL_DB` | Satellite PostgreSQL database name | `satellite` |
 | `NETHVOICE_MIDDLEWARE_TRUSTED_PROXY` | Trusted proxy IP or CIDR for Gin's [trusted proxies](https://gin-gonic.com/en/docs/deployment/#dont-trust-all-proxies) | `127.0.0.1` |
 
 ## Testing

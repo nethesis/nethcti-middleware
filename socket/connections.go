@@ -179,3 +179,8 @@ func (cm *ConnectionManager) BroadcastMQTTMessage(messageType string, data inter
 		}(conn, user)
 	}
 }
+
+// BroadcastSummaryMessage sends a summary update to all connected clients.
+func BroadcastSummaryMessage(message interface{}) {
+	connManager.BroadcastMQTTMessage("satellite/summary", message)
+}
