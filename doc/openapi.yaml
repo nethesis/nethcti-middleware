@@ -134,6 +134,58 @@ components:
             uniqueid:
               type: string
 
+    SummaryUpdateRequest:
+      type: object
+      required:
+        - summary
+      properties:
+        summary:
+          type: string
+          description: Summary text to store for the call
+
+    TranscriptionResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+        message:
+          type: string
+        data:
+          type: object
+          properties:
+            uniqueid:
+              type: string
+            transcription:
+              type: string
+
+    SummaryResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+        message:
+          type: string
+        data:
+          type: object
+          properties:
+            uniqueid:
+              type: string
+            summary:
+              type: string
+
+    SummaryDeleteResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+        message:
+          type: string
+        data:
+          type: object
+          properties:
+            uniqueid:
+              type: string
+
 paths:
   /login:
     post:
@@ -216,6 +268,198 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         '401':
           description: Unauthorized
+
+  /transcripts/{uniqueid}:
+    get:
+      summary: Get transcription by unique ID
+      operationId: getTranscriptionByUniqueId
+      tags:
+        - Transcripts
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: uniqueid
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Transcription retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TranscriptionResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: Service unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /transcripts/summary/{uniqueid}:
+    get:
+      summary: Get summary by unique ID
+      operationId: getSummaryByUniqueId
+      tags:
+        - Transcripts
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: uniqueid
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Summary retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SummaryResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: Service unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    put:
+      summary: Update summary by unique ID
+      operationId: updateSummaryByUniqueId
+      tags:
+        - Transcripts
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: uniqueid
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SummaryUpdateRequest'
+      responses:
+        '200':
+          description: Summary updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SummaryResponse'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: Service unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      summary: Delete summary by unique ID
+      operationId: deleteSummaryByUniqueId
+      tags:
+        - Transcripts
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: uniqueid
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Summary deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SummaryDeleteResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: Service unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /2fa/status:
     get:

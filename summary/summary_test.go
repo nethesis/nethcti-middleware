@@ -19,11 +19,15 @@ func TestStartSummaryWatchBroadcastsAndStops(t *testing.T) {
 	configuration.Config.SatellitePgSQLDB = "test"
 	configuration.Config.SatellitePgSQLUser = "test"
 
+	originalInterval := summaryPollInterval
+	summaryPollInterval = 10 * time.Millisecond
+
 	originalFetch := fetchSummaryFunc
 	originalNotify := notifySummaryFunc
 	defer func() {
 		fetchSummaryFunc = originalFetch
 		notifySummaryFunc = originalNotify
+		summaryPollInterval = originalInterval
 		resetWatcher()
 	}()
 
@@ -64,11 +68,15 @@ func TestStartSummaryWatchIsIdempotent(t *testing.T) {
 	configuration.Config.SatellitePgSQLDB = "test"
 	configuration.Config.SatellitePgSQLUser = "test"
 
+	originalInterval := summaryPollInterval
+	summaryPollInterval = 10 * time.Millisecond
+
 	originalFetch := fetchSummaryFunc
 	originalNotify := notifySummaryFunc
 	defer func() {
 		fetchSummaryFunc = originalFetch
 		notifySummaryFunc = originalNotify
+		summaryPollInterval = originalInterval
 		resetWatcher()
 	}()
 

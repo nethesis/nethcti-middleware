@@ -40,6 +40,13 @@ func main() {
 	}
 	defer db.Close()
 
+	// Init CDR database
+	err = db.InitCDR()
+	if err != nil {
+		logs.Log("[CRITICAL][CDR-DB] Failed to initialize CDR database: " + err.Error())
+	}
+	defer db.CloseCDR()
+
 	// Init satellite database
 	err = db.InitSatellite()
 	if err != nil {
@@ -131,6 +138,12 @@ func createRouter() *gin.Engine {
 	{
 		// Satellite transcripts summary watch
 		api.POST("/transcripts/summary/watch", methods.WatchCallSummary)
+
+		// Transcription and summary APIs (require satellite STT capability)
+		api.GET("/transcripts/:uniqueid", middleware.RequireCapabilities("nethvoice_cti.satellite_stt"), methods.GetTranscriptionByUniqueID)
+		api.GET("/transcripts/summary/:uniqueid", middleware.RequireCapabilities("nethvoice_cti.satellite_stt"), methods.GetSummaryByUniqueID)
+		api.PUT("/transcripts/summary/:uniqueid", middleware.RequireCapabilities("nethvoice_cti.satellite_stt"), methods.UpdateSummaryByUniqueID)
+		api.DELETE("/transcripts/summary/:uniqueid", middleware.RequireCapabilities("nethvoice_cti.satellite_stt"), methods.DeleteSummaryByUniqueID)
 
 		// 2FA
 		api.POST("/2fa/disable", methods.Disable2FA)

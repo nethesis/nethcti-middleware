@@ -8,8 +8,10 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -84,8 +86,26 @@ func setupTestEnvironment() {
 	// Set test server URL
 	testServerURL = "http://127.0.0.1:8899"
 
-	// Give server time to fully start
-	time.Sleep(2 * time.Second)
+	// Wait for server to fully start
+	if err := waitForServer(testServerURL, 35*time.Second); err != nil {
+		_, _ = os.Stderr.WriteString("test server failed to start: " + err.Error() + "\n")
+		os.Exit(1)
+	}
+}
+
+func waitForServer(url string, timeout time.Duration) error {
+	address := strings.TrimPrefix(url, "http://")
+	address = strings.TrimPrefix(address, "https://")
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		conn, err := net.DialTimeout("tcp", address, 300*time.Millisecond)
+		if err == nil {
+			_ = conn.Close()
+			return nil
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	return fmt.Errorf("timeout waiting for %s", address)
 }
 
 // Mock NetCTI server for testing

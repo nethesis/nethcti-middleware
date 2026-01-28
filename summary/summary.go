@@ -36,6 +36,8 @@ type notifyFunc func(SummaryMessage)
 
 var notifySummaryFunc notifyFunc = func(SummaryMessage) {}
 
+var summaryPollInterval = 5 * time.Second
+
 // StartSummaryWatch registers a watcher for the given unique ID.
 // It returns true if a new watcher was started, false if already active or misconfigured.
 func StartSummaryWatch(uniqueID string) bool {
@@ -81,7 +83,7 @@ func SetSummaryNotifier(fn notifyFunc) {
 }
 
 func (w *watcher) watch(ctx context.Context, uniqueID string) {
-	ticker := time.NewTicker(5 * time.Second)
+	ticker := time.NewTicker(summaryPollInterval)
 	defer ticker.Stop()
 
 	for {
