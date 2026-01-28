@@ -118,7 +118,7 @@ components:
           type: string
           description: Primary extension number
           example: "201"
-        sub_extensions:
+        extensions:
           type: array
           items:
             type: string
@@ -190,10 +190,10 @@ paths:
                     users:
                       - user_name: giacomo
                         main_extension: "201"
-                        sub_extensions: ["91201", "92201"]
+                        extensions: ["91201", "92201"]
                       - user_name: mario
                         main_extension: "202"
-                        sub_extensions: ["91202"]
+                        extensions: ["91202"]
                 empty:
                   summary: Response when Matrix is not configured
                   value: {}

@@ -43,7 +43,7 @@ type UserInfo struct {
 type ChatUser struct {
 	UserName      string   `json:"user_name"`
 	MainExtension string   `json:"main_extension"`
-	SubExtensions []string `json:"sub_extensions"`
+	Extensions    []string `json:"extensions"`
 }
 
 // GetUserInfo retrieves user information from V1 API using the provided token
@@ -143,17 +143,17 @@ func GetAllChatUsers() ([]ChatUser, error) {
 	var chatUsers []ChatUser
 	for _, userProfile := range chatUsersMap {
 		// Get sub extensions (all extensions except main)
-		var subExts []string
+		var exts []string
 		for _, ext := range userProfile.Extensions {
 			if ext != userProfile.MainExtension {
-				subExts = append(subExts, ext)
+				exts = append(exts, ext)
 			}
 		}
 
 		chatUsers = append(chatUsers, ChatUser{
 			UserName:      userProfile.Username,
 			MainExtension: userProfile.MainExtension,
-			SubExtensions: subExts,
+			Extensions:    exts,
 		})
 	}
 
