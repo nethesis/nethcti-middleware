@@ -36,11 +36,12 @@ type Configuration struct {
 	MQTTEnabled  bool   `json:"mqtt_enabled"`
 
 	// Middleware MariaDB Configuration for phonebook and persistence layer
-	MiddlewareMariaDBHost     string `json:"nethvoice_middleware_mariadb_host"`
-	MiddlewareMariaDBPort     string `json:"nethvoice_middleware_mariadb_port"`
-	MiddlewareMariaDBUser     string `json:"nethvoice_middleware_mariadb_user"`
-	MiddlewareMariaDBPassword string `json:"nethvoice_middleware_mariadb_password"`
-	MiddlewareMariaDBDatabase string `json:"nethvoice_middleware_mariadb_database"`
+	MiddlewareMariaDBHost        string `json:"nethvoice_middleware_mariadb_host"`
+	MiddlewareMariaDBPort        string `json:"nethvoice_middleware_mariadb_port"`
+	MiddlewareMariaDBUser        string `json:"nethvoice_middleware_mariadb_user"`
+	MiddlewareMariaDBPassword    string `json:"nethvoice_middleware_mariadb_password"`
+	MiddlewareMariaDBDatabase    string `json:"nethvoice_middleware_mariadb_database"`
+	MiddlewareMariaDBCDRDatabase string `json:"nethvoice_middleware_mariadb_cdr_database"`
 
 	// Satellite PostgreSQL Configuration for transcripts
 	SatellitePgSQLDB       string `json:"satellite_pgsql_db"`
@@ -240,6 +241,13 @@ func Init() {
 		Config.MiddlewareMariaDBDatabase = os.Getenv("NETHVOICE_MIDDLEWARE_MARIADB_DATABASE")
 	} else {
 		Config.MiddlewareMariaDBDatabase = "nethcti3"
+	}
+
+	// Set Mariadb CDR database name
+	if os.Getenv("NETHVOICE_MIDDLEWARE_MARIADB_CDR_DATABASE") != "" {
+		Config.MiddlewareMariaDBCDRDatabase = os.Getenv("NETHVOICE_MIDDLEWARE_MARIADB_CDR_DATABASE")
+	} else {
+		Config.MiddlewareMariaDBCDRDatabase = "asteriskcdrdb"
 	}
 
 	// Satellite PostgreSQL settings (transcripts)
