@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	jwt "github.com/appleboy/gin-jwt/v2"
 	"github.com/gin-gonic/gin"
@@ -110,5 +111,57 @@ func TestUpdateSummary_SucceedsWhenAuthorized(t *testing.T) {
 	}
 	if updatedSummary != "test summary" {
 		t.Fatalf("expected summary to be updated, got %q", updatedSummary)
+	}
+}
+
+func TestGetSummaryByUniqueID_ReturnsExtendedData(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store.UserSessionInit()
+	store.UserSessions["alice"] = &models.UserSession{Username: "alice", NethCTIToken: "token"}
+
+	configuration.Config.SatellitePgSQLHost = "test"
+	configuration.Config.SatellitePgSQLPort = "5432"
+	configuration.Config.SatellitePgSQLDB = "test"
+	configuration.Config.SatellitePgSQLUser = "test"
+
+	originalGetUserInfo := getUserInfoFunc
+	originalCheck := checkUserParticipationFunc
+	originalFetch := fetchSummaryDrawerFunc
+	defer func() {
+		getUserInfoFunc = originalGetUserInfo
+		checkUserParticipationFunc = originalCheck
+		fetchSummaryDrawerFunc = originalFetch
+	}()
+
+	getUserInfoFunc = func(string) (*UserInfo, error) {
+		return &UserInfo{PhoneNumbers: []string{"100"}}, nil
+	}
+	checkUserParticipationFunc = func(string, []string) (bool, error) {
+		return true, nil
+	}
+	fetchSummaryDrawerFunc = func(uniqueID string) (*SummaryDrawer, bool, error) {
+		return &SummaryDrawer{
+			UniqueID:      uniqueID,
+			Summary:       "summary text",
+			State:         "done",
+			Transcription: "transcription",
+			CreatedAt:     time.Now(),
+			UpdatedAt:     time.Now(),
+		}, true, nil
+	}
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("JWT_PAYLOAD", jwt.MapClaims{"id": "alice"})
+		c.Next()
+	})
+	router.GET("/transcripts/summary/:uniqueid", GetSummaryByUniqueID)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/transcripts/summary/abc123", nil)
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 ok, got %d: %s", w.Code, w.Body.String())
 	}
 }

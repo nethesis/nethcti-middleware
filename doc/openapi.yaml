@@ -143,6 +143,79 @@ components:
           type: string
           description: Summary text to store for the call
 
+    SummaryListRequest:
+      type: object
+      required:
+        - uniqueids
+      properties:
+        uniqueids:
+          type: array
+          items:
+            type: string
+
+    SummaryCheckResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+        message:
+          type: string
+        data:
+          type: object
+          properties:
+            uniqueid:
+              type: string
+            has_summary:
+              type: boolean
+
+    SummaryListItem:
+      type: object
+      properties:
+        uniqueid:
+          type: string
+        state:
+          type: string
+        has_transcription:
+          type: boolean
+        has_summary:
+          type: boolean
+        updated_at:
+          type: string
+          format: date-time
+          nullable: true
+      required:
+        - uniqueid
+        - state
+        - has_transcription
+        - has_summary
+        - updated_at
+
+    SummaryListNotFoundItem:
+      type: object
+      properties:
+        uniqueid:
+          type: string
+        error:
+          type: string
+          enum: [not_found]
+      required:
+        - uniqueid
+        - error
+
+    SummaryListResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+        message:
+          type: string
+        data:
+          type: array
+          items:
+            oneOf:
+              - $ref: '#/components/schemas/SummaryListItem'
+              - $ref: '#/components/schemas/SummaryListNotFoundItem'
+
     TranscriptionResponse:
       type: object
       properties:
@@ -172,6 +245,23 @@ components:
               type: string
             summary:
               type: string
+            sentiment:
+              type: integer
+              nullable: true
+            state:
+              type: string
+            transcription:
+              type: string
+            created_at:
+              type: string
+              format: date-time
+            updated_at:
+              type: string
+              format: date-time
+            deleted_at:
+              type: string
+              format: date-time
+              nullable: true
 
     SummaryDeleteResponse:
       type: object
@@ -268,6 +358,92 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         '401':
           description: Unauthorized
+
+  /summary/check/{uniqueid}:
+    get:
+      summary: Check summary availability by unique ID
+      operationId: checkSummaryByUniqueId
+      tags:
+        - Transcripts
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: uniqueid
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Summary available
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SummaryCheckResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Summary not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: Service unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /summary/check/list:
+    post:
+      summary: List summary/transcription status for provided unique IDs
+      operationId: listSummaryStatus
+      tags:
+        - Transcripts
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SummaryListRequest'
+      responses:
+        '200':
+          description: Summary status list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SummaryListResponse'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: Service unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /transcripts/{uniqueid}:
     get:

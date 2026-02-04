@@ -254,8 +254,8 @@ func Init() {
 	if os.Getenv("SATELLITE_PGSQL_HOST") != "" {
 		Config.SatellitePgSQLHost = os.Getenv("SATELLITE_PGSQL_HOST")
 	} else {
-		Config.SatellitePgSQLHost = "localhost"
-		logs.Log("[WARN][ENV] SATELLITE_PGSQL_HOST not set; defaulting to 'localhost'")
+		Config.SatellitePgSQLHost = "127.0.0.1"
+		logs.Log("[WARN][ENV] SATELLITE_PGSQL_HOST not set; defaulting to '127.0.0.1'")
 	}
 
 	if os.Getenv("SATELLITE_PGSQL_PORT") != "" {

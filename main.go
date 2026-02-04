@@ -136,14 +136,16 @@ func createRouter() *gin.Engine {
 	// Authentication required endpoints
 	api.Use(middleware.InstanceJWT().MiddlewareFunc())
 	{
-		// Satellite transcripts summary watch
-		api.POST("/transcripts/summary/watch", methods.WatchCallSummary)
-
-		// Transcription and summary APIs (require satellite STT capability)
+		// Transcription APIs (require satellite STT capability)
 		api.GET("/transcripts/:uniqueid", middleware.RequireCapabilities("nethvoice_cti.satellite_stt"), methods.GetTranscriptionByUniqueID)
-		api.GET("/transcripts/summary/:uniqueid", middleware.RequireCapabilities("nethvoice_cti.satellite_stt"), methods.GetSummaryByUniqueID)
-		api.PUT("/transcripts/summary/:uniqueid", middleware.RequireCapabilities("nethvoice_cti.satellite_stt"), methods.UpdateSummaryByUniqueID)
-		api.DELETE("/transcripts/summary/:uniqueid", middleware.RequireCapabilities("nethvoice_cti.satellite_stt"), methods.DeleteSummaryByUniqueID)
+
+		// Summary APIs (require satellite STT capability)
+		api.GET("/summary/:uniqueid", middleware.RequireCapabilities("nethvoice_cti.satellite_stt"), methods.GetSummaryByUniqueID)
+		api.PUT("/summary/:uniqueid", middleware.RequireCapabilities("nethvoice_cti.satellite_stt"), methods.UpdateSummaryByUniqueID)
+		api.DELETE("/summary/:uniqueid", middleware.RequireCapabilities("nethvoice_cti.satellite_stt"), methods.DeleteSummaryByUniqueID)
+		api.GET("/summary/check/:uniqueid", middleware.RequireCapabilities("nethvoice_cti.satellite_stt"), methods.CheckSummaryByUniqueID)
+		api.POST("/summary/check/list", middleware.RequireCapabilities("nethvoice_cti.satellite_stt"), methods.ListSummaryStatus)
+		api.POST("/summary/watch", middleware.RequireCapabilities("nethvoice_cti.satellite_stt"), methods.WatchCallSummary)
 
 		// 2FA
 		api.POST("/2fa/disable", methods.Disable2FA)

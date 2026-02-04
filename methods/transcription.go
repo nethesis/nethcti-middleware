@@ -163,7 +163,7 @@ func GetSummaryByUniqueID(c *gin.Context) {
 		return
 	}
 
-	summaryText, found, err := fetchSummaryFunc(uniqueID)
+	details, found, err := fetchSummaryDrawerFunc(uniqueID)
 	if err != nil {
 		logs.Log("[ERROR][SUMMARY] Failed to fetch summary for uniqueid " + uniqueID + ": " + err.Error())
 		c.JSON(http.StatusInternalServerError, structs.Map(models.StatusInternalServerError{
@@ -186,10 +186,7 @@ func GetSummaryByUniqueID(c *gin.Context) {
 	c.JSON(http.StatusOK, structs.Map(models.StatusOK{
 		Code:    http.StatusOK,
 		Message: "success",
-		Data: gin.H{
-			"uniqueid": uniqueID,
-			"summary":  summaryText,
-		},
+		Data:    details,
 	}))
 }
 
