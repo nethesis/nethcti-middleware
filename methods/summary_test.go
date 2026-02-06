@@ -33,11 +33,11 @@ func TestCheckSummaryByUniqueID_NotFound(t *testing.T) {
 
 	originalGetUserInfo := getUserInfoFunc
 	originalCheck := checkUserParticipationFunc
-	originalFetch := fetchSummaryFunc
+	originalFetch := fetchSummaryStateFunc
 	defer func() {
 		getUserInfoFunc = originalGetUserInfo
 		checkUserParticipationFunc = originalCheck
-		fetchSummaryFunc = originalFetch
+		fetchSummaryStateFunc = originalFetch
 	}()
 
 	getUserInfoFunc = func(string) (*UserInfo, error) {
@@ -46,8 +46,8 @@ func TestCheckSummaryByUniqueID_NotFound(t *testing.T) {
 	checkUserParticipationFunc = func(string, []string) (bool, error) {
 		return true, nil
 	}
-	fetchSummaryFunc = func(string) (string, bool, error) {
-		return "", false, nil
+	fetchSummaryStateFunc = func(string) (string, bool, bool, error) {
+		return "", false, false, nil
 	}
 
 	router := gin.New()

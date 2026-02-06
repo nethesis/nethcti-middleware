@@ -48,6 +48,7 @@ type SummaryListItem struct {
 var (
 	fetchSummaryDrawerFunc = fetchSummaryDrawerFromDB
 	fetchSummaryListFunc   = fetchSummaryListFromDB
+	fetchSummaryStateFunc  = fetchSummaryStateFromDB
 )
 
 // WatchCallSummary starts watching for a summary in the satellite transcripts table.
@@ -151,7 +152,7 @@ func CheckSummaryByUniqueID(c *gin.Context) {
 		return
 	}
 
-	state, hasSummary, exists, err := fetchSummaryStateFromDB(uniqueID)
+	state, hasSummary, exists, err := fetchSummaryStateFunc(uniqueID)
 	if err != nil {
 		logs.Log("[ERROR][SUMMARY] Failed to fetch summary for uniqueid " + uniqueID + ": " + err.Error())
 		c.JSON(http.StatusInternalServerError, structs.Map(models.StatusInternalServerError{
