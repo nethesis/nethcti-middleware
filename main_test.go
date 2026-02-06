@@ -7,6 +7,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -34,6 +35,7 @@ import (
 // Global variables for test server URLs and mock server
 var testServerURL string
 var mockNetCTI *httptest.Server
+var restoreBatchInsert func()
 
 // TestMain sets up the test environment once for all tests
 func TestMain(m *testing.M) {
@@ -77,6 +79,13 @@ func setupTestEnvironment() {
 	os.Setenv("NETHVOICE_MIDDLEWARE_MARIADB_DATABASE", "nethcti3")
 	// Create test secrets directory
 	os.MkdirAll(os.Getenv("NETHVOICE_MIDDLEWARE_SECRETS_DIR"), 0700)
+
+	restoreBatchInsert = store.SetBatchInsertPhonebookEntriesFuncForTest(func(_ context.Context, entries []*store.PhonebookEntry) (int, int, error) {
+		if len(entries) == 0 {
+			return 0, 0, nil
+		}
+		return len(entries), 0, nil
+	})
 
 	// Start the actual main server in a goroutine
 	go func() {
@@ -145,6 +154,9 @@ func mockNetCTIServer() *httptest.Server {
 func cleanupTestEnvironment() {
 	if mockNetCTI != nil {
 		mockNetCTI.Close()
+	}
+	if restoreBatchInsert != nil {
+		restoreBatchInsert()
 	}
 	os.RemoveAll(os.Getenv("NETHVOICE_MIDDLEWARE_SECRETS_DIR"))
 

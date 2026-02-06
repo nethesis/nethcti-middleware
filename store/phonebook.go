@@ -7,6 +7,7 @@ package store
 
 import (
 	"context"
+	"errors"
 
 	"github.com/nethesis/nethcti-middleware/db"
 	"github.com/nethesis/nethcti-middleware/logs"
@@ -44,13 +45,37 @@ type PhonebookEntry struct {
 	SpeedDialNum   string
 }
 
+var batchInsertPhonebookEntriesFunc = batchInsertPhonebookEntries
+
+// SetBatchInsertPhonebookEntriesFuncForTest allows tests to override the batch insert behavior.
+func SetBatchInsertPhonebookEntriesFuncForTest(fn func(context.Context, []*PhonebookEntry) (int, int, error)) func() {
+	previous := batchInsertPhonebookEntriesFunc
+	if fn == nil {
+		batchInsertPhonebookEntriesFunc = batchInsertPhonebookEntries
+	} else {
+		batchInsertPhonebookEntriesFunc = fn
+	}
+	return func() {
+		batchInsertPhonebookEntriesFunc = previous
+	}
+}
+
 // BatchInsertPhonebookEntries inserts multiple phonebook entries in a transaction.
 func BatchInsertPhonebookEntries(ctx context.Context, entries []*PhonebookEntry) (int, int, error) {
+	return batchInsertPhonebookEntriesFunc(ctx, entries)
+}
+
+func batchInsertPhonebookEntries(ctx context.Context, entries []*PhonebookEntry) (int, int, error) {
 	if len(entries) == 0 {
 		return 0, 0, nil
 	}
 
-	tx, err := db.GetDB().BeginTx(ctx, nil)
+	database := db.GetDB()
+	if database == nil {
+		return 0, len(entries), errors.New("database not initialized")
+	}
+
+	tx, err := database.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, 0, err
 	}
