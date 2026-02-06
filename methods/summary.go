@@ -151,7 +151,7 @@ func CheckSummaryByUniqueID(c *gin.Context) {
 		return
 	}
 
-	_, found, err := fetchSummaryFunc(uniqueID)
+	state, hasSummary, exists, err := fetchSummaryStateFromDB(uniqueID)
 	if err != nil {
 		logs.Log("[ERROR][SUMMARY] Failed to fetch summary for uniqueid " + uniqueID + ": " + err.Error())
 		c.JSON(http.StatusInternalServerError, structs.Map(models.StatusInternalServerError{
@@ -162,10 +162,10 @@ func CheckSummaryByUniqueID(c *gin.Context) {
 		return
 	}
 
-	if !found {
+	if !exists {
 		c.JSON(http.StatusNotFound, structs.Map(models.StatusNotFound{
 			Code:    http.StatusNotFound,
-			Message: "summary not found",
+			Message: "uniqueid not found",
 			Data:    nil,
 		}))
 		return
@@ -173,10 +173,11 @@ func CheckSummaryByUniqueID(c *gin.Context) {
 
 	c.JSON(http.StatusOK, structs.Map(models.StatusOK{
 		Code:    http.StatusOK,
-		Message: "summary found",
+		Message: "success",
 		Data: gin.H{
 			"uniqueid":    uniqueID,
-			"has_summary": true,
+			"has_summary": hasSummary,
+			"state":       state,
 		},
 	}))
 }
@@ -415,6 +416,39 @@ func fetchSummaryListFromDB(uniqueIDs []string) ([]SummaryListItem, error) {
 	}
 
 	return items, nil
+}
+
+func fetchSummaryStateFromDB(uniqueID string) (string, bool, bool, error) {
+	database := db.GetSatelliteDB()
+	if database == nil {
+		return "", false, false, sql.ErrConnDone
+	}
+
+	queryCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var (
+		state     sql.NullString
+		summary   sql.NullString
+		deletedAt sql.NullTime
+	)
+
+	query := "SELECT state, summary, deleted_at FROM transcripts WHERE uniqueid = $1 LIMIT 1"
+	if err := database.QueryRowContext(queryCtx, query, uniqueID).Scan(&state, &summary, &deletedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", false, false, nil
+		}
+		return "", false, false, err
+	}
+
+	if deletedAt.Valid {
+		return "", false, false, nil
+	}
+
+	cleanState := strings.TrimSpace(state.String)
+	hasSummary := summary.Valid && strings.TrimSpace(summary.String) != ""
+
+	return cleanState, hasSummary, true, nil
 }
 
 func buildPostgresPlaceholders(count int, startIndex int) string {

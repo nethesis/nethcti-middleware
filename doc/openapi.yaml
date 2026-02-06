@@ -167,6 +167,8 @@ components:
               type: string
             has_summary:
               type: boolean
+            state:
+              type: string
 
     SummaryListItem:
       type: object
@@ -230,6 +232,10 @@ components:
               type: string
             transcription:
               type: string
+            created_at:
+              type: string
+              format: date-time
+              nullable: true
 
     SummaryResponse:
       type: object
@@ -249,8 +255,6 @@ components:
               type: integer
               nullable: true
             state:
-              type: string
-            transcription:
               type: string
             created_at:
               type: string
@@ -303,6 +307,16 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /ws/:
+    get:
+      summary: WebSocket proxy
+      operationId: wsProxy
+      tags:
+        - WebSocket
+      responses:
+        '101':
+          description: Switching Protocols
+
   /logout:
     post:
       summary: User logout
@@ -323,7 +337,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
-  /transcripts/summary/watch:
+  /summary/watch:
     post:
       summary: Watch for call summary
       operationId: watchCallSummary
@@ -393,7 +407,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '404':
-          description: Summary not found
+          description: Uniqueid not found
           content:
             application/json:
               schema:
@@ -491,7 +505,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
-  /transcripts/summary/{uniqueid}:
+  /summary/{uniqueid}:
     get:
       summary: Get summary by unique ID
       operationId: getSummaryByUniqueId
@@ -901,7 +915,7 @@ paths:
         '401':
           description: Unauthorized
 
-  /phonebook/import/:
+  /phonebook/import:
     post:
       summary: Import phonebook contacts for authenticated user
       operationId: importPhonebook

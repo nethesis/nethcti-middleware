@@ -86,7 +86,7 @@ func GetTranscriptionByUniqueID(c *gin.Context) {
 		return
 	}
 
-	transcription, found, err := fetchTranscriptionFunc(uniqueID)
+	transcription, createdAt, found, err := fetchTranscriptionFunc(uniqueID)
 	if err != nil {
 		logs.Log("[ERROR][TRANSCRIPTS] Failed to fetch transcription for uniqueid " + uniqueID + ": " + err.Error())
 		c.JSON(http.StatusInternalServerError, structs.Map(models.StatusInternalServerError{
@@ -112,6 +112,7 @@ func GetTranscriptionByUniqueID(c *gin.Context) {
 		Data: gin.H{
 			"uniqueid":      uniqueID,
 			"transcription": transcription,
+			"created_at":    createdAt,
 		},
 	}))
 }
@@ -182,6 +183,8 @@ func GetSummaryByUniqueID(c *gin.Context) {
 		}))
 		return
 	}
+
+	details.Transcription = ""
 
 	c.JSON(http.StatusOK, structs.Map(models.StatusOK{
 		Code:    http.StatusOK,
@@ -420,10 +423,10 @@ func getUsernameFromContext(c *gin.Context) (string, error) {
 	return username, nil
 }
 
-func fetchTranscriptionFromDB(uniqueID string) (string, bool, error) {
+func fetchTranscriptionFromDB(uniqueID string) (string, *time.Time, bool, error) {
 	database := db.GetSatelliteDB()
 	if database == nil {
-		return "", false, sql.ErrConnDone
+		return "", nil, false, sql.ErrConnDone
 	}
 
 	queryCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -431,30 +434,36 @@ func fetchTranscriptionFromDB(uniqueID string) (string, bool, error) {
 
 	var cleaned sql.NullString
 	var raw sql.NullString
-	query := "SELECT cleaned_transcription, raw_transcription FROM transcripts WHERE uniqueid = $1 LIMIT 1"
-	err := database.QueryRowContext(queryCtx, query, uniqueID).Scan(&cleaned, &raw)
+	var createdAt sql.NullTime
+	query := "SELECT cleaned_transcription, raw_transcription, created_at FROM transcripts WHERE uniqueid = $1 LIMIT 1"
+	err := database.QueryRowContext(queryCtx, query, uniqueID).Scan(&cleaned, &raw, &createdAt)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return "", false, nil
+			return "", nil, false, nil
 		}
-		return "", false, err
+		return "", nil, false, err
+	}
+
+	var createdAtPtr *time.Time
+	if createdAt.Valid {
+		createdAtPtr = &createdAt.Time
 	}
 
 	if cleaned.Valid {
 		cleanedText := strings.TrimSpace(cleaned.String)
 		if cleanedText != "" {
-			return cleanedText, true, nil
+			return cleanedText, createdAtPtr, true, nil
 		}
 	}
 
 	if raw.Valid {
 		rawText := strings.TrimSpace(raw.String)
 		if rawText != "" {
-			return rawText, true, nil
+			return rawText, createdAtPtr, true, nil
 		}
 	}
 
-	return "", false, nil
+	return "", createdAtPtr, false, nil
 }
 
 func fetchSummaryFromDB(uniqueID string) (string, bool, error) {

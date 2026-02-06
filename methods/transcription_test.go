@@ -98,11 +98,11 @@ func TestUpdateSummary_SucceedsWhenAuthorized(t *testing.T) {
 		c.Set("JWT_PAYLOAD", jwt.MapClaims{"id": "alice"})
 		c.Next()
 	})
-	router.PUT("/transcripts/summary/:uniqueid", UpdateSummaryByUniqueID)
+	router.PUT("/summary/:uniqueid", UpdateSummaryByUniqueID)
 
 	body, _ := json.Marshal(map[string]string{"summary": "test summary"})
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("PUT", "/transcripts/summary/abc123", bytes.NewReader(body))
+	req, _ := http.NewRequest("PUT", "/summary/abc123", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	router.ServeHTTP(w, req)
 
@@ -155,10 +155,10 @@ func TestGetSummaryByUniqueID_ReturnsExtendedData(t *testing.T) {
 		c.Set("JWT_PAYLOAD", jwt.MapClaims{"id": "alice"})
 		c.Next()
 	})
-	router.GET("/transcripts/summary/:uniqueid", GetSummaryByUniqueID)
+	router.GET("/summary/:uniqueid", GetSummaryByUniqueID)
 
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/transcripts/summary/abc123", nil)
+	req, _ := http.NewRequest("GET", "/summary/abc123", nil)
 	router.ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
