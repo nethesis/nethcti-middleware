@@ -188,6 +188,24 @@ func InitJWT() *jwt.GinJWTMiddleware {
 					"otp_verified": false,
 				}
 
+				// Load user profile and inject all capabilities into claims
+				profile, err := store.GetUserProfile(userSession.Username)
+				if err != nil {
+					logs.Log(fmt.Sprintf("[WARNING][AUTH] Failed to load profile for user %s: %v", userSession.Username, err))
+				} else {
+					// Add profile metadata
+					claims["profile_id"] = profile.ID
+					claims["profile_name"] = profile.Name
+
+					// Inject all capabilities as individual claims
+					for capability, value := range profile.Capabilities {
+						claims[capability] = value
+					}
+
+					logs.Log(fmt.Sprintf("[INFO][AUTH] Injected %d capabilities into JWT for user %s (profile: %s)",
+						len(profile.Capabilities), userSession.Username, profile.Name))
+				}
+
 				return claims
 			}
 
