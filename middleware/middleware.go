@@ -20,8 +20,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/nqd/flat"
 
-	"github.com/appleboy/gin-jwt/v3/core"
 	jwt "github.com/appleboy/gin-jwt/v3"
+	"github.com/appleboy/gin-jwt/v3/core"
 	gojwt "github.com/golang-jwt/jwt/v5"
 
 	"github.com/nethesis/nethcti-middleware/configuration"
@@ -176,37 +176,10 @@ func InitJWT() *jwt.GinJWTMiddleware {
 		PayloadFunc: func(data any) gojwt.MapClaims {
 			// read current user
 			if userSession, ok := data.(*models.UserSession); ok {
-				// check if user require 2fa
-				status, _ := methods.GetUserStatus(userSession.Username)
-
-				// create base claims map
-				// Note: otp_verified is always false on initial login
-				// It will be set to true only after OTP verification via regenerateUserToken
-				claims := gojwt.MapClaims{
-					identityKey:    userSession.Username,
-					"2fa":          status == "1",
-					"otp_verified": false,
-				}
-
-				// Load user profile and inject all capabilities into claims
-				profile, err := store.GetUserProfile(userSession.Username)
-				if err != nil {
-					logs.Log(fmt.Sprintf("[WARNING][AUTH] Failed to load profile for user %s: %v", userSession.Username, err))
-				} else {
-					// Add profile metadata
-					claims["profile_id"] = profile.ID
-					claims["profile_name"] = profile.Name
-
-					// Inject all capabilities as individual claims
-					for capability, value := range profile.Capabilities {
-						claims[capability] = value
-					}
-
-					logs.Log(fmt.Sprintf("[INFO][AUTH] Injected %d capabilities into JWT for user %s (profile: %s)",
-						len(profile.Capabilities), userSession.Username, profile.Name))
-				}
-
-				return claims
+				// Note: otp_verified is always false on initial login.
+				// It will be set to true only after OTP verification via regenerateUserToken.
+				claims := methods.BuildUserJWTClaims(userSession.Username, false)
+				return jwt.MapClaims(claims)
 			}
 
 			// return empty claims map
