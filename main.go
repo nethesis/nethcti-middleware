@@ -136,15 +136,15 @@ func createRouter() *gin.Engine {
 	// Authentication required endpoints
 	api.Use(middleware.InstanceJWT().MiddlewareFunc())
 	{
-		// Transcription APIs (require satellite STT capability)
+		// Transcription APIs
 		api.GET("/transcripts/:uniqueid", middleware.RequireCapabilities("nethvoice_cti.satellite_stt"), methods.GetTranscriptionByUniqueID)
 
-		// Summary APIs (require satellite STT capability)
+		// Summary APIs
 		api.GET("/summary/:uniqueid", middleware.RequireCapabilities("nethvoice_cti.satellite_stt"), methods.GetSummaryByUniqueID)
+		api.HEAD("/summary/:uniqueid", middleware.RequireCapabilities("nethvoice_cti.satellite_stt"), methods.CheckSummaryByUniqueID)
 		api.PUT("/summary/:uniqueid", middleware.RequireCapabilities("nethvoice_cti.satellite_stt"), methods.UpdateSummaryByUniqueID)
 		api.DELETE("/summary/:uniqueid", middleware.RequireCapabilities("nethvoice_cti.satellite_stt"), methods.DeleteSummaryByUniqueID)
-		api.GET("/summary/check/:uniqueid", middleware.RequireCapabilities("nethvoice_cti.satellite_stt"), methods.CheckSummaryByUniqueID)
-		api.POST("/summary/check/list", middleware.RequireCapabilities("nethvoice_cti.satellite_stt"), methods.ListSummaryStatus)
+		api.POST("/summary/statuses", middleware.RequireCapabilities("nethvoice_cti.satellite_stt"), methods.ListSummaryStatus)
 		api.POST("/summary/watch", middleware.RequireCapabilities("nethvoice_cti.satellite_stt"), methods.WatchCallSummary)
 
 		// 2FA
@@ -170,6 +170,15 @@ func createRouter() *gin.Engine {
 
 		// Logout endpoint
 		api.POST("/logout", middleware.InstanceJWT().LogoutHandler)
+
+		// ---------------------------------------------------------------------
+		// TODO: migrate these endpoints to REST-style paths in a future change.
+		// ---------------------------------------------------------------------
+
+		// Phone Island Integration APIs (LEGACY PATHS)
+		api.POST("/authentication/phone_island_token_login", methods.PhoneIslandTokenLogin)
+		api.POST("/authentication/persistent_token_remove", methods.PhoneIslandTokenRemove)
+		api.GET("/authentication/phone_island_token_check", methods.PhoneIslandTokenCheck)
 	}
 
 	// Handle missing endpoint

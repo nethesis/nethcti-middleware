@@ -55,10 +55,10 @@ func TestCheckSummaryByUniqueID_NotFound(t *testing.T) {
 		c.Set("JWT_PAYLOAD", jwt.MapClaims{"id": "alice"})
 		c.Next()
 	})
-	router.GET("/summary/check/:uniqueid", CheckSummaryByUniqueID)
+	router.HEAD("/summary/:uniqueid", CheckSummaryByUniqueID)
 
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/summary/check/abc123", nil)
+	req, _ := http.NewRequest("HEAD", "/summary/abc123", nil)
 	router.ServeHTTP(w, req)
 
 	if w.Code != http.StatusNotFound {
@@ -99,11 +99,11 @@ func TestListSummaryStatus_Succeeds(t *testing.T) {
 		c.Set("JWT_PAYLOAD", jwt.MapClaims{"id": "alice"})
 		c.Next()
 	})
-	router.POST("/summary/check/list", ListSummaryStatus)
+	router.POST("/summary/statuses", ListSummaryStatus)
 
 	w := httptest.NewRecorder()
 	body, _ := json.Marshal(map[string][]string{"uniqueids": {"abc123"}})
-	req, _ := http.NewRequest("POST", "/summary/check/list", bytes.NewReader(body))
+	req, _ := http.NewRequest("POST", "/summary/statuses", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	router.ServeHTTP(w, req)
 
@@ -155,11 +155,11 @@ func TestListSummaryStatus_MixedResults(t *testing.T) {
 		c.Set("JWT_PAYLOAD", jwt.MapClaims{"id": "alice"})
 		c.Next()
 	})
-	router.POST("/summary/check/list", ListSummaryStatus)
+	router.POST("/summary/statuses", ListSummaryStatus)
 
 	w := httptest.NewRecorder()
 	body, _ := json.Marshal(map[string][]string{"uniqueids": {"abc123", "missing-1"}})
-	req, _ := http.NewRequest("POST", "/summary/check/list", bytes.NewReader(body))
+	req, _ := http.NewRequest("POST", "/summary/statuses", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	router.ServeHTTP(w, req)
 
