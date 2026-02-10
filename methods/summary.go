@@ -105,82 +105,47 @@ func WatchCallSummary(c *gin.Context) {
 	}))
 }
 
-// CheckSummaryByUniqueID verifies whether a summary exists for the given unique ID.
+// CheckSummaryByUniqueID verifies whether a transcript row exists for the given unique ID.
+// It is intended for HEAD endpoints and returns status only (no response body).
 func CheckSummaryByUniqueID(c *gin.Context) {
 	uniqueID := strings.TrimSpace(c.Param("uniqueid"))
 	if uniqueID == "" {
-		c.JSON(http.StatusBadRequest, structs.Map(models.StatusBadRequest{
-			Code:    http.StatusBadRequest,
-			Message: "uniqueid is required",
-			Data:    nil,
-		}))
+		c.Status(http.StatusBadRequest)
 		return
 	}
 
 	if !summary.IsSatelliteDBConfigured() {
-		c.JSON(http.StatusServiceUnavailable, structs.Map(models.StatusServiceUnavailable{
-			Code:    http.StatusServiceUnavailable,
-			Message: "satellite database not configured",
-			Data:    nil,
-		}))
+		c.Status(http.StatusServiceUnavailable)
 		return
 	}
 
 	if ok, err := ensureUserParticipatedInCall(c, uniqueID); err != nil {
 		if errors.Is(err, errUnauthorized) {
-			c.JSON(http.StatusUnauthorized, structs.Map(models.StatusUnauthorized{
-				Code:    http.StatusUnauthorized,
-				Message: "unauthorized",
-				Data:    nil,
-			}))
+			c.Status(http.StatusUnauthorized)
 			return
 		}
 		logs.Log("[ERROR][SUMMARY] Failed to validate CDR participation for uniqueid " + uniqueID + ": " + err.Error())
-		c.JSON(http.StatusServiceUnavailable, structs.Map(models.StatusServiceUnavailable{
-			Code:    http.StatusServiceUnavailable,
-			Message: "cdr database unavailable",
-			Data:    nil,
-		}))
+		c.Status(http.StatusServiceUnavailable)
 		return
 	} else if !ok {
 		logForbiddenParticipation(c, uniqueID)
-		c.JSON(http.StatusForbidden, structs.Map(models.StatusForbidden{
-			Code:    http.StatusForbidden,
-			Message: "forbidden: user not part of call",
-			Data:    nil,
-		}))
+		c.Status(http.StatusForbidden)
 		return
 	}
 
-	state, hasSummary, exists, err := fetchSummaryStateFunc(uniqueID)
+	_, _, exists, err := fetchSummaryStateFunc(uniqueID)
 	if err != nil {
 		logs.Log("[ERROR][SUMMARY] Failed to fetch summary for uniqueid " + uniqueID + ": " + err.Error())
-		c.JSON(http.StatusInternalServerError, structs.Map(models.StatusInternalServerError{
-			Code:    http.StatusInternalServerError,
-			Message: "failed to fetch summary",
-			Data:    nil,
-		}))
+		c.Status(http.StatusInternalServerError)
 		return
 	}
 
 	if !exists {
-		c.JSON(http.StatusNotFound, structs.Map(models.StatusNotFound{
-			Code:    http.StatusNotFound,
-			Message: "uniqueid not found",
-			Data:    nil,
-		}))
+		c.Status(http.StatusNotFound)
 		return
 	}
 
-	c.JSON(http.StatusOK, structs.Map(models.StatusOK{
-		Code:    http.StatusOK,
-		Message: "success",
-		Data: gin.H{
-			"uniqueid":    uniqueID,
-			"has_summary": hasSummary,
-			"state":       state,
-		},
-	}))
+	c.Status(http.StatusOK)
 }
 
 // ListSummaryStatus returns the list of summary/transcription status for user's calls.
@@ -194,10 +159,8 @@ func ListSummaryStatus(c *gin.Context) {
 		return
 	}
 
-	var req struct {
-		UniqueIDs []string `json:"uniqueids"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
+	uniqueIDs, err := extractSummaryStatusUniqueIDs(c)
+	if err != nil {
 		c.JSON(http.StatusBadRequest, structs.Map(models.StatusBadRequest{
 			Code:    http.StatusBadRequest,
 			Message: "invalid request payload",
@@ -206,21 +169,7 @@ func ListSummaryStatus(c *gin.Context) {
 		return
 	}
 
-	cleaned := make([]string, 0, len(req.UniqueIDs))
-	seen := make(map[string]struct{})
-	for _, id := range req.UniqueIDs {
-		value := strings.TrimSpace(id)
-		if value == "" {
-			continue
-		}
-		if _, exists := seen[value]; exists {
-			continue
-		}
-		seen[value] = struct{}{}
-		cleaned = append(cleaned, value)
-	}
-
-	if len(cleaned) == 0 {
+	if len(uniqueIDs) == 0 {
 		c.JSON(http.StatusBadRequest, structs.Map(models.StatusBadRequest{
 			Code:    http.StatusBadRequest,
 			Message: "uniqueids is required",
@@ -229,7 +178,7 @@ func ListSummaryStatus(c *gin.Context) {
 		return
 	}
 
-	items, err := fetchSummaryListFunc(cleaned)
+	items, err := fetchSummaryListFunc(uniqueIDs)
 	if err != nil {
 		logs.Log("[ERROR][SUMMARY] Failed to list summaries: " + err.Error())
 		c.JSON(http.StatusInternalServerError, structs.Map(models.StatusInternalServerError{
@@ -245,8 +194,8 @@ func ListSummaryStatus(c *gin.Context) {
 		itemByID[item.UniqueID] = item
 	}
 
-	result := make([]interface{}, 0, len(cleaned))
-	for _, id := range cleaned {
+	result := make([]interface{}, 0, len(uniqueIDs))
+	for _, id := range uniqueIDs {
 		if item, ok := itemByID[id]; ok {
 			result = append(result, item)
 			continue
@@ -262,6 +211,38 @@ func ListSummaryStatus(c *gin.Context) {
 		Message: "success",
 		Data:    result,
 	}))
+}
+
+func extractSummaryStatusUniqueIDs(c *gin.Context) ([]string, error) {
+	var req struct {
+		UniqueIDs []string `json:"uniqueids"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		return nil, err
+	}
+
+	return normalizeUniqueIDs(req.UniqueIDs), nil
+}
+
+func normalizeUniqueIDs(uniqueIDs []string) []string {
+	cleaned := make([]string, 0, len(uniqueIDs))
+	seen := make(map[string]struct{})
+
+	for _, id := range uniqueIDs {
+		for _, candidate := range strings.Split(id, ",") {
+			value := strings.TrimSpace(candidate)
+			if value == "" {
+				continue
+			}
+			if _, exists := seen[value]; exists {
+				continue
+			}
+			seen[value] = struct{}{}
+			cleaned = append(cleaned, value)
+		}
+	}
+
+	return cleaned
 }
 
 func fetchSummaryDrawerFromDB(uniqueID string) (*SummaryDrawer, bool, error) {
