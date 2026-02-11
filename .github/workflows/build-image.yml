@@ -61,6 +61,8 @@ jobs:
           REPOBASE=${REPOBASE,,}
           IMAGENAME=${REPOBASE}/nethcti-middleware
           IMAGETAG=${IMAGETAG:-latest}
+          # Make tag OCI/Docker-safe
+          IMAGETAG="$(echo "$IMAGETAG" | tr '[:upper:]' '[:lower:]' | sed -E 's#[^a-z0-9_.-]+#-#g; s#^-+##; s#-+$##')"
           if [[ "${IMAGETAG}" == "main" || "${IMAGETAG}" == "master" ]]; then
              IMAGETAG="latest"
           fi
