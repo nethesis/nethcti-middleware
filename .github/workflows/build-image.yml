@@ -12,7 +12,7 @@ jobs:
     name: 'Run tests'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Setup Go
         uses: actions/setup-go@v4
         with:
@@ -49,7 +49,7 @@ jobs:
       REPOBASE: ghcr.io/${{ github.repository_owner }}
       IMAGETAG: ${{ github.ref_name }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - id: install-podman
         run: |
           # Install podman
