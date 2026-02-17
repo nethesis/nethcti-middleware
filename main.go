@@ -125,6 +125,7 @@ func createRouter() *gin.Engine {
 
 		// Phone Island Integration APIs
 		api.POST("/authentication/phone_island_token_login", methods.PhoneIslandTokenLogin)
+		api.POST("/authentication/mobile_qr_token_login", methods.MobileQRCodeTokenLogin)
 		api.POST("/authentication/persistent_token_remove", methods.PhoneIslandTokenRemove)
 		api.GET("/authentication/phone_island_token_check", methods.PhoneIslandTokenCheck)
 
