@@ -98,27 +98,17 @@ func ProxyV1Request(c *gin.Context, path string, allowAnonymous bool) {
 		claims := jwt.ExtractClaims(c)
 		username := claims["id"].(string)
 		requester = username
-		isAPIKeyRequest := AuthenticateAPIKey(username, JWTToken)
+		authType = "jwt-session"
 
-		// Check if the request is authenticated with an API key
-		if isAPIKeyRequest {
-			authType = "api-key"
-			// If authenticated with API key, retrieve the Phone Island token
-			nethCTIToken, err = GetPhoneIslandToken(JWTToken, false)
-			if err != nil {
-				logs.Log("[ERROR][AUTH] Failed to retrieve Phone Island token for API key")
-				c.JSON(http.StatusUnauthorized, gin.H{
-					"code":    401,
-					"message": "Failed to retrieve Phone Island token",
-				})
-				return
-			}
-		} else {
-			authType = "jwt-session"
-			// If not authenticated with API key, use the NethCTI token from the user session
-			userSession := store.UserSessions[username]
-			nethCTIToken = userSession.NethCTIToken
+		userSession := store.UserSessions[username]
+		if userSession == nil || userSession.NethCTIToken == "" {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"code":    401,
+				"message": "User session not found",
+			})
+			return
 		}
+		nethCTIToken = userSession.NethCTIToken
 	}
 
 	if nethCTIToken != "" {

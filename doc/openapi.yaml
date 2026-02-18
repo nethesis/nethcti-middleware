@@ -77,11 +77,27 @@ components:
           format: byte
           description: Base64-encoded QR code image
 
-    PhoneIslandTokenResponse:
+    TokenResponse:
       type: object
       properties:
         token:
           type: string
+        username:
+          type: string
+
+    TokenExistsResponse:
+      type: object
+      properties:
+        exists:
+          type: boolean
+
+    TokenRemoveResponse:
+      type: object
+      properties:
+        removed:
+          type: boolean
+        count:
+          type: integer
 
     PhonebookImportResponse:
       type: object
@@ -248,56 +264,71 @@ paths:
         '401':
           description: Unauthorized
 
-  /authentication/phone_island_token_login:
+  /tokens/phone-island:
     post:
-      summary: Phone Island token login
-      operationId: phoneIslandTokenLogin
+      summary: Create Phone Island token
+      operationId: createPhoneIslandToken
       tags:
         - Phone Island Integration
       security:
         - bearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              description: Send an empty JSON object (`{}`) as the request body.
       responses:
         '200':
-          description: Token generated
+          description: JWT integration token without expiration (aud=phone-island)
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PhoneIslandTokenResponse'
+                $ref: '#/components/schemas/TokenResponse'
+        '401':
+          description: Unauthorized
+    get:
+      summary: Check Phone Island token validity
+      operationId: checkPhoneIslandToken
+      tags:
+        - Phone Island Integration
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Token state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenExistsResponse'
+        '401':
+          description: Unauthorized
+    delete:
+      summary: Remove Phone Island token
+      operationId: removePhoneIslandToken
+      tags:
+        - Phone Island Integration
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Token(s) removed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenRemoveResponse'
         '401':
           description: Unauthorized
 
-  /authentication/phone_island_token_check:
-    get:
-      summary: Check Phone Island token validity
-      operationId: phoneIslandTokenCheck
-      tags:
-        - Phone Island Integration
-      security:
-        - bearerAuth: []
-      responses:
-        '200':
-          description: Token is valid
-        '401':
-          description: Token invalid or expired
-
-  /authentication/persistent_token_remove:
+  /tokens/qrcode:
     post:
-      summary: Remove persistent token
-      operationId: phoneIslandTokenRemove
+      summary: Create Mobile App token
+      operationId: createQRCodeToken
       tags:
-        - Phone Island Integration
+        - Mobile App Integration
       security:
         - bearerAuth: []
       responses:
         '200':
-          description: Token removed
+          description: JWT integration token without expiration (aud=mobile-app)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
         '401':
           description: Unauthorized
 
