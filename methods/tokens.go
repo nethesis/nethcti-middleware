@@ -7,6 +7,7 @@ package methods
 
 import (
 	"net/http"
+	"strings"
 	"time"
 
 	jwt "github.com/appleboy/gin-jwt/v2"
@@ -18,29 +19,37 @@ import (
 	"github.com/nethesis/nethcti-middleware/store"
 )
 
-const (
-	integrationPhoneIsland = "phone-island"
-	integrationApp         = "mobile-app"
-)
-
-// CreatePhoneIslandToken creates a JWT integration token for Phone Island.
-func CreatePhoneIslandToken(c *gin.Context) {
-	issueIntegrationToken(c, integrationPhoneIsland)
+var allowedIntegrationAudiences = map[string]struct{}{
+	"phone-island": {},
+	"mobile-app":   {},
+	"nethlink":     {},
 }
 
-// CreateQRCodeToken creates a JWT integration token for QRCode login.
-func CreateQRCodeToken(c *gin.Context) {
-	issueIntegrationToken(c, integrationApp)
+// CreatePersistentToken creates a JWT integration token for the requested audience.
+func CreatePersistentToken(c *gin.Context) {
+	audience, ok := getAudienceFromRequest(c)
+	if !ok {
+		return
+	}
+	issueIntegrationToken(c, audience)
 }
 
-// CheckPhoneIslandToken checks if at least one valid Phone Island integration token exists.
-func CheckPhoneIslandToken(c *gin.Context) {
-	checkIntegrationToken(c, integrationPhoneIsland)
+// CheckPersistentToken checks if at least one valid integration token exists for the requested audience.
+func CheckPersistentToken(c *gin.Context) {
+	audience, ok := getAudienceFromRequest(c)
+	if !ok {
+		return
+	}
+	checkIntegrationToken(c, audience)
 }
 
-// RemovePhoneIslandToken revokes all Phone Island integration JWTs for the authenticated user.
-func RemovePhoneIslandToken(c *gin.Context) {
-	revokeIntegrationTokens(c, integrationPhoneIsland)
+// RemovePersistentToken revokes all integration JWTs for the requested audience.
+func RemovePersistentToken(c *gin.Context) {
+	audience, ok := getAudienceFromRequest(c)
+	if !ok {
+		return
+	}
+	revokeIntegrationTokens(c, audience)
 }
 
 func issueIntegrationToken(c *gin.Context, audience string) {
@@ -61,10 +70,12 @@ func issueIntegrationToken(c *gin.Context, audience string) {
 	for k, v := range claims {
 		newClaims[k] = v
 	}
+	now := time.Now()
 	newClaims["id"] = username
 	newClaims["aud"] = audience
+	newClaims["iat"] = now.Unix()
 	// Legacy-compatible behavior: very long-lived integration token (100 years).
-	newClaims["exp"] = time.Now().Add(100 * 365 * 24 * time.Hour).Unix()
+	newClaims["exp"] = now.Add(100 * 365 * 24 * time.Hour).Unix()
 
 	token := jwtv4.NewWithClaims(jwtv4.SigningMethodHS256, newClaims)
 	tokenString, err := token.SignedString([]byte(configuration.Config.Secret_jwt))
@@ -90,8 +101,7 @@ func issueIntegrationToken(c *gin.Context, audience string) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"token":    tokenString,
-		"username": username,
+		"token": tokenString,
 	})
 }
 
@@ -119,11 +129,9 @@ func revokeIntegrationTokens(c *gin.Context, audience string) {
 	}
 
 	filtered := make([]string, 0, len(userSession.JWTTokens))
-	removed := 0
 
 	for _, token := range userSession.JWTTokens {
 		if isIntegrationTokenForAudience(token, username, audience) {
-			removed++
 			continue
 		}
 		filtered = append(filtered, token)
@@ -135,7 +143,7 @@ func revokeIntegrationTokens(c *gin.Context, audience string) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"removed": removed > 0, "count": removed})
+	c.Status(http.StatusNoContent)
 }
 
 func getCurrentSession(c *gin.Context) (string, *models.UserSession, bool) {
@@ -169,8 +177,25 @@ func isIntegrationTokenForAudience(tokenString string, username string, audience
 		return false
 	}
 	tokenType, ok := claims["aud"].(string)
-	if !ok || tokenType != audience {
+	if !ok {
+		return false
+	}
+	if tokenType != audience {
 		return false
 	}
 	return true
+}
+
+func getAudienceFromRequest(c *gin.Context) (string, bool) {
+	audience := strings.TrimSpace(strings.ToLower(c.Param("audience")))
+	if audience == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "missing audience"})
+		return "", false
+	}
+
+	if _, ok := allowedIntegrationAudiences[audience]; !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "invalid audience"})
+		return "", false
+	}
+	return audience, true
 }

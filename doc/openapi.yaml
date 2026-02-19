@@ -82,22 +82,12 @@ components:
       properties:
         token:
           type: string
-        username:
-          type: string
 
     TokenExistsResponse:
       type: object
       properties:
         exists:
           type: boolean
-
-    TokenRemoveResponse:
-      type: object
-      properties:
-        removed:
-          type: boolean
-        count:
-          type: integer
 
     PhonebookImportResponse:
       type: object
@@ -264,30 +254,52 @@ paths:
         '401':
           description: Unauthorized
 
-  /tokens/phone-island:
+  /tokens/persistent/{audience}:
     post:
-      summary: Create Phone Island token
-      operationId: createPhoneIslandToken
+      summary: Create persistent integration token
+      operationId: createPersistentToken
       tags:
-        - Phone Island Integration
+        - Integration Tokens
       security:
         - bearerAuth: []
+      parameters:
+        - in: path
+          name: audience
+          required: true
+          schema:
+            type: string
+            enum: [phone-island, mobile-app, nethlink]
+          description: Integration token audience
       responses:
         '200':
-          description: JWT integration token without expiration (aud=phone-island)
+          description: JWT persistent integration token (exp set to 100 years, aud set to audience)
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/TokenResponse'
+        '400':
+          description: Invalid audience
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '401':
           description: Unauthorized
     get:
-      summary: Check Phone Island token validity
-      operationId: checkPhoneIslandToken
+      summary: Check persistent integration token existence
+      operationId: checkPersistentToken
       tags:
-        - Phone Island Integration
+        - Integration Tokens
       security:
         - bearerAuth: []
+      parameters:
+        - in: path
+          name: audience
+          required: true
+          schema:
+            type: string
+            enum: [phone-island, mobile-app, nethlink]
+          description: Integration token audience
       responses:
         '200':
           description: Token state
@@ -295,40 +307,38 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/TokenExistsResponse'
+        '400':
+          description: Invalid audience
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '401':
           description: Unauthorized
     delete:
-      summary: Remove Phone Island token
-      operationId: removePhoneIslandToken
+      summary: Remove persistent integration token(s)
+      operationId: removePersistentToken
       tags:
-        - Phone Island Integration
+        - Integration Tokens
       security:
         - bearerAuth: []
+      parameters:
+        - in: path
+          name: audience
+          required: true
+          schema:
+            type: string
+            enum: [phone-island, mobile-app, nethlink]
+          description: Integration token audience
       responses:
-        '200':
+        '204':
           description: Token(s) removed
+        '400':
+          description: Invalid audience
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/TokenRemoveResponse'
-        '401':
-          description: Unauthorized
-
-  /tokens/qrcode:
-    post:
-      summary: Create Mobile App token
-      operationId: createQRCodeToken
-      tags:
-        - Mobile App Integration
-      security:
-        - bearerAuth: []
-      responses:
-        '200':
-          description: JWT integration token without expiration (aud=mobile-app)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/TokenResponse'
+                $ref: '#/components/schemas/ErrorResponse'
         '401':
           description: Unauthorized
 

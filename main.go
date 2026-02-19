@@ -124,10 +124,9 @@ func createRouter() *gin.Engine {
 		api.GET("/2fa/qr-code", methods.QRCode)
 
 		// Tokens
-		api.POST("/tokens/phone-island", methods.CreatePhoneIslandToken)
-		api.GET("/tokens/phone-island", methods.CheckPhoneIslandToken)
-		api.DELETE("/tokens/phone-island", methods.RemovePhoneIslandToken)
-		api.POST("/tokens/qrcode", methods.CreateQRCodeToken)
+		api.POST("/tokens/persistent/:audience", methods.CreatePersistentToken)
+		api.GET("/tokens/persistent/:audience", methods.CheckPersistentToken)
+		api.DELETE("/tokens/persistent/:audience", methods.RemovePersistentToken)
 
 		// Phonebook import API
 		api.POST("/phonebook/import", middleware.RequireCapabilities("phonebook.ad_phonebook"), methods.ImportPhonebookCSV)
