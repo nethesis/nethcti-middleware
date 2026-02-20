@@ -32,7 +32,8 @@ func DeleteExpiredTokens() {
 				return []byte(configuration.Config.Secret_jwt), nil
 			})
 
-			// check if token is valid and not expired
+			// check if token is valid and not expired.
+			// Tokens without exp are considered non-expiring and remain valid until explicit revoke.
 			isValid := false
 			if err == nil && token.Valid {
 				if claims, ok := token.Claims.(jwtv4.MapClaims); ok {
@@ -41,6 +42,8 @@ func DeleteExpiredTokens() {
 						if time.Now().Unix() < int64(exp) {
 							isValid = true
 						}
+					} else {
+						isValid = true
 					}
 				}
 			}

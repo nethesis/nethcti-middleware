@@ -116,17 +116,17 @@ func createRouter() *gin.Engine {
 	// Authentication required endpoints
 	api.Use(middleware.InstanceJWT().MiddlewareFunc())
 	{
-		// 2FA APIs
+		// 2FA
 		api.POST("/2fa/disable", methods.Disable2FA)
 		api.POST("/2fa/verify-otp", methods.VerifyOTP)
 		api.GET("/2fa/status", methods.Get2FAStatus)
 		api.POST("/2fa/recovery-codes", methods.Get2FARecoveryCodes)
 		api.GET("/2fa/qr-code", methods.QRCode)
 
-		// Phone Island Integration APIs
-		api.POST("/authentication/phone_island_token_login", methods.PhoneIslandTokenLogin)
-		api.POST("/authentication/persistent_token_remove", methods.PhoneIslandTokenRemove)
-		api.GET("/authentication/phone_island_token_check", methods.PhoneIslandTokenCheck)
+		// Tokens
+		api.POST("/tokens/persistent/:audience", methods.CreatePersistentToken)
+		api.GET("/tokens/persistent/:audience", methods.CheckPersistentToken)
+		api.DELETE("/tokens/persistent/:audience", methods.RemovePersistentToken)
 
 		// Phonebook import API
 		api.POST("/phonebook/import", middleware.RequireCapabilities("phonebook.ad_phonebook"), methods.ImportPhonebookCSV)

@@ -231,14 +231,8 @@ func InitJWT() *jwt.GinJWTMiddleware {
 
 			// Check if session exists and token is valid
 			if userSession == nil || !utils.Contains(JWTToken, userSession.JWTTokens) {
-				// Try API key authentication as fallback
-				if !methods.AuthenticateAPIKey(username, JWTToken) {
-					logs.Log("[ERROR][AUTH] authorization failed for user " + username + " (session not found or invalid token). " + reqMethod + " " + reqURI)
-					return false
-				}
-				// API key auth succeeded, skip 2FA checks
-				logs.Log("[INFO][AUTH] API key authentication success for user " + username)
-				return true
+				logs.Log("[ERROR][AUTH] authorization failed for user " + username + " (session not found or invalid token). " + reqMethod + " " + reqURI)
+				return false
 			}
 
 			isOTPVerifyEndpoint := strings.Contains(c.Request.RequestURI, "/verify-otp")

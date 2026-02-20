@@ -77,11 +77,17 @@ components:
           format: byte
           description: Base64-encoded QR code image
 
-    PhoneIslandTokenResponse:
+    TokenResponse:
       type: object
       properties:
         token:
           type: string
+
+    TokenExistsResponse:
+      type: object
+      properties:
+        exists:
+          type: boolean
 
     PhonebookImportResponse:
       type: object
@@ -248,56 +254,91 @@ paths:
         '401':
           description: Unauthorized
 
-  /authentication/phone_island_token_login:
+  /tokens/persistent/{audience}:
     post:
-      summary: Phone Island token login
-      operationId: phoneIslandTokenLogin
+      summary: Create persistent integration token
+      operationId: createPersistentToken
       tags:
-        - Phone Island Integration
+        - Integration Tokens
       security:
         - bearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              description: Send an empty JSON object (`{}`) as the request body.
+      parameters:
+        - in: path
+          name: audience
+          required: true
+          schema:
+            type: string
+            enum: [phone-island, mobile-app, nethlink]
+          description: Integration token audience
       responses:
         '200':
-          description: Token generated
+          description: JWT persistent integration token (exp set to 100 years, aud set to audience)
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PhoneIslandTokenResponse'
+                $ref: '#/components/schemas/TokenResponse'
+        '400':
+          description: Invalid audience
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '401':
           description: Unauthorized
-
-  /authentication/phone_island_token_check:
     get:
-      summary: Check Phone Island token validity
-      operationId: phoneIslandTokenCheck
+      summary: Check persistent integration token existence
+      operationId: checkPersistentToken
       tags:
-        - Phone Island Integration
+        - Integration Tokens
       security:
         - bearerAuth: []
+      parameters:
+        - in: path
+          name: audience
+          required: true
+          schema:
+            type: string
+            enum: [phone-island, mobile-app, nethlink]
+          description: Integration token audience
       responses:
         '200':
-          description: Token is valid
+          description: Token state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenExistsResponse'
+        '400':
+          description: Invalid audience
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '401':
-          description: Token invalid or expired
-
-  /authentication/persistent_token_remove:
-    post:
-      summary: Remove persistent token
-      operationId: phoneIslandTokenRemove
+          description: Unauthorized
+    delete:
+      summary: Remove persistent integration token(s)
+      operationId: removePersistentToken
       tags:
-        - Phone Island Integration
+        - Integration Tokens
       security:
         - bearerAuth: []
+      parameters:
+        - in: path
+          name: audience
+          required: true
+          schema:
+            type: string
+            enum: [phone-island, mobile-app, nethlink]
+          description: Integration token audience
       responses:
-        '200':
-          description: Token removed
+        '204':
+          description: Token(s) removed
+        '400':
+          description: Invalid audience
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '401':
           description: Unauthorized
 

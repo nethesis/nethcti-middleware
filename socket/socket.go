@@ -14,6 +14,7 @@ import (
 	"github.com/nethesis/nethcti-middleware/methods"
 	"github.com/nethesis/nethcti-middleware/mqtt"
 	"github.com/nethesis/nethcti-middleware/store"
+	"github.com/nethesis/nethcti-middleware/utils"
 )
 
 var mqttChannel chan mqtt.WebSocketMessage
@@ -110,89 +111,48 @@ func WsProxyHandler(c *gin.Context) {
 						accessKeyId, ok := loginData["accessKeyId"].(string)
 						if ok {
 							session, sessionExists := store.UserSessions[accessKeyId]
-							apiKeyExists := methods.AuthenticateAPIKey(accessKeyId, loginData["token"].(string))
+							clientJWTToken, hasToken := loginData["token"].(string)
 
-							if sessionExists {
+							if sessionExists && hasToken {
+								if !utils.Contains(clientJWTToken, session.JWTTokens) {
+									logs.Log(fmt.Sprintf("[ERROR][WS] Invalid JWT token for websocket login user=%s", accessKeyId))
+									continue
+								}
+
+								tokenPartsRaw := strings.SplitN(session.NethCTIToken, ":", 2)
+								if len(tokenPartsRaw) < 2 || tokenPartsRaw[1] == "" {
+									logs.Log(fmt.Sprintf("[ERROR][WS] Invalid session token format for user=%s", accessKeyId))
+									continue
+								}
+
 								// Extract only the token from the string "username:token"
-								tokenParts := strings.SplitN(session.NethCTIToken, ":", 2)[1]
-								if tokenParts != "" {
-									loginData["token"] = tokenParts
+								loginData["token"] = tokenPartsRaw[1]
 
-									// Get real user info from API
-									userInfo, err := methods.GetUserInfo(session.NethCTIToken)
-									displayName := session.Username
-									phoneNumbers := []string{}
+								// Get real user info from API
+								userInfo, err := methods.GetUserInfo(session.NethCTIToken)
+								displayName := session.Username
+								phoneNumbers := []string{}
 
-									if err == nil && userInfo != nil {
-										displayName = userInfo.DisplayName
-										phoneNumbers = userInfo.PhoneNumbers
-									} else {
-										logs.Log(fmt.Sprintf("[ERROR][WS] Failed to get user info for %s: %v", session.Username, err))
-									}
-
-									// Register the connection with user data
-									user := &UserConnection{
-										Username:             session.Username,
-										AccessKeyId:          accessKeyId,
-										DisplayName:          displayName,
-										PhoneNumbers:         phoneNumbers,
-										TranscriptionEnabled: false,
-									}
-									connManager.AddConnection(clientConn, user)
-
-									// Re-encode the message
-									newPayload, _ := json.Marshal([]interface{}{payload[0], loginData})
-									msg = append([]byte("42"), newPayload...)
-								}
-							} else if apiKeyExists {
-								// Get the full phone island token (username:token format)
-								phoneIslandTokenFull, err := methods.GetPhoneIslandToken(loginData["token"].(string), false)
-
-								if err == nil && phoneIslandTokenFull != "" {
-									// Extract username and token
-									parts := strings.SplitN(phoneIslandTokenFull, ":", 2)
-									username := "api_user"
-									phoneIslandToken := phoneIslandTokenFull
-
-									if len(parts) == 2 {
-										username = parts[0]
-										phoneIslandToken = parts[1]
-									} else {
-										logs.Log("[WARNING][WS] Could not extract username from phone island token, using api_user")
-									}
-
-									loginData["token"] = phoneIslandToken
-
-									// For API key users, try to get user info using the phone island token
-									userInfo, err := methods.GetUserInfo(phoneIslandTokenFull)
-
-									displayName := username
-									phoneNumbers := []string{}
-
-									if err == nil && userInfo != nil {
-										username = userInfo.Username
-										displayName = userInfo.DisplayName
-										phoneNumbers = userInfo.PhoneNumbers
-									} else {
-										logs.Log(fmt.Sprintf("[ERROR][WS] Failed to get API key user info: %v", err))
-									}
-
-									// Register the connection with API key user data
-									user := &UserConnection{
-										Username:             username,
-										AccessKeyId:          accessKeyId,
-										DisplayName:          displayName,
-										PhoneNumbers:         phoneNumbers,
-										TranscriptionEnabled: false,
-									}
-									connManager.AddConnection(clientConn, user)
-
-									// Re-encode the message
-									newPayload, _ := json.Marshal([]interface{}{payload[0], loginData})
-									msg = append([]byte("42"), newPayload...)
+								if err == nil && userInfo != nil {
+									displayName = userInfo.DisplayName
+									phoneNumbers = userInfo.PhoneNumbers
 								} else {
-									logs.Log(fmt.Sprintf("[ERROR][WS] Failed to get phone island token: %v", err))
+									logs.Log(fmt.Sprintf("[ERROR][WS] Failed to get user info for %s: %v", session.Username, err))
 								}
+
+								// Register the connection with user data
+								user := &UserConnection{
+									Username:             session.Username,
+									AccessKeyId:          accessKeyId,
+									DisplayName:          displayName,
+									PhoneNumbers:         phoneNumbers,
+									TranscriptionEnabled: false,
+								}
+								connManager.AddConnection(clientConn, user)
+
+								// Re-encode the message
+								newPayload, _ := json.Marshal([]interface{}{payload[0], loginData})
+								msg = append([]byte("42"), newPayload...)
 							}
 						}
 					}
