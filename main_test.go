@@ -19,7 +19,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	jwtv4 "github.com/golang-jwt/jwt/v4"
+	jwtv5 "github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/nethesis/nethcti-middleware/configuration"
@@ -818,17 +818,17 @@ func generateTestJWTWithCapabilities(username string) (string, error) {
 		payload["exp"] = time.Now().Add(time.Hour).Unix()
 		payload["iat"] = time.Now().Unix()
 
-		token := jwtv4.NewWithClaims(jwtv4.SigningMethodHS256, jwtv4.MapClaims(payload))
+		token := jwtv5.NewWithClaims(jwtv5.SigningMethodHS256, jwtv5.MapClaims(payload))
 		return token.SignedString([]byte(configuration.Config.Secret_jwt))
 	}
 
 	// fallback minimal token
-	claims := jwtv4.MapClaims{
+	claims := jwtv5.MapClaims{
 		"id":  username,
 		"exp": time.Now().Add(time.Hour).Unix(),
 		"iat": time.Now().Unix(),
 	}
-	token := jwtv4.NewWithClaims(jwtv4.SigningMethodHS256, claims)
+	token := jwtv5.NewWithClaims(jwtv5.SigningMethodHS256, claims)
 	return token.SignedString([]byte(configuration.Config.Secret_jwt))
 }
 

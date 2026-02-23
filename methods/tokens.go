@@ -12,7 +12,7 @@ import (
 
 	jwt "github.com/appleboy/gin-jwt/v2"
 	"github.com/gin-gonic/gin"
-	jwtv4 "github.com/golang-jwt/jwt/v4"
+	jwtv5 "github.com/golang-jwt/jwt/v5"
 
 	"github.com/nethesis/nethcti-middleware/configuration"
 	"github.com/nethesis/nethcti-middleware/models"
@@ -66,7 +66,7 @@ func issueIntegrationToken(c *gin.Context, audience string) {
 		return
 	}
 
-	newClaims := jwtv4.MapClaims{}
+	newClaims := jwtv5.MapClaims{}
 	for k, v := range claims {
 		newClaims[k] = v
 	}
@@ -77,7 +77,7 @@ func issueIntegrationToken(c *gin.Context, audience string) {
 	// Legacy-compatible behavior: very long-lived integration token (100 years).
 	newClaims["exp"] = now.Add(100 * 365 * 24 * time.Hour).Unix()
 
-	token := jwtv4.NewWithClaims(jwtv4.SigningMethodHS256, newClaims)
+	token := jwtv5.NewWithClaims(jwtv5.SigningMethodHS256, newClaims)
 	tokenString, err := token.SignedString([]byte(configuration.Config.Secret_jwt))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"message": "failed to generate token"})
@@ -164,8 +164,8 @@ func getCurrentSession(c *gin.Context) (string, *models.UserSession, bool) {
 }
 
 func isIntegrationTokenForAudience(tokenString string, username string, audience string) bool {
-	claims := jwtv4.MapClaims{}
-	parser := jwtv4.NewParser(jwtv4.WithoutClaimsValidation())
+	claims := jwtv5.MapClaims{}
+	parser := jwtv5.NewParser(jwtv5.WithoutClaimsValidation())
 
 	_, _, err := parser.ParseUnverified(tokenString, claims)
 	if err != nil {
