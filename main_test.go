@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/nethesis/nethcti-middleware/configuration"
+	"github.com/nethesis/nethcti-middleware/methods"
 	"github.com/nethesis/nethcti-middleware/middleware"
 	"github.com/nethesis/nethcti-middleware/models"
 	"github.com/nethesis/nethcti-middleware/store"
@@ -1005,3 +1006,147 @@ Jane Smith,jane@example.com,555-5678`
 }
 
 // ** End of User Phonebook Import Endpoint Tests **
+
+// TestChatInfoHandler_Capability tests the /chat endpoint with different user permission levels
+// - user nochat: no nethvoice_cti access → denied (403)
+// - user chatreadonly: nethvoice_cti access but no chat permission → denied (403)
+// - user chatadmin: nethvoice_cti access + chat permission → allowed (200)
+func TestChatInfoHandler_Capability(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	// Ensure middleware uses test secret
+	configuration.Config.Secret_jwt = "test-chat-secret"
+	configuration.Config.MatrixBaseURL = "https://matrix.example.com"
+	// Reset cached middleware to use new secret
+	middleware.ResetJWTMiddleware()
+
+	// Initialize store
+	store.UserSessionInit()
+
+	// Create test profiles with different capability levels
+	profilesJSON := `{
+		"nochat_profile": {
+			"id": "nochat_profile",
+			"name": "NoChatAccess",
+			"macro_permissions": {}
+		},
+		"chatreadonly_profile": {
+			"id": "chatreadonly_profile",
+			"name": "ChatReadOnly",
+			"macro_permissions": {
+				"nethvoice_cti": {
+					"value": true,
+					"permissions": []
+				}
+			}
+		},
+		"chatadmin_profile": {
+			"id": "chatadmin_profile",
+			"name": "ChatAdmin",
+			"macro_permissions": {
+				"nethvoice_cti": {
+					"value": true,
+					"permissions": [
+						{"id": "8", "name": "chat", "value": true}
+					]
+				}
+			}
+		}
+	}`
+
+	usersJSON := `{
+		"nochat": {"profile_id": "nochat_profile"},
+		"chatreadonly": {"profile_id": "chatreadonly_profile"},
+		"chatadmin": {"profile_id": "chatadmin_profile"}
+	}`
+
+	profFile := writeTempFileForTest(t, "chat_profiles.json", profilesJSON)
+	usersFile := writeTempFileForTest(t, "chat_users.json", usersJSON)
+
+	if err := store.InitProfiles(profFile, usersFile); err != nil {
+		t.Fatalf("InitProfiles failed: %v", err)
+	}
+
+	// Create user sessions for all test users
+	store.UserSessions["nochat"] = &models.UserSession{Username: "nochat"}
+	store.UserSessions["chatreadonly"] = &models.UserSession{Username: "chatreadonly"}
+	store.UserSessions["chatadmin"] = &models.UserSession{Username: "chatadmin"}
+
+	// Create router with the /chat endpoint protected by RequireCapabilities
+	router := gin.New()
+	router.Use(gin.LoggerWithWriter(gin.DefaultWriter), gin.Recovery())
+
+	apiGroup := router.Group("")
+	apiGroup.Use(middleware.InstanceJWT().MiddlewareFunc())
+	{
+		// The chat endpoint requires nethvoice_cti.chat capability
+		apiGroup.GET("/chat", middleware.RequireCapabilities("nethvoice_cti.chat"), methods.ChatInfoHandler)
+	}
+
+	// Test Case 1: User with no chat access should be denied
+	t.Run("nochat_denied", func(t *testing.T) {
+		token1, err := generateTestJWTWithCapabilities("nochat")
+		assert.NoError(t, err)
+		store.UserSessions["nochat"].JWTTokens = []string{token1}
+
+		req, _ := http.NewRequest("GET", "/chat", nil)
+		req.Header.Set("Authorization", "Bearer "+token1)
+
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		// Should be denied due to missing nethvoice_cti.chat capability
+		assert.Equal(t, http.StatusForbidden, w.Code, "nochat user should be denied with 403: got %d response %s", w.Code, w.Body.String())
+		assert.Contains(t, w.Body.String(), "forbidden: missing capability")
+	})
+
+	// Test Case 2: User with nethvoice_cti access but without chat permission should be denied
+	t.Run("chatreadonly_denied", func(t *testing.T) {
+		token2, err := generateTestJWTWithCapabilities("chatreadonly")
+		assert.NoError(t, err)
+		store.UserSessions["chatreadonly"].JWTTokens = []string{token2}
+
+		req, _ := http.NewRequest("GET", "/chat", nil)
+		req.Header.Set("Authorization", "Bearer "+token2)
+
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		// Should be denied due to missing chat permission
+		assert.Equal(t, http.StatusForbidden, w.Code, "chatreadonly user should be denied with 403: got %d response %s", w.Code, w.Body.String())
+		assert.Contains(t, w.Body.String(), "forbidden: missing capability")
+	})
+
+	// Test Case 3: User with nethvoice_cti and chat permission should be allowed
+	t.Run("chatadmin_allowed", func(t *testing.T) {
+		token3, err := generateTestJWTWithCapabilities("chatadmin")
+		assert.NoError(t, err)
+		store.UserSessions["chatadmin"].JWTTokens = []string{token3}
+
+		req, _ := http.NewRequest("GET", "/chat", nil)
+		req.Header.Set("Authorization", "Bearer "+token3)
+
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		// Should be allowed (capability check passes) and reach the handler
+		assert.Equal(t, http.StatusOK, w.Code, "chatadmin user should be allowed with 200: got %d response %s", w.Code, w.Body.String())
+
+		// Verify response contains matrix configuration
+		var response map[string]interface{}
+		err = json.Unmarshal(w.Body.Bytes(), &response)
+		assert.NoError(t, err)
+
+		matrix, ok := response["matrix"]
+		assert.True(t, ok, "matrix key should exist in response")
+
+		matrixMap, ok := matrix.(map[string]interface{})
+		assert.True(t, ok, "matrix should be a map")
+
+		baseURL, ok := matrixMap["base_url"]
+		assert.True(t, ok, "base_url key should exist in matrix")
+		assert.Equal(t, "https://matrix.example.com", baseURL)
+	})
+}
+
+// ** End of Chat Handler Endpoint Tests **
