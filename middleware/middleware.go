@@ -20,7 +20,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/nqd/flat"
 
-	jwt "github.com/appleboy/gin-jwt/v2"
+	"github.com/appleboy/gin-jwt/v3/core"
+	jwt "github.com/appleboy/gin-jwt/v3"
+	gojwt "github.com/golang-jwt/jwt/v5"
 
 	"github.com/nethesis/nethcti-middleware/configuration"
 	"github.com/nethesis/nethcti-middleware/logs"
@@ -171,7 +173,7 @@ func InitJWT() *jwt.GinJWTMiddleware {
 				return store.UserSessions[username], nil
 			}
 		},
-		PayloadFunc: func(data interface{}) jwt.MapClaims {
+		PayloadFunc: func(data any) gojwt.MapClaims {
 			// read current user
 			if userSession, ok := data.(*models.UserSession); ok {
 				// check if user require 2fa
@@ -180,7 +182,7 @@ func InitJWT() *jwt.GinJWTMiddleware {
 				// create base claims map
 				// Note: otp_verified is always false on initial login
 				// It will be set to true only after OTP verification via regenerateUserToken
-				claims := jwt.MapClaims{
+				claims := gojwt.MapClaims{
 					identityKey:    userSession.Username,
 					"2fa":          status == "1",
 					"otp_verified": false,
@@ -208,7 +210,7 @@ func InitJWT() *jwt.GinJWTMiddleware {
 			}
 
 			// return empty claims map
-			return jwt.MapClaims{}
+			return gojwt.MapClaims{}
 		},
 		IdentityHandler: func(c *gin.Context) interface{} {
 			// handle identity and extract claims
@@ -219,7 +221,7 @@ func InitJWT() *jwt.GinJWTMiddleware {
 			// return username
 			return username
 		},
-		Authorizator: func(data interface{}, c *gin.Context) bool {
+		Authorizer: func(c *gin.Context, data any) bool {
 			// Extract claims and session info
 			claims := jwt.ExtractClaims(c)
 			username := claims[identityKey].(string)
@@ -286,22 +288,22 @@ func InitJWT() *jwt.GinJWTMiddleware {
 
 			return true
 		},
-		LoginResponse: func(c *gin.Context, code int, token string, t time.Time) {
+		LoginResponse: func(c *gin.Context, token *core.Token) {
 			// Extract the JWT token from the Authorization header
-			tokenObj, _ := InstanceJWT().ParseTokenString(token)
+			tokenObj, _ := InstanceJWT().ParseTokenString(token.AccessToken)
 			claims := jwt.ExtractClaimsFromToken(tokenObj)
 
 			// Store the JWT token in the UserSession
-			store.UserSessions[claims[identityKey].(string)].JWTTokens = append(store.UserSessions[claims[identityKey].(string)].JWTTokens, token)
+			store.UserSessions[claims[identityKey].(string)].JWTTokens = append(store.UserSessions[claims[identityKey].(string)].JWTTokens, token.AccessToken)
 
 			// Save sessions to disk immediately
 			if err := store.SaveSessions(); err != nil {
 				logs.Log("[ERROR][AUTH] Failed to save sessions after login: " + err.Error())
 			}
 
-			c.JSON(200, gin.H{"code": 200, "expire": t, "token": token})
+			c.JSON(200, gin.H{"code": 200, "expire": time.Unix(token.ExpiresAt, 0), "token": token.AccessToken})
 		},
-		LogoutResponse: func(c *gin.Context, code int) {
+		LogoutResponse: func(c *gin.Context) {
 			// Extract the JWT token from the Authorization header
 			JWTToken := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
 			tokenObj, _ := InstanceJWT().ParseTokenString(JWTToken)
