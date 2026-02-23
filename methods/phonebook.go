@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	jwt "github.com/appleboy/gin-jwt/v2"
+	jwt "github.com/appleboy/gin-jwt/v3"
 	"github.com/gin-gonic/gin"
 
 	"github.com/nethesis/nethcti-middleware/logs"

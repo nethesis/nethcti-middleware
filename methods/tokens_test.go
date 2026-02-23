@@ -12,9 +12,8 @@ import (
 	"testing"
 	"time"
 
-	jwt "github.com/appleboy/gin-jwt/v2"
 	"github.com/gin-gonic/gin"
-	jwtv4 "github.com/golang-jwt/jwt/v4"
+	jwtv5 "github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/require"
 
 	"github.com/nethesis/nethcti-middleware/configuration"
@@ -53,12 +52,12 @@ func TestPersistentTokenLifecycle(t *testing.T) {
 	require.Len(t, session.JWTTokens, 2, "same audience token must be rotated, others kept")
 	require.True(t, isIntegrationTokenForAudience(createdToken, "alice", "phone-island"))
 
-	parsed, err := jwtv4.Parse(createdToken, func(token *jwtv4.Token) (interface{}, error) {
+	parsed, err := jwtv5.Parse(createdToken, func(token *jwtv5.Token) (interface{}, error) {
 		return []byte(configuration.Config.Secret_jwt), nil
 	})
 	require.NoError(t, err)
 	require.True(t, parsed.Valid)
-	claims, ok := parsed.Claims.(jwtv4.MapClaims)
+	claims, ok := parsed.Claims.(jwtv5.MapClaims)
 	require.True(t, ok)
 	require.Equal(t, "phone-island", claims["aud"])
 	require.NotNil(t, claims["iat"])
@@ -111,20 +110,20 @@ func newTokenTestContext(method, username, audience string) (*gin.Context, *http
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest(method, "/tokens/persistent/"+audience, nil)
 	c.Params = gin.Params{{Key: "audience", Value: audience}}
-	c.Set("JWT_PAYLOAD", jwt.MapClaims{"id": username})
+	c.Set("JWT_PAYLOAD", jwtv5.MapClaims{"id": username})
 	return c, w
 }
 
 func mustIssueTestToken(t *testing.T, username, audience string) string {
 	t.Helper()
 	now := time.Now()
-	claims := jwtv4.MapClaims{
+	claims := jwtv5.MapClaims{
 		"id":  username,
 		"aud": audience,
 		"iat": now.Unix(),
 		"exp": now.Add(time.Hour).Unix(),
 	}
-	token := jwtv4.NewWithClaims(jwtv4.SigningMethodHS256, claims)
+	token := jwtv5.NewWithClaims(jwtv5.SigningMethodHS256, claims)
 	tokenString, err := token.SignedString([]byte(configuration.Config.Secret_jwt))
 	require.NoError(t, err)
 	return tokenString
