@@ -11,7 +11,7 @@ import (
 	"net/http"
 	"time"
 
-	jwtv4 "github.com/golang-jwt/jwt/v4"
+	jwtv5 "github.com/golang-jwt/jwt/v5"
 
 	"github.com/nethesis/nethcti-middleware/configuration"
 	"github.com/nethesis/nethcti-middleware/logs"
@@ -28,7 +28,7 @@ func DeleteExpiredTokens() {
 		}
 
 		for _, tokenRaw := range userSession.JWTTokens {
-			token, err := jwtv4.Parse(tokenRaw, func(token *jwtv4.Token) (interface{}, error) {
+			token, err := jwtv5.Parse(tokenRaw, func(token *jwtv5.Token) (interface{}, error) {
 				return []byte(configuration.Config.Secret_jwt), nil
 			})
 
@@ -36,7 +36,7 @@ func DeleteExpiredTokens() {
 			// Tokens without exp are considered non-expiring and remain valid until explicit revoke.
 			isValid := false
 			if err == nil && token.Valid {
-				if claims, ok := token.Claims.(jwtv4.MapClaims); ok {
+				if claims, ok := token.Claims.(jwtv5.MapClaims); ok {
 					if exp, ok := claims["exp"].(float64); ok {
 						// check if token is not expired
 						if time.Now().Unix() < int64(exp) {

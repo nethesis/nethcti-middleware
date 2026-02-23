@@ -19,7 +19,7 @@ import (
 	"github.com/fatih/structs"
 	"github.com/gin-gonic/gin"
 	"github.com/gin-gonic/gin/binding"
-	jwtv4 "github.com/golang-jwt/jwt/v4"
+	jwtv5 "github.com/golang-jwt/jwt/v5"
 	"github.com/nethesis/nethcti-middleware/configuration"
 	"github.com/nethesis/nethcti-middleware/logs"
 	"github.com/nethesis/nethcti-middleware/models"
@@ -373,7 +373,7 @@ func regenerateUserToken(userSession *models.UserSession, oldToken string) (*mod
 	now := time.Now()
 	expire := now.Add(time.Hour * 24 * 14) // 2 weeks
 
-	claims := jwtv4.MapClaims{
+	claims := jwtv5.MapClaims{
 		"id":           userSession.Username,
 		"2fa":          status == "1",
 		"otp_verified": userSession.OTP_Verified, // Use the session's OTP verification status
@@ -381,8 +381,8 @@ func regenerateUserToken(userSession *models.UserSession, oldToken string) (*mod
 		"iat":          now.Unix(),
 	}
 
-	// Create and sign token using github.com/golang-jwt/jwt/v4
-	token := jwtv4.NewWithClaims(jwtv4.SigningMethodHS256, claims)
+	// Create and sign token using github.com/golang-jwt/jwt/v5
+	token := jwtv5.NewWithClaims(jwtv5.SigningMethodHS256, claims)
 	tokenString, err := token.SignedString([]byte(configuration.Config.Secret_jwt))
 
 	if err != nil {
