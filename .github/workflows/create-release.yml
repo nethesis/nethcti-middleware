@@ -8,6 +8,19 @@ on:
 jobs:
   test-and-release:
     runs-on: ubuntu-latest
+    services:
+      mariadb:
+        image: mariadb:10.8.2
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: nethcti3
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -proot"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
     steps:
       - name: 'Checkout source code'
         uses: 'actions/checkout@v4'
