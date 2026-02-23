@@ -27,7 +27,7 @@ The application can be configured using the following environment variables:
 
 ### Prerequisites
 
-- Go 1.24 or later
+- Go 1.26 or later
 - `oathtool` package (for 2FA testing)
 - MariaDB 10.5+ or MySQL 8.0+ (for phonebook and persistence features)
 
