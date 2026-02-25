@@ -8,17 +8,17 @@ package methods
 import (
 	"fmt"
 
-	jwtv4 "github.com/golang-jwt/jwt/v4"
+	jwtv5 "github.com/golang-jwt/jwt/v5"
 	"github.com/nethesis/nethcti-middleware/logs"
 	"github.com/nethesis/nethcti-middleware/store"
 )
 
 // BuildUserJWTClaims builds the canonical JWT claims set for a user.
 // All user tokens should use this helper to keep claims and capabilities aligned.
-func BuildUserJWTClaims(username string, otpVerified bool) jwtv4.MapClaims {
+func BuildUserJWTClaims(username string, otpVerified bool) jwtv5.MapClaims {
 	status, _ := GetUserStatus(username)
 
-	claims := jwtv4.MapClaims{
+	claims := jwtv5.MapClaims{
 		"id":           username,
 		"2fa":          status == "1",
 		"otp_verified": otpVerified,
