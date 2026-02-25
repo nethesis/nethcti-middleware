@@ -1,6 +1,7 @@
 package socket
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -78,23 +79,69 @@ func WsProxyHandler(c *gin.Context) {
 
 			// Intercept transcription control messages
 			if msgType == websocket.TextMessage {
-				msgStr := string(msg)
-
-				if strings.HasPrefix(msgStr, "42[\"start_transcription\"") {
+				eventName, payload, isSocketIOEvent := parseSocketIOEvent(msg)
+				if isSocketIOEvent && eventName == "start_transcription" {
 					if user, exists := connManager.GetConnection(clientConn); exists {
+						callid, _ := payload["linkedid"].(string)
+						if callid == "" {
+							callid, _ = payload["uniqueid"].(string)
+						}
+						if callid == "" {
+							continue
+						}
+
+						shouldPublish := !user.TranscriptionEnabled || user.TranscriptionUniqueID != callid
 						if !user.TranscriptionEnabled {
 							user.TranscriptionEnabled = true
 							logs.Log(fmt.Sprintf("[INFO][WS] Transcription enabled for user %s", user.Username))
+						}
+						user.TranscriptionUniqueID = callid
+
+						if shouldPublish {
+							err := mqtt.Publish("satellite/transcription/control", map[string]interface{}{
+								"action":   "start",
+								"linkedid": callid,
+								"username": user.Username,
+							})
+							if err != nil {
+								logs.Log(fmt.Sprintf("[ERROR][MQTT] Failed to publish start transcription control: %v", err))
+							}
 						}
 					}
 					continue // Don't forward to backend
 				}
 
-				if strings.HasPrefix(msgStr, "42[\"stop_transcription\"") {
+				if isSocketIOEvent && eventName == "stop_transcription" {
 					if user, exists := connManager.GetConnection(clientConn); exists {
+						callid, _ := payload["linkedid"].(string)
+						if callid == "" {
+							callid, _ = payload["uniqueid"].(string)
+						}
+						if callid == "" {
+							callid = user.TranscriptionUniqueID
+						}
+						if callid == "" {
+							continue
+						}
+
+						shouldPublish := user.TranscriptionEnabled && (user.TranscriptionUniqueID == "" || user.TranscriptionUniqueID == callid)
 						if user.TranscriptionEnabled {
 							user.TranscriptionEnabled = false
 							logs.Log(fmt.Sprintf("[INFO][WS] Transcription disabled for user %s", user.Username))
+						}
+						if user.TranscriptionUniqueID == callid {
+							user.TranscriptionUniqueID = ""
+						}
+
+						if shouldPublish {
+							err := mqtt.Publish("satellite/transcription/control", map[string]interface{}{
+								"action":   "stop",
+								"linkedid": callid,
+								"username": user.Username,
+							})
+							if err != nil {
+								logs.Log(fmt.Sprintf("[ERROR][MQTT] Failed to publish stop transcription control: %v", err))
+							}
 						}
 					}
 					continue // Don't forward to backend
@@ -176,7 +223,7 @@ func WsProxyHandler(c *gin.Context) {
 				return
 			}
 
-			err = clientConn.WriteMessage(msgType, msg)
+			err = connManager.WriteMessage(clientConn, msgType, msg)
 			if err != nil {
 				errc <- err
 				return
@@ -185,4 +232,27 @@ func WsProxyHandler(c *gin.Context) {
 	}()
 
 	<-errc
+}
+
+func parseSocketIOEvent(msg []byte) (string, map[string]interface{}, bool) {
+	if !bytes.HasPrefix(msg, []byte("42[")) {
+		return "", nil, false
+	}
+
+	var payload []json.RawMessage
+	if err := json.Unmarshal(msg[2:], &payload); err != nil || len(payload) == 0 {
+		return "", nil, false
+	}
+
+	var eventName string
+	if err := json.Unmarshal(payload[0], &eventName); err != nil || eventName == "" {
+		return "", nil, false
+	}
+
+	eventPayload := map[string]interface{}{}
+	if len(payload) > 1 {
+		_ = json.Unmarshal(payload[1], &eventPayload)
+	}
+
+	return eventName, eventPayload, true
 }
