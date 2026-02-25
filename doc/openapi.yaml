@@ -112,6 +112,157 @@ components:
             type: string
           description: List of error messages encountered during import
 
+    SummaryWatchRequest:
+      type: object
+      required:
+        - uniqueid
+      properties:
+        uniqueid:
+          type: string
+          description: Unique ID of the call to watch
+
+    SummaryWatchResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+        message:
+          type: string
+        data:
+          type: object
+          properties:
+            uniqueid:
+              type: string
+
+    SummaryUpdateRequest:
+      type: object
+      required:
+        - summary
+      properties:
+        summary:
+          type: string
+          description: Summary text to store for the call
+
+    SummaryListRequest:
+      type: object
+      required:
+        - uniqueids
+      properties:
+        uniqueids:
+          type: array
+          items:
+            type: string
+
+    SummaryListItem:
+      type: object
+      properties:
+        uniqueid:
+          type: string
+        state:
+          type: string
+        has_transcription:
+          type: boolean
+        has_summary:
+          type: boolean
+        updated_at:
+          type: string
+          format: date-time
+          nullable: true
+      required:
+        - uniqueid
+        - state
+        - has_transcription
+        - has_summary
+        - updated_at
+
+    SummaryListNotFoundItem:
+      type: object
+      properties:
+        uniqueid:
+          type: string
+        error:
+          type: string
+          enum: [not_found]
+      required:
+        - uniqueid
+        - error
+
+    SummaryListResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+        message:
+          type: string
+        data:
+          type: array
+          items:
+            oneOf:
+              - $ref: '#/components/schemas/SummaryListItem'
+              - $ref: '#/components/schemas/SummaryListNotFoundItem'
+
+    TranscriptionResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+        message:
+          type: string
+        data:
+          type: object
+          properties:
+            uniqueid:
+              type: string
+            transcription:
+              type: string
+            created_at:
+              type: string
+              format: date-time
+              nullable: true
+
+    SummaryResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+        message:
+          type: string
+        data:
+          type: object
+          properties:
+            uniqueid:
+              type: string
+            summary:
+              type: string
+            sentiment:
+              type: integer
+              nullable: true
+            state:
+              type: string
+            created_at:
+              type: string
+              format: date-time
+            updated_at:
+              type: string
+              format: date-time
+            deleted_at:
+              type: string
+              format: date-time
+              nullable: true
+
+    SummaryDeleteResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+        message:
+          type: string
+        data:
+          type: object
+          properties:
+            uniqueid:
+              type: string
+
 paths:
   /login:
     post:
@@ -139,6 +290,16 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /ws/:
+    get:
+      summary: WebSocket proxy
+      operationId: wsProxy
+      tags:
+        - WebSocket
+      responses:
+        '101':
+          description: Switching Protocols
+
   /logout:
     post:
       summary: User logout
@@ -152,6 +313,303 @@ paths:
           description: Successful logout
         '401':
           description: Unauthorized
+        '503':
+          description: Satellite database not configured
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /summary/watch:
+    post:
+      summary: Watch for call summary
+      operationId: watchCallSummary
+      tags:
+        - Transcripts
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SummaryWatchRequest'
+      responses:
+        '202':
+          description: Watch started
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SummaryWatchResponse'
+        '200':
+          description: Watch already active or unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SummaryWatchResponse'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+
+  /summary/statuses:
+    post:
+      summary: List summary/transcription status for provided unique IDs
+      operationId: listSummaryStatus
+      tags:
+        - Transcripts
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SummaryListRequest'
+      responses:
+        '200':
+          description: Summary status list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SummaryListResponse'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: Service unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /transcripts/{uniqueid}:
+    get:
+      summary: Get transcription by unique ID
+      operationId: getTranscriptionByUniqueId
+      tags:
+        - Transcripts
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: uniqueid
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Transcription retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TranscriptionResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: Service unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /summary/{uniqueid}:
+    head:
+      summary: Check transcript existence by unique ID
+      operationId: headSummaryByUniqueId
+      tags:
+        - Transcripts
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: uniqueid
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Uniqueid exists
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden
+        '404':
+          description: Uniqueid not found
+        '503':
+          description: Service unavailable
+    get:
+      summary: Get summary by unique ID
+      operationId: getSummaryByUniqueId
+      tags:
+        - Transcripts
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: uniqueid
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Summary retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SummaryResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: Service unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    put:
+      summary: Update summary by unique ID
+      operationId: updateSummaryByUniqueId
+      tags:
+        - Transcripts
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: uniqueid
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SummaryUpdateRequest'
+      responses:
+        '200':
+          description: Summary updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SummaryResponse'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: Service unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      summary: Delete summary by unique ID
+      operationId: deleteSummaryByUniqueId
+      tags:
+        - Transcripts
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: uniqueid
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Summary deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SummaryDeleteResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: Service unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /2fa/status:
     get:
@@ -417,7 +875,7 @@ paths:
         '401':
           description: Unauthorized
 
-  /phonebook/import/:
+  /phonebook/import:
     post:
       summary: Import phonebook contacts for authenticated user
       operationId: importPhonebook

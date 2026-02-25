@@ -17,12 +17,14 @@ import (
 
 // UserConnection represents a WebSocket connection with user data
 type UserConnection struct {
-	Conn                 *websocket.Conn
-	Username             string
-	DisplayName          string
-	PhoneNumbers         []string
-	AccessKeyId          string
-	TranscriptionEnabled bool
+	Conn                  *websocket.Conn
+	Username              string
+	DisplayName           string
+	PhoneNumbers          []string
+	AccessKeyId           string
+	TranscriptionEnabled  bool
+	TranscriptionUniqueID string
+	writeMutex            sync.Mutex
 }
 
 // ConnectionManager manages all active WebSocket connections
@@ -175,7 +177,23 @@ func (cm *ConnectionManager) BroadcastMQTTMessage(messageType string, data inter
 			finalMsg := append([]byte("42"), socketIOPayload...)
 
 			// Send message (ignore errors, connection will be cleaned up elsewhere)
-			conn.WriteMessage(websocket.TextMessage, finalMsg)
+			if err := cm.WriteMessage(conn, websocket.TextMessage, finalMsg); err != nil {
+				logs.Log(fmt.Sprintf("[ERROR][BROADCAST] Failed to write websocket message: %v", err))
+			}
 		}(conn, user)
 	}
+}
+
+// WriteMessage serializes websocket writes for a connection to avoid concurrent writes.
+func (cm *ConnectionManager) WriteMessage(conn *websocket.Conn, messageType int, data []byte) error {
+	if user, exists := cm.GetConnection(conn); exists {
+		user.writeMutex.Lock()
+		defer user.writeMutex.Unlock()
+	}
+	return conn.WriteMessage(messageType, data)
+}
+
+// BroadcastSummaryMessage sends a summary update to all connected clients.
+func BroadcastSummaryMessage(message interface{}) {
+	connManager.BroadcastMQTTMessage("satellite/summary", message)
 }

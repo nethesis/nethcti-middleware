@@ -23,6 +23,7 @@ import (
 	"github.com/nethesis/nethcti-middleware/mqtt"
 	"github.com/nethesis/nethcti-middleware/socket"
 	"github.com/nethesis/nethcti-middleware/store"
+	"github.com/nethesis/nethcti-middleware/summary"
 )
 
 func main() {
@@ -38,6 +39,20 @@ func main() {
 		logs.Log("[CRITICAL][DB] Failed to initialize database: " + err.Error())
 	}
 	defer db.Close()
+
+	// Init CDR database
+	err = db.InitCDR()
+	if err != nil {
+		logs.Log("[CRITICAL][CDR-DB] Failed to initialize CDR database: " + err.Error())
+	}
+	defer db.CloseCDR()
+
+	// Init satellite database
+	err = db.InitSatellite()
+	if err != nil {
+		logs.Log("[CRITICAL][DB] Failed to initialize satellite database: " + err.Error())
+	}
+	defer db.CloseSatellite()
 
 	// Init store
 	store.UserSessionInit()
@@ -59,6 +74,11 @@ func main() {
 			logs.Log("[WARNING][MQTT] Failed to subscribe to transcription topic: " + err.Error())
 		}
 	}
+
+	// Register summary notifier to broadcast over WebSocket
+	summary.SetSummaryNotifier(func(msg summary.SummaryMessage) {
+		socket.BroadcastSummaryMessage(msg)
+	})
 
 	// Create router
 	router := createRouter()
@@ -116,6 +136,17 @@ func createRouter() *gin.Engine {
 	// Authentication required endpoints
 	api.Use(middleware.InstanceJWT().MiddlewareFunc())
 	{
+		// Transcription APIs
+		api.GET("/transcripts/:uniqueid", middleware.RequireCapabilities("nethvoice_cti.satellite_stt"), methods.GetTranscriptionByUniqueID)
+
+		// Summary APIs
+		api.GET("/summary/:uniqueid", middleware.RequireCapabilities("nethvoice_cti.satellite_stt"), methods.GetSummaryByUniqueID)
+		api.HEAD("/summary/:uniqueid", middleware.RequireCapabilities("nethvoice_cti.satellite_stt"), methods.CheckSummaryByUniqueID)
+		api.PUT("/summary/:uniqueid", middleware.RequireCapabilities("nethvoice_cti.satellite_stt"), methods.UpdateSummaryByUniqueID)
+		api.DELETE("/summary/:uniqueid", middleware.RequireCapabilities("nethvoice_cti.satellite_stt"), methods.DeleteSummaryByUniqueID)
+		api.POST("/summary/statuses", middleware.RequireCapabilities("nethvoice_cti.satellite_stt"), methods.ListSummaryStatus)
+		api.POST("/summary/watch", middleware.RequireCapabilities("nethvoice_cti.satellite_stt"), methods.WatchCallSummary)
+
 		// 2FA
 		api.POST("/2fa/disable", methods.Disable2FA)
 		api.POST("/2fa/verify-otp", methods.VerifyOTP)
