@@ -170,15 +170,6 @@ func createRouter() *gin.Engine {
 
 		// Logout endpoint
 		api.POST("/logout", middleware.InstanceJWT().LogoutHandler)
-
-		// ---------------------------------------------------------------------
-		// TODO: migrate these endpoints to REST-style paths in a future change.
-		// ---------------------------------------------------------------------
-
-		// Phone Island Integration APIs (LEGACY PATHS)
-		api.POST("/authentication/phone_island_token_login", methods.PhoneIslandTokenLogin)
-		api.POST("/authentication/persistent_token_remove", methods.PhoneIslandTokenRemove)
-		api.GET("/authentication/phone_island_token_check", methods.PhoneIslandTokenCheck)
 	}
 
 	// Handle missing endpoint

@@ -173,14 +173,14 @@ func InitJWT() *jwt.GinJWTMiddleware {
 				return store.UserSessions[username], nil
 			}
 		},
-		PayloadFunc: func(data any) gojwt.MapClaims {
-			// read current user
-			if userSession, ok := data.(*models.UserSession); ok {
-				// Note: otp_verified is always false on initial login.
-				// It will be set to true only after OTP verification via regenerateUserToken.
-				claims := methods.BuildUserJWTClaims(userSession.Username, false)
-				return jwt.MapClaims(claims)
-			}
+			PayloadFunc: func(data any) gojwt.MapClaims {
+				// read current user
+				if userSession, ok := data.(*models.UserSession); ok {
+					// Note: otp_verified is always false on initial login.
+					// It will be set to true only after OTP verification via regenerateUserToken.
+					claims := methods.BuildUserJWTClaims(userSession.Username, false)
+					return gojwt.MapClaims(claims)
+				}
 
 			// return empty claims map
 			return gojwt.MapClaims{}

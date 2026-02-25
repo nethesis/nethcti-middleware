@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	jwt "github.com/appleboy/gin-jwt/v2"
+	jwtv5 "github.com/golang-jwt/jwt/v5"
 	"github.com/gin-gonic/gin"
 
 	"github.com/nethesis/nethcti-middleware/configuration"
@@ -52,7 +52,7 @@ func TestCheckSummaryByUniqueID_NotFound(t *testing.T) {
 
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
-		c.Set("JWT_PAYLOAD", jwt.MapClaims{"id": "alice"})
+		c.Set("JWT_PAYLOAD", jwtv5.MapClaims{"id": "alice"})
 		c.Next()
 	})
 	router.HEAD("/summary/:uniqueid", CheckSummaryByUniqueID)
@@ -96,7 +96,7 @@ func TestListSummaryStatus_Succeeds(t *testing.T) {
 
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
-		c.Set("JWT_PAYLOAD", jwt.MapClaims{"id": "alice"})
+		c.Set("JWT_PAYLOAD", jwtv5.MapClaims{"id": "alice"})
 		c.Next()
 	})
 	router.POST("/summary/statuses", ListSummaryStatus)
@@ -152,7 +152,7 @@ func TestListSummaryStatus_MixedResults(t *testing.T) {
 
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
-		c.Set("JWT_PAYLOAD", jwt.MapClaims{"id": "alice"})
+		c.Set("JWT_PAYLOAD", jwtv5.MapClaims{"id": "alice"})
 		c.Next()
 	})
 	router.POST("/summary/statuses", ListSummaryStatus)

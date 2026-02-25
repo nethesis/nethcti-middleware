@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	jwt "github.com/appleboy/gin-jwt/v2"
+	jwtv5 "github.com/golang-jwt/jwt/v5"
 	"github.com/gin-gonic/gin"
 
 	"github.com/nethesis/nethcti-middleware/configuration"
@@ -47,7 +47,7 @@ func TestGetTranscription_UnauthorizedWhenNotParticipant(t *testing.T) {
 
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
-		c.Set("JWT_PAYLOAD", jwt.MapClaims{"id": "alice"})
+		c.Set("JWT_PAYLOAD", jwtv5.MapClaims{"id": "alice"})
 		c.Next()
 	})
 	router.GET("/transcripts/:uniqueid", GetTranscriptionByUniqueID)
@@ -95,7 +95,7 @@ func TestUpdateSummary_SucceedsWhenAuthorized(t *testing.T) {
 
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
-		c.Set("JWT_PAYLOAD", jwt.MapClaims{"id": "alice"})
+		c.Set("JWT_PAYLOAD", jwtv5.MapClaims{"id": "alice"})
 		c.Next()
 	})
 	router.PUT("/summary/:uniqueid", UpdateSummaryByUniqueID)
@@ -152,7 +152,7 @@ func TestGetSummaryByUniqueID_ReturnsExtendedData(t *testing.T) {
 
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
-		c.Set("JWT_PAYLOAD", jwt.MapClaims{"id": "alice"})
+		c.Set("JWT_PAYLOAD", jwtv5.MapClaims{"id": "alice"})
 		c.Next()
 	})
 	router.GET("/summary/:uniqueid", GetSummaryByUniqueID)
