@@ -128,6 +128,12 @@ func createRouter() *gin.Engine {
 		api.GET("/tokens/persistent/:audience", methods.CheckPersistentToken)
 		api.DELETE("/tokens/persistent/:audience", methods.RemovePersistentToken)
 
+		// LEGACY COMPATIBILITY (to be removed in a future cleanup):
+		// keep old /authentication/* token endpoints for older clients.
+		api.POST("/authentication/phone_island_token_login", methods.PhoneIslandTokenLogin)
+		api.POST("/authentication/persistent_token_remove", methods.PhoneIslandTokenRemove)
+		api.GET("/authentication/phone_island_token_check", methods.PhoneIslandTokenCheck)
+
 		// Phonebook import API
 		api.POST("/phonebook/import", middleware.RequireCapabilities("phonebook.ad_phonebook"), methods.ImportPhonebookCSV)
 
