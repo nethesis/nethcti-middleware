@@ -25,6 +25,60 @@ var allowedIntegrationAudiences = map[string]struct{}{
 	"nethlink":     {},
 }
 
+// -----------------------------------------------------------------------------
+// LEGACY COMPATIBILITY SECTION
+//
+// These handlers are kept only for backward compatibility with old clients
+// (e.g. old NethLink versions). They should be removed when legacy clients are
+// no longer supported.
+// -----------------------------------------------------------------------------
+
+type phoneIslandLegacyRequest struct {
+	Type    string `json:"type"`
+	Subtype string `json:"subtype"`
+}
+
+// PhoneIslandTokenLogin is a legacy compatibility endpoint.
+// It maps legacy subtype values to the new persistent token audiences.
+func PhoneIslandTokenLogin(c *gin.Context) {
+	var req phoneIslandLegacyRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		// Keep backward compatibility: empty body means default phone-island audience.
+		req = phoneIslandLegacyRequest{}
+	}
+	issueIntegrationToken(c, mapLegacySubtypeToAudience(req.Subtype))
+}
+
+// PhoneIslandTokenCheck is a legacy compatibility endpoint.
+// Historically this endpoint checked the phone-island integration token existence.
+func PhoneIslandTokenCheck(c *gin.Context) {
+	checkIntegrationToken(c, "phone-island")
+}
+
+// PhoneIslandTokenRemove is a legacy compatibility endpoint.
+// It maps legacy subtype values to the new persistent token audiences.
+func PhoneIslandTokenRemove(c *gin.Context) {
+	var req phoneIslandLegacyRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		// Keep backward compatibility: empty body means default phone-island audience.
+		req = phoneIslandLegacyRequest{}
+	}
+	revokeIntegrationTokens(c, mapLegacySubtypeToAudience(req.Subtype))
+}
+
+// mapLegacySubtypeToAudience maps legacy subtype values to the new persistent token audiences.
+func mapLegacySubtypeToAudience(subtype string) string {
+	normalizedSubtype := strings.TrimSpace(strings.ToLower(subtype))
+	if normalizedSubtype == "nethlink" {
+		return "nethlink"
+	}
+	return "phone-island"
+}
+
+// -----------------------------------------------------------------------------
+// CURRENT TOKEN API SECTION
+// -----------------------------------------------------------------------------
+
 // CreatePersistentToken creates a JWT integration token for the requested audience.
 func CreatePersistentToken(c *gin.Context) {
 	audience, ok := getAudienceFromRequest(c)
