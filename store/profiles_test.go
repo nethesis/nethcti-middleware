@@ -93,9 +93,9 @@ func TestReloadProfiles_PartialFailures(t *testing.T) {
 		t.Fatalf("failed to corrupt profiles file: %v", err)
 	}
 
-	// Users file remains valid; ReloadProfiles should NOT return an error
+	// Users file remains valid; reload should NOT return an error
 	// (current behavior: it logs the profiles error but keeps previous data)
-	if err := ReloadProfiles(); err != nil {
+	if _, err := ReloadProfiles(); err != nil {
 		t.Fatalf("unexpected error from ReloadProfiles when only profiles reload fails: %v", err)
 	}
 
@@ -113,7 +113,7 @@ func TestReloadProfiles_PartialFailures(t *testing.T) {
 	}
 
 	// Reload should NOT return an error when only users reload fails
-	if err := ReloadProfiles(); err != nil {
+	if _, err := ReloadProfiles(); err != nil {
 		t.Fatalf("unexpected error from ReloadProfiles when only users reload fails: %v", err)
 	}
 
@@ -144,10 +144,10 @@ func TestReloadProfiles_Concurrent(t *testing.T) {
 	// Run many concurrent reloads and lookups
 	done := make(chan struct{})
 
-	// Start a goroutine that continuously calls ReloadProfiles
+	// Start a goroutine that continuously reloads profiles
 	go func() {
 		for i := 0; i < 200; i++ {
-			if err := ReloadProfiles(); err != nil {
+			if _, err := ReloadProfiles(); err != nil {
 				// test should not fail just because one reload had parse errors; continue
 			}
 		}

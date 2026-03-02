@@ -20,8 +20,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/nqd/flat"
 
-	"github.com/appleboy/gin-jwt/v3/core"
 	jwt "github.com/appleboy/gin-jwt/v3"
+	"github.com/appleboy/gin-jwt/v3/core"
 	gojwt "github.com/golang-jwt/jwt/v5"
 
 	"github.com/nethesis/nethcti-middleware/configuration"
@@ -186,24 +186,6 @@ func InitJWT() *jwt.GinJWTMiddleware {
 					identityKey:    userSession.Username,
 					"2fa":          status == "1",
 					"otp_verified": false,
-				}
-
-				// Load user profile and inject all capabilities into claims
-				profile, err := store.GetUserProfile(userSession.Username)
-				if err != nil {
-					logs.Log(fmt.Sprintf("[WARNING][AUTH] Failed to load profile for user %s: %v", userSession.Username, err))
-				} else {
-					// Add profile metadata
-					claims["profile_id"] = profile.ID
-					claims["profile_name"] = profile.Name
-
-					// Inject all capabilities as individual claims
-					for capability, value := range profile.Capabilities {
-						claims[capability] = value
-					}
-
-					logs.Log(fmt.Sprintf("[INFO][AUTH] Injected %d capabilities into JWT for user %s (profile: %s)",
-						len(profile.Capabilities), userSession.Username, profile.Name))
 				}
 
 				return claims
@@ -420,12 +402,12 @@ func RequireSuperAdmin() gin.HandlerFunc {
 			return
 		}
 
-		logs.Log("[INFO][AUTH] super admin authentication success")
+		logs.Log(fmt.Sprintf("[INFO][AUTH][INTERNAL] super admin request authorized from %s. %s %s", clientIP, c.Request.Method, c.Request.URL.Path))
 		c.Next()
 	}
 }
 
-// RequireCapabilities ensures the JWT contains the requested capability claim set to true
+// RequireCapabilities ensures the current user has the requested capability server-side.
 func RequireCapabilities(capability string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// Extract claims from JWT
@@ -436,12 +418,20 @@ func RequireCapabilities(capability string) gin.HandlerFunc {
 			return
 		}
 
-		// capability may be present as a boolean claim
-		if val, ok := claims[capability]; ok {
-			if allowed, ok := val.(bool); ok && allowed {
-				c.Next()
-				return
-			}
+		caps, err := store.GetUserCapabilities(username)
+		if err != nil {
+			logs.Log("[AUTH][ERROR] authorization failed for user " + username + ": failed to resolve user capabilities: " + err.Error())
+			c.AbortWithStatusJSON(http.StatusForbidden, structs.Map(models.StatusForbidden{
+				Code:    http.StatusForbidden,
+				Message: "forbidden: missing capability",
+				Data:    nil,
+			}))
+			return
+		}
+
+		if allowed, ok := caps[capability]; ok && allowed {
+			c.Next()
+			return
 		}
 
 		logs.Log("[AUTH][ERROR] authorization failed for user " + username + ": missing or insufficient capability " + capability)

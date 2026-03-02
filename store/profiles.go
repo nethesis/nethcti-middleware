@@ -50,6 +50,12 @@ type rawUser struct {
 	ProfileID string `json:"profile_id"`
 }
 
+// ReloadStats reports in-memory counters after a reload attempt.
+type ReloadStats struct {
+	ProfilesLoaded int
+	UsersLoaded    int
+}
+
 var (
 	profiles         map[string]*ProfileData
 	users            map[string]*UserProfile
@@ -134,8 +140,8 @@ func GetUserProfile(username string) (*ProfileData, error) {
 	return profile, nil
 }
 
-// ReloadProfiles reloads profiles and users from JSON files, keeping old data on failure
-func ReloadProfiles() error {
+// ReloadProfiles reloads profiles and users and returns resulting counters.
+func ReloadProfiles() (*ReloadStats, error) {
 	// Load new profiles and users into temporary variables
 	newProfiles, profilesErr := loadProfiles(profilesFilePath)
 
@@ -155,29 +161,38 @@ func ReloadProfiles() error {
 	if profilesErr != nil && usersErr != nil {
 		logs.Log(fmt.Sprintf("[ERROR][AUTH] Failed to reload profiles: %v", profilesErr))
 		logs.Log(fmt.Sprintf("[ERROR][AUTH] Failed to reload users: %v", usersErr))
-		return fmt.Errorf("reload failed for both profiles and users")
+		return nil, fmt.Errorf("reload failed for both profiles and users")
 	}
+
+	stats := &ReloadStats{}
 
 	// Update profiles if load succeeded, otherwise keep old data
 	if profilesErr != nil {
 		logs.Log(fmt.Sprintf("[WARNING][AUTH] Failed to reload profiles (keeping previous data): %v", profilesErr))
+		profileMutex.RLock()
+		stats.ProfilesLoaded = len(profiles)
+		profileMutex.RUnlock()
 	} else {
 		profileMutex.Lock()
 		profiles = newProfiles
 		profileMutex.Unlock()
+		stats.ProfilesLoaded = len(newProfiles)
 	}
 
 	// Update users if load succeeded, otherwise keep old data
 	if usersErr != nil {
 		logs.Log(fmt.Sprintf("[WARNING][AUTH] Failed to reload users (keeping previous data): %v", usersErr))
+		profileMutex.RLock()
+		stats.UsersLoaded = len(users)
+		profileMutex.RUnlock()
 	} else {
 		profileMutex.Lock()
 		users = newUsers
 		profileMutex.Unlock()
+		stats.UsersLoaded = len(newUsers)
 	}
 
-	logs.Log("[INFO][AUTH] Profile reload completed successfully")
-	return nil
+	return stats, nil
 }
 
 // loadProfiles loads profiles into a temporary map without modifying global state
@@ -221,7 +236,6 @@ func loadProfiles(path string) (map[string]*ProfileData, error) {
 		}
 	}
 
-	logs.Log(fmt.Sprintf("[INFO][AUTH] loaded %d profiles", len(result)))
 	return result, nil
 }
 
@@ -253,6 +267,5 @@ func loadUsers(path string, profilesMap map[string]*ProfileData) (map[string]*Us
 		}
 	}
 
-	logs.Log(fmt.Sprintf("[INFO][AUTH] loaded %d users", len(result)))
 	return result, nil
 }

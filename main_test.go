@@ -806,10 +806,9 @@ func writeTempFileForTest(t *testing.T, name, content string) string {
 	return p
 }
 
-// generateTestJWTWithCapabilities creates a signed JWT for the given username
-// Uses the middleware PayloadFunc to inject capabilities based on the user's profile
+// generateTestJWTWithCapabilities creates a signed JWT for the given username.
 func generateTestJWTWithCapabilities(username string) (string, error) {
-	// If a user session exists, use the middleware PayloadFunc so claims include injected capabilities
+	// If a user session exists, use middleware PayloadFunc so claims are consistent with runtime auth.
 	if sess, ok := store.UserSessions[username]; ok && sess != nil {
 		mw := middleware.InstanceJWT()
 		// PayloadFunc returns jwt.MapClaims

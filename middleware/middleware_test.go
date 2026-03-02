@@ -379,8 +379,8 @@ func writeTempFile(t *testing.T, name, content string) string {
 	return p
 }
 
-// Test that PayloadFunc injects profile-related claims into the JWT claims map
-func TestPayloadFuncInjectsProfileClaims(t *testing.T) {
+// Test that PayloadFunc only injects base auth claims into the JWT claims map.
+func TestPayloadFuncInjectsBaseClaimsOnly(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	// Ensure a deterministic JWT secret for the middleware
@@ -392,22 +392,6 @@ func TestPayloadFuncInjectsProfileClaims(t *testing.T) {
 	// causing signature validation to fail.
 	jwtMiddleware = nil
 
-	// Prepare a minimal profiles/users fixture
-	profilesJSON := `{
-		"p1": {"id":"p1","name":"Base","macro_permissions": {"phonebook": {"value": true, "permissions": [{"id":"12","name":"ad_phonebook","value":true}]}}}
-	}`
-
-	usersJSON := `{
-		"tuser": {"profile_id":"p1"}
-	}`
-
-	profFile := writeTempFile(t, "profiles.json", profilesJSON)
-	usersFile := writeTempFile(t, "users.json", usersJSON)
-
-	if err := store.InitProfiles(profFile, usersFile); err != nil {
-		t.Fatalf("InitProfiles failed: %v", err)
-	}
-
 	// Initialize session storage and set a session for the user
 	store.UserSessionInit()
 	store.UserSessions["tuser"] = &models.UserSession{Username: "tuser"}
@@ -416,45 +400,48 @@ func TestPayloadFuncInjectsProfileClaims(t *testing.T) {
 	mw := InstanceJWT()
 	claims := mw.PayloadFunc(store.UserSessions["tuser"])
 
-	// Validate injected claims
-	if got, ok := claims["profile_id"].(string); !ok || got != "p1" {
-		t.Fatalf("unexpected profile_id claim: got %v", claims["profile_id"])
+	// Validate base claims
+	if got, ok := claims["id"].(string); !ok || got != "tuser" {
+		t.Fatalf("unexpected id claim: got %v", claims["id"])
 	}
 
-	if val, ok := claims["phonebook.ad_phonebook"].(bool); !ok || !val {
-		t.Fatalf("expected capability phonebook.ad_phonebook=true in claims, got %v", claims["phonebook.ad_phonebook"])
+	if got, ok := claims["2fa"].(bool); !ok || got {
+		t.Fatalf("unexpected 2fa claim: got %v", claims["2fa"])
 	}
 
-	if val, ok := claims["phonebook"].(bool); !ok || !val {
-		t.Fatalf("expected capability phonebook=true in claims, got %v", claims["phonebook"])
+	if got, ok := claims["otp_verified"].(bool); !ok || got {
+		t.Fatalf("unexpected otp_verified claim: got %v", claims["otp_verified"])
 	}
 }
 
-// Test PayloadFunc when user profile cannot be loaded: it should not panic and should not inject profile claims
-func TestPayloadFuncHandlesMissingProfile(t *testing.T) {
+// Test PayloadFunc does not expose profile/capability claims.
+func TestPayloadFuncDoesNotInjectProfileOrCapabilityClaims(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	configuration.Config.Secret_jwt = "test-secret-2"
 
-	// Initialize empty profiles (use a temp non-existent file so loader falls back to embedded defaults)
+	// Initialize a basic user session
 	store.UserSessionInit()
 	store.UserSessions["no_prof_user"] = &models.UserSession{Username: "no_prof_user"}
 
 	mw := InstanceJWT()
 	claims := mw.PayloadFunc(store.UserSessions["no_prof_user"])
 
-	// profile_id should not be injected when profile is missing
+	// profile claims must not be injected
 	if _, ok := claims["profile_id"]; ok {
-		t.Fatalf("expected no profile_id claim when profile is missing, got %v", claims["profile_id"])
+		t.Fatalf("expected no profile_id claim, got %v", claims["profile_id"])
+	}
+	if _, ok := claims["profile_name"]; ok {
+		t.Fatalf("expected no profile_name claim, got %v", claims["profile_name"])
 	}
 
-	// capability keys should not be present
+	// capability keys must not be present
 	if _, ok := claims["phonebook.ad_phonebook"]; ok {
-		t.Fatalf("expected no capability claims when profile is missing, got phonebook.ad_phonebook")
+		t.Fatalf("expected no capability claims, got phonebook.ad_phonebook")
 	}
 }
 
-func TestRequireCapabilities_AllowsWhenClaimPresent(t *testing.T) {
+func TestRequireCapabilities_AllowsWhenCapabilityPresentServerSide(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	// Ensure middleware uses test secret before constructing the router
 	configuration.Config.Secret_jwt = "test-secret"
@@ -469,7 +456,7 @@ func TestRequireCapabilities_AllowsWhenClaimPresent(t *testing.T) {
 		c.JSON(200, gin.H{"ok": true})
 	})
 	store.UserSessionInit()
-	// create minimal profile/users so payload injects capability
+	// create minimal profile/users so server-side capability check succeeds
 	profilesJSON := `{"p": {"id":"p","name":"P","macro_permissions": {"phonebook": {"value": true, "permissions": [{"id":"12","name":"ad_phonebook","value":true}]}}}}`
 	usersJSON := `{"u": {"profile_id":"p"}}`
 	profFile := writeTempFile(t, "profiles.json", profilesJSON)
@@ -498,7 +485,7 @@ func TestRequireCapabilities_AllowsWhenClaimPresent(t *testing.T) {
 	}
 }
 
-func TestRequireCapabilities_DeniesWhenClaimMissing(t *testing.T) {
+func TestRequireCapabilities_DeniesWhenCapabilityMissingServerSide(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	// Ensure middleware uses test secret before constructing the router
 	configuration.Config.Secret_jwt = "test-secret"
@@ -513,7 +500,7 @@ func TestRequireCapabilities_DeniesWhenClaimMissing(t *testing.T) {
 	})
 
 	store.UserSessionInit()
-	// create user without profile so no capability injected
+	// create user without a valid profile, so capability cannot be resolved server-side
 	profilesJSON := `{}`
 	usersJSON := `{"nouser": {"profile_id":"missing"}}`
 	profFile := writeTempFile(t, "profiles.json", profilesJSON)
