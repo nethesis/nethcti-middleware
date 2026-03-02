@@ -1,6 +1,7 @@
 package methods
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/fatih/structs"
@@ -12,9 +13,10 @@ import (
 
 // AdminReloadProfiles reloads profiles and users globally via super admin API endpoint
 func AdminReloadProfiles(c *gin.Context) {
-	// Call store.ReloadProfiles() to reload profiles and users from configuration files
-	if err := store.ReloadProfiles(); err != nil {
-		logs.Log("[ERROR][AUTH] Failed to reload profiles via super admin: " + err.Error())
+	// Reload profiles and users from configuration files
+	stats, err := store.ReloadProfiles()
+	if err != nil {
+		logs.Log("[ERROR] Failed to reload profiles via super admin: " + err.Error())
 		c.JSON(http.StatusInternalServerError, structs.Map(models.StatusInternalServerError{
 			Code:    http.StatusInternalServerError,
 			Message: "failed to reload profiles",
@@ -23,7 +25,7 @@ func AdminReloadProfiles(c *gin.Context) {
 		return
 	}
 
-	logs.Log("[INFO][AUTO] Global profile reload completed successfully via /admin/reload/profiles endpoint")
+	logs.Log(fmt.Sprintf("[INFO] /admin/reload/profiles completed: profiles=%d users=%d", stats.ProfilesLoaded, stats.UsersLoaded))
 
 	// Return success response
 	c.JSON(http.StatusOK, structs.Map(models.StatusOK{
