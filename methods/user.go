@@ -14,6 +14,7 @@ import (
 
 	"github.com/nethesis/nethcti-middleware/configuration"
 	"github.com/nethesis/nethcti-middleware/logs"
+	"github.com/nethesis/nethcti-middleware/store"
 )
 
 // Extension represents a phone extension (only ID is used)
@@ -36,6 +37,13 @@ type UserInfo struct {
 	// Computed fields for easier access
 	DisplayName  string   `json:"-"`
 	PhoneNumbers []string `json:"-"`
+}
+
+// ChatUser represents user information for chat purposes
+type ChatUser struct {
+	UserName      string   `json:"user_name"`
+	MainExtension string   `json:"main_extension"`
+	Extensions    []string `json:"extensions"`
 }
 
 // GetUserInfo retrieves user information from V1 API using the provided token
@@ -119,4 +127,37 @@ func GetUserInfo(nethCTIToken string) (*UserInfo, error) {
 		userInfo.Username, userInfo.DisplayName, userInfo.PhoneNumbers))
 
 	return &userInfo, nil
+}
+
+// GetAllChatUsers retrieves all users with the nethvoice_cti.chat capability
+// Returns a list of chat users with their extensions from the user profiles
+func GetAllChatUsers() ([]ChatUser, error) {
+	// Get chat users from store based on capabilities
+	chatUsersMap, err := store.GetChatUsers()
+	if err != nil {
+		logs.Log("[ERROR][USER] Failed to get chat users: " + err.Error())
+		return nil, err
+	}
+
+	// Convert to ChatUser format
+	var chatUsers []ChatUser
+	for _, userProfile := range chatUsersMap {
+		// Get sub extensions (all extensions except main)
+		var exts []string
+		for _, ext := range userProfile.Extensions {
+			if ext != userProfile.MainExtension {
+				exts = append(exts, ext)
+			}
+		}
+
+		chatUsers = append(chatUsers, ChatUser{
+			UserName:      userProfile.Username,
+			MainExtension: userProfile.MainExtension,
+			Extensions:    exts,
+		})
+	}
+
+	logs.Log(fmt.Sprintf("[INFO][USER] Retrieved %d chat users from profiles", len(chatUsers)))
+
+	return chatUsers, nil
 }

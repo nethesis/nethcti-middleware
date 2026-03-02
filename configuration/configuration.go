@@ -50,6 +50,9 @@ type Configuration struct {
 	ProfilesConfigPath string `json:"profiles_config_path"`
 	UsersConfigPath    string `json:"users_config_path"`
 	TrustedProxy       string `json:"trusted_proxy"`
+
+	// Matrix homeserver base URL for presence/notifications
+	MatrixBaseURL string `json:"matrix_base_url"`
 }
 
 var Config = Configuration{}
@@ -150,6 +153,11 @@ func Init() {
 		Config.Issuer2FA = os.Getenv("NETHVOICE_MIDDLEWARE_ISSUER_2FA")
 	} else {
 		Config.Issuer2FA = "NethVoice"
+	}
+
+	// set Matrix base URL
+	if os.Getenv("NETHVOICE_MATRIX_BASE_URL") != "" {
+		Config.MatrixBaseURL = os.Getenv("NETHVOICE_MATRIX_BASE_URL")
 	}
 
 	// set FreePBX APIs (FreePBX admin APIs that bypass JWT)
