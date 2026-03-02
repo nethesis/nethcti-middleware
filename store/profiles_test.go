@@ -29,7 +29,7 @@ func TestInitProfilesAndGetters(t *testing.T) {
     }`
 
 	usersJSON := `{
-        "giacomo": {"profile_id":"3"},
+        "giacomo": {"name":"Giacomo","endpoints":{"mainextension":{"201":{}},"extension":{"201":{"type":"webrtc","user":"201","password":"x"},"91201":{"type":"mobile","user":"91201","password":"y"}}},"profile_id":"3"},
         "sample": {"profile_id":"1"}
     }`
 
@@ -54,6 +54,17 @@ func TestInitProfilesAndGetters(t *testing.T) {
 	}
 	if prof.ID != "1" {
 		t.Fatalf("unexpected profile id: got %s want %s", prof.ID, "1")
+	}
+
+	displayName, phoneNumbers, err := GetUserDisplayInfo("giacomo")
+	if err != nil {
+		t.Fatalf("GetUserDisplayInfo failed: %v", err)
+	}
+	if displayName != "Giacomo" {
+		t.Fatalf("unexpected display name: got %s want %s", displayName, "Giacomo")
+	}
+	if len(phoneNumbers) != 2 {
+		t.Fatalf("unexpected phone numbers count: got %d want %d", len(phoneNumbers), 2)
 	}
 }
 

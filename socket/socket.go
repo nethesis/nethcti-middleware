@@ -11,7 +11,6 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/nethesis/nethcti-middleware/configuration"
 	"github.com/nethesis/nethcti-middleware/logs"
-	"github.com/nethesis/nethcti-middleware/methods"
 	"github.com/nethesis/nethcti-middleware/mqtt"
 	"github.com/nethesis/nethcti-middleware/store"
 	"github.com/nethesis/nethcti-middleware/utils"
@@ -128,16 +127,15 @@ func WsProxyHandler(c *gin.Context) {
 								// Extract only the token from the string "username:token"
 								loginData["token"] = tokenPartsRaw[1]
 
-								// Get real user info from API
-								userInfo, err := methods.GetUserInfo(session.NethCTIToken)
 								displayName := session.Username
 								phoneNumbers := []string{}
 
-								if err == nil && userInfo != nil {
-									displayName = userInfo.DisplayName
-									phoneNumbers = userInfo.PhoneNumbers
+								displayNameFromStore, phoneNumbersFromStore, err := store.GetUserDisplayInfo(session.Username)
+								if err == nil {
+									displayName = displayNameFromStore
+									phoneNumbers = phoneNumbersFromStore
 								} else {
-									logs.Log(fmt.Sprintf("[ERROR][WS] Failed to get user info for %s: %v", session.Username, err))
+									logs.Log(fmt.Sprintf("[WARNING][WS] Failed to get in-memory user info for %s: %v", session.Username, err))
 								}
 
 								// Register the connection with user data

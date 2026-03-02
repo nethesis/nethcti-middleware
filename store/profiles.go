@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 
 	"github.com/nethesis/nethcti-middleware/logs"
@@ -25,8 +26,27 @@ type ProfileData struct {
 
 // UserProfile links a username to a profile
 type UserProfile struct {
-	Username  string
-	ProfileID string
+	Username     string
+	Name         string
+	ProfileID    string
+	Endpoints    UserEndpoints
+	PhoneNumbers []string
+}
+
+// UserEndpoints contains endpoint data loaded from users.json.
+type UserEndpoints struct {
+	MainExtension map[string]struct{}
+	Extension     map[string]*UserExtension
+	Voicemail     map[string]struct{}
+	Email         map[string]struct{}
+	Cellphone     map[string]struct{}
+}
+
+// UserExtension stores details for a single extension endpoint.
+type UserExtension struct {
+	Type     string
+	User     string
+	Password string
 }
 
 type rawProfile struct {
@@ -47,7 +67,17 @@ type rawPermission struct {
 }
 
 type rawUser struct {
-	ProfileID string `json:"profile_id"`
+	Name      string           `json:"name"`
+	Endpoints rawUserEndpoints `json:"endpoints"`
+	ProfileID string           `json:"profile_id"`
+}
+
+type rawUserEndpoints struct {
+	MainExtension map[string]struct{}       `json:"mainextension"`
+	Extension     map[string]*UserExtension `json:"extension"`
+	Voicemail     map[string]struct{}       `json:"voicemail"`
+	Email         map[string]struct{}       `json:"email"`
+	Cellphone     map[string]struct{}       `json:"cellphone"`
 }
 
 // ReloadStats reports in-memory counters after a reload attempt.
@@ -138,6 +168,27 @@ func GetUserProfile(username string) (*ProfileData, error) {
 	}
 
 	return profile, nil
+}
+
+// GetUserDisplayInfo returns display name and phone numbers for a given user.
+func GetUserDisplayInfo(username string) (string, []string, error) {
+	profileMutex.RLock()
+	defer profileMutex.RUnlock()
+
+	user, ok := users[username]
+	if !ok {
+		return "", nil, fmt.Errorf("user %s not found", username)
+	}
+
+	displayName := user.Name
+	if displayName == "" {
+		displayName = user.Username
+	}
+
+	phoneNumbers := make([]string, len(user.PhoneNumbers))
+	copy(phoneNumbers, user.PhoneNumbers)
+
+	return displayName, phoneNumbers, nil
 }
 
 // ReloadProfiles reloads profiles and users and returns resulting counters.
@@ -261,9 +312,32 @@ func loadUsers(path string, profilesMap map[string]*ProfileData) (map[string]*Us
 			return nil, fmt.Errorf("user %s references unknown profile %s", username, ru.ProfileID)
 		}
 
+		phoneSet := make(map[string]struct{})
+		for exten := range ru.Endpoints.Extension {
+			phoneSet[exten] = struct{}{}
+		}
+		for exten := range ru.Endpoints.MainExtension {
+			phoneSet[exten] = struct{}{}
+		}
+
+		phoneNumbers := make([]string, 0, len(phoneSet))
+		for exten := range phoneSet {
+			phoneNumbers = append(phoneNumbers, exten)
+		}
+		sort.Strings(phoneNumbers)
+
 		result[username] = &UserProfile{
 			Username:  username,
+			Name:      ru.Name,
 			ProfileID: ru.ProfileID,
+			Endpoints: UserEndpoints{
+				MainExtension: ru.Endpoints.MainExtension,
+				Extension:     ru.Endpoints.Extension,
+				Voicemail:     ru.Endpoints.Voicemail,
+				Email:         ru.Endpoints.Email,
+				Cellphone:     ru.Endpoints.Cellphone,
+			},
+			PhoneNumbers: phoneNumbers,
 		}
 	}
 
