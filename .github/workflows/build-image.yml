@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       mariadb:
-        image: mariadb:10.8.2
+        image: mariadb:10.11.16
         env:
           MYSQL_ROOT_PASSWORD: root
           MYSQL_DATABASE: nethcti3
