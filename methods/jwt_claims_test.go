@@ -14,7 +14,7 @@ import (
 	"github.com/nethesis/nethcti-middleware/store"
 )
 
-func TestBuildUserJWTClaimsInjectsProfileAndCapabilities(t *testing.T) {
+func TestBuildUserJWTClaimsInjectsProfileMetadataWithoutCapabilities(t *testing.T) {
 	origSecretsDir := configuration.Config.SecretsDir
 	t.Cleanup(func() {
 		configuration.Config.SecretsDir = origSecretsDir
@@ -64,11 +64,11 @@ func TestBuildUserJWTClaimsInjectsProfileAndCapabilities(t *testing.T) {
 	if got := claims["profile_name"]; got != "Power" {
 		t.Fatalf("unexpected profile_name claim: got %v want Power", got)
 	}
-	if got := claims["phonebook"]; got != true {
-		t.Fatalf("unexpected phonebook macro claim: got %v want true", got)
+	if _, ok := claims["phonebook"]; ok {
+		t.Fatalf("phonebook macro claim should not be present in JWT")
 	}
-	if got := claims["phonebook.ad_phonebook"]; got != true {
-		t.Fatalf("unexpected phonebook.ad_phonebook claim: got %v want true", got)
+	if _, ok := claims["phonebook.ad_phonebook"]; ok {
+		t.Fatalf("phonebook.ad_phonebook claim should not be present in JWT")
 	}
 }
 

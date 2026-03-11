@@ -14,7 +14,7 @@ import (
 )
 
 // BuildUserJWTClaims builds the canonical JWT claims set for a user.
-// All user tokens should use this helper to keep claims and capabilities aligned.
+// Capabilities are resolved server-side by authorization middleware.
 func BuildUserJWTClaims(username string, otpVerified bool) jwtv5.MapClaims {
 	status, _ := GetUserStatus(username)
 
@@ -32,12 +32,8 @@ func BuildUserJWTClaims(username string, otpVerified bool) jwtv5.MapClaims {
 
 	claims["profile_id"] = profile.ID
 	claims["profile_name"] = profile.Name
-	for capability, value := range profile.Capabilities {
-		claims[capability] = value
-	}
-
-	logs.Log(fmt.Sprintf("[INFO][AUTH] Injected %d capabilities into JWT claims for user %s (profile: %s)",
-		len(profile.Capabilities), username, profile.Name))
+	logs.Log(fmt.Sprintf("[INFO][AUTH] Added profile metadata into JWT claims for user %s (profile: %s)",
+		username, profile.Name))
 
 	return claims
 }
