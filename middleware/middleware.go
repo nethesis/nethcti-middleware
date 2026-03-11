@@ -178,7 +178,11 @@ func InitJWT() *jwt.GinJWTMiddleware {
 			if userSession, ok := data.(*models.UserSession); ok {
 				// Note: otp_verified is always false on initial login.
 				// It will be set to true only after OTP verification via regenerateUserToken.
-				claims := methods.BuildUserJWTClaims(userSession.Username, false)
+				claims := methods.BuildUserJWTClaims(methods.UserJWTOptions{
+					Username:    userSession.Username,
+					OTPVerified: false,
+					IssuedAt:    time.Now(),
+				})
 				return gojwt.MapClaims(claims)
 			}
 

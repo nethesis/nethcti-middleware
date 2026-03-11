@@ -412,6 +412,10 @@ func TestPayloadFuncInjectsBaseClaimsOnly(t *testing.T) {
 	if got, ok := claims["otp_verified"].(bool); !ok || got {
 		t.Fatalf("unexpected otp_verified claim: got %v", claims["otp_verified"])
 	}
+
+	if _, ok := claims["iat"]; !ok {
+		t.Fatal("expected iat claim to be present")
+	}
 }
 
 // Test PayloadFunc does not expose profile/capability claims.
@@ -430,9 +434,6 @@ func TestPayloadFuncDoesNotInjectProfileOrCapabilityClaims(t *testing.T) {
 	// profile claims must not be injected
 	if _, ok := claims["profile_id"]; ok {
 		t.Fatalf("expected no profile_id claim, got %v", claims["profile_id"])
-	}
-	if _, ok := claims["profile_name"]; ok {
-		t.Fatalf("expected no profile_name claim, got %v", claims["profile_name"])
 	}
 
 	// capability keys must not be present

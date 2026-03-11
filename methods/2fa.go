@@ -19,7 +19,6 @@ import (
 	"github.com/fatih/structs"
 	"github.com/gin-gonic/gin"
 	"github.com/gin-gonic/gin/binding"
-	jwtv5 "github.com/golang-jwt/jwt/v5"
 	"github.com/nethesis/nethcti-middleware/configuration"
 	"github.com/nethesis/nethcti-middleware/logs"
 	"github.com/nethesis/nethcti-middleware/models"
@@ -370,15 +369,12 @@ func regenerateUserToken(userSession *models.UserSession, oldToken string) (*mod
 	now := time.Now()
 	expire := now.Add(time.Hour * 24 * 14) // 2 weeks
 
-	// Create canonical JWT payload with updated OTP status.
-	claims := BuildUserJWTClaims(userSession.Username, userSession.OTP_Verified)
-	claims["exp"] = expire.Unix()
-	claims["iat"] = now.Unix()
-
-	// Create and sign token using github.com/golang-jwt/jwt/v5
-	token := jwtv5.NewWithClaims(jwtv5.SigningMethodHS256, claims)
-	tokenString, err := token.SignedString([]byte(configuration.Config.Secret_jwt))
-
+	_, tokenString, err := IssueUserJWT(UserJWTOptions{
+		Username:    userSession.Username,
+		OTPVerified: userSession.OTP_Verified,
+		IssuedAt:    now,
+		ExpiresAt:   &expire,
+	})
 	if err != nil {
 		return nil, "", time.Time{}, err
 	}

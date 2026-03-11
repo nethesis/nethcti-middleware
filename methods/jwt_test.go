@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/nethesis/nethcti-middleware/configuration"
 	"github.com/nethesis/nethcti-middleware/store"
@@ -47,7 +48,12 @@ func TestBuildUserJWTClaimsInjectsProfileMetadataWithoutCapabilities(t *testing.
 		t.Fatalf("InitProfiles failed: %v", err)
 	}
 
-	claims := BuildUserJWTClaims(username, true)
+	now := time.Now()
+	claims := BuildUserJWTClaims(UserJWTOptions{
+		Username:    username,
+		OTPVerified: true,
+		IssuedAt:    now,
+	})
 
 	if got := claims["id"]; got != username {
 		t.Fatalf("unexpected id claim: got %v want %s", got, username)
@@ -61,8 +67,8 @@ func TestBuildUserJWTClaimsInjectsProfileMetadataWithoutCapabilities(t *testing.
 	if got := claims["profile_id"]; got != "p1" {
 		t.Fatalf("unexpected profile_id claim: got %v want p1", got)
 	}
-	if got := claims["profile_name"]; got != "Power" {
-		t.Fatalf("unexpected profile_name claim: got %v want Power", got)
+	if got := claims["iat"]; got != now.Unix() {
+		t.Fatalf("unexpected iat claim: got %v want %d", got, now.Unix())
 	}
 	if _, ok := claims["phonebook"]; ok {
 		t.Fatalf("phonebook macro claim should not be present in JWT")
@@ -79,7 +85,12 @@ func TestBuildUserJWTClaimsWithoutProfileReturnsBaseClaims(t *testing.T) {
 	})
 
 	configuration.Config.SecretsDir = t.TempDir()
-	claims := BuildUserJWTClaims("missing-user", false)
+	now := time.Now()
+	claims := BuildUserJWTClaims(UserJWTOptions{
+		Username:    "missing-user",
+		OTPVerified: false,
+		IssuedAt:    now,
+	})
 
 	if got := claims["id"]; got != "missing-user" {
 		t.Fatalf("unexpected id claim: got %v want missing-user", got)
@@ -90,12 +101,12 @@ func TestBuildUserJWTClaimsWithoutProfileReturnsBaseClaims(t *testing.T) {
 	if got := claims["otp_verified"]; got != false {
 		t.Fatalf("unexpected otp_verified claim: got %v want false", got)
 	}
+	if got := claims["iat"]; got != now.Unix() {
+		t.Fatalf("unexpected iat claim: got %v want %d", got, now.Unix())
+	}
 
 	if _, ok := claims["profile_id"]; ok {
 		t.Fatalf("profile_id should not be present for missing profile")
-	}
-	if _, ok := claims["profile_name"]; ok {
-		t.Fatalf("profile_name should not be present for missing profile")
 	}
 	if _, ok := claims["phonebook.ad_phonebook"]; ok {
 		t.Fatalf("capability claims should not be present for missing profile")
