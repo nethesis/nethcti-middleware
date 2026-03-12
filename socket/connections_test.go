@@ -62,6 +62,72 @@ func TestBroadcastSummaryMessageSendsSatelliteSummaryEvent(t *testing.T) {
 	}
 }
 
+func TestBroadcastSummaryMessageTargetsOnlyMatchingUser(t *testing.T) {
+	serverConnCh := make(chan *websocket.Conn, 2)
+	upgrader := websocket.Upgrader{
+		CheckOrigin: func(r *http.Request) bool { return true },
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Errorf("failed to upgrade websocket: %v", err)
+			return
+		}
+		serverConnCh <- conn
+	}))
+	defer server.Close()
+
+	clientConnAlice, _, err := websocket.DefaultDialer.Dial("ws"+server.URL[len("http"):], nil)
+	if err != nil {
+		t.Fatalf("failed to dial alice websocket: %v", err)
+	}
+	defer clientConnAlice.Close()
+
+	clientConnBob, _, err := websocket.DefaultDialer.Dial("ws"+server.URL[len("http"):], nil)
+	if err != nil {
+		t.Fatalf("failed to dial bob websocket: %v", err)
+	}
+	defer clientConnBob.Close()
+
+	serverConnAlice := <-serverConnCh
+	defer serverConnAlice.Close()
+	serverConnBob := <-serverConnCh
+	defer serverConnBob.Close()
+
+	originalManager := connManager
+	connManager = &ConnectionManager{
+		connections: make(map[*websocket.Conn]*UserConnection),
+	}
+	defer func() {
+		connManager = originalManager
+	}()
+
+	connManager.AddConnection(serverConnAlice, &UserConnection{Username: "alice"})
+	connManager.AddConnection(serverConnBob, &UserConnection{Username: "bob"})
+
+	BroadcastSummaryMessage(map[string]interface{}{
+		"uniqueid": "abc123",
+		"summary":  "done",
+		"username": "alice",
+	})
+
+	clientConnAlice.SetReadDeadline(time.Now().Add(2 * time.Second))
+	eventName, payload := readSocketIOEvent(t, clientConnAlice)
+
+	if eventName != "satellite/summary" {
+		t.Fatalf("expected satellite/summary event, got %q", eventName)
+	}
+	if payload["uniqueid"] != "abc123" || payload["summary"] != "done" {
+		t.Fatalf("unexpected summary payload: %#v", payload)
+	}
+
+	clientConnBob.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+	if _, _, err := clientConnBob.ReadMessage(); err == nil {
+		t.Fatalf("did not expect summary event for non-target user")
+	}
+}
+
 func readSocketIOEvent(t *testing.T, conn *websocket.Conn) (string, map[string]string) {
 	t.Helper()
 

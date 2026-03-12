@@ -53,7 +53,7 @@ func TestStartSummaryWatchBroadcastsAndStops(t *testing.T) {
 		ch <- msg
 	}
 
-	if !StartSummaryWatch("abc123") {
+	if !StartSummaryWatch("abc123", "alice") {
 		t.Fatalf("expected watcher to start")
 	}
 
@@ -64,6 +64,9 @@ func TestStartSummaryWatchBroadcastsAndStops(t *testing.T) {
 		}
 		if msg.Summary != "summary text" {
 			t.Fatalf("unexpected summary: %s", msg.Summary)
+		}
+		if msg.Username != "alice" {
+			t.Fatalf("unexpected username: %s", msg.Username)
 		}
 	case <-time.After(200 * time.Millisecond):
 		t.Fatal("timeout waiting for summary broadcast")
@@ -97,17 +100,23 @@ func TestStartSummaryWatchIsIdempotent(t *testing.T) {
 		return "", false, nil
 	}
 	fetchSummaryWatchStatusFunc = func(uniqueID string) (bool, error) {
-		return false, nil
+		return true, nil
 	}
 	notifySummaryFunc = func(msg SummaryMessage) {}
 
-	if !StartSummaryWatch("dup123") {
+	if !StartSummaryWatch("dup123", "alice") {
 		t.Fatalf("expected watcher to start")
 	}
 
-	if StartSummaryWatch("dup123") {
+	if StartSummaryWatch("dup123", "alice") {
 		t.Fatalf("expected duplicate watcher to be rejected")
 	}
+
+	if !StartSummaryWatch("dup123", "bob") {
+		t.Fatalf("expected same uniqueid for another user to be allowed")
+	}
+
+	time.Sleep(50 * time.Millisecond)
 }
 
 func TestStartSummaryWatchPollsImmediately(t *testing.T) {
@@ -145,7 +154,7 @@ func TestStartSummaryWatchPollsImmediately(t *testing.T) {
 		ch <- msg
 	}
 
-	if !StartSummaryWatch("instant123") {
+	if !StartSummaryWatch("instant123", "alice") {
 		t.Fatalf("expected watcher to start")
 	}
 
@@ -203,7 +212,7 @@ func TestStartSummaryWatchStopsWhenSummaryCannotBeProduced(t *testing.T) {
 		notified = true
 	}
 
-	if !StartSummaryWatch("silent123") {
+	if !StartSummaryWatch("silent123", "alice") {
 		t.Fatalf("expected watcher to start")
 	}
 
@@ -214,7 +223,7 @@ func TestStartSummaryWatchStopsWhenSummaryCannotBeProduced(t *testing.T) {
 	}
 
 	summaryWatcher.mutex.Lock()
-	_, stillActive := summaryWatcher.active["silent123"]
+	_, stillActive := summaryWatcher.active["alice:silent123"]
 	summaryWatcher.mutex.Unlock()
 	if stillActive {
 		t.Fatalf("expected watcher to stop when summary cannot be produced")

@@ -60,6 +60,7 @@ var (
 	fetchSummaryFunc       = fetchSummaryFromDB
 	updateSummaryFunc      = updateSummaryInDB
 	deleteSummaryFunc      = deleteSummaryInDB
+	startSummaryWatchFunc  = summary.StartSummaryWatch
 )
 
 // WatchCallSummary starts watching for a summary in the satellite transcripts table.
@@ -93,9 +94,45 @@ func WatchCallSummary(c *gin.Context) {
 		return
 	}
 
-	started := summary.StartSummaryWatch(uniqueID)
+	username, err := getUsernameFromContext(c)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, structs.Map(models.StatusUnauthorized{
+			Code:    http.StatusUnauthorized,
+			Message: "unauthorized",
+			Data:    nil,
+		}))
+		return
+	}
+
+	if ok, err := ensureUserParticipatedInCall(c, uniqueID); err != nil {
+		if errors.Is(err, errUnauthorized) {
+			c.JSON(http.StatusUnauthorized, structs.Map(models.StatusUnauthorized{
+				Code:    http.StatusUnauthorized,
+				Message: "unauthorized",
+				Data:    nil,
+			}))
+			return
+		}
+		logs.Log("[ERROR][SUMMARY] Failed to validate CDR participation for watch uniqueid " + uniqueID + ": " + err.Error())
+		c.JSON(http.StatusServiceUnavailable, structs.Map(models.StatusServiceUnavailable{
+			Code:    http.StatusServiceUnavailable,
+			Message: "cdr database unavailable",
+			Data:    nil,
+		}))
+		return
+	} else if !ok {
+		logForbiddenParticipation(c, uniqueID)
+		c.JSON(http.StatusForbidden, structs.Map(models.StatusForbidden{
+			Code:    http.StatusForbidden,
+			Message: "forbidden: user not part of call",
+			Data:    nil,
+		}))
+		return
+	}
+
+	started := startSummaryWatchFunc(uniqueID, username)
 	if !started {
-		logs.Log("[INFO][SUMMARY] Watch already active or configuration missing for uniqueid: " + uniqueID)
+		logs.Log("[INFO][SUMMARY] Watch already active or configuration missing for user " + username + " uniqueid: " + uniqueID)
 		c.JSON(http.StatusOK, structs.Map(models.StatusOK{
 			Code:    http.StatusOK,
 			Message: "watch already active or unavailable",
@@ -106,7 +143,7 @@ func WatchCallSummary(c *gin.Context) {
 		return
 	}
 
-	logs.Log("[INFO][SUMMARY] Watch started for uniqueid: " + uniqueID)
+	logs.Log("[INFO][SUMMARY] Watch started for user " + username + " uniqueid: " + uniqueID)
 	c.JSON(http.StatusAccepted, structs.Map(models.StatusOK{
 		Code:    http.StatusAccepted,
 		Message: "watch started",

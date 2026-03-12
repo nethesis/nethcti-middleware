@@ -21,6 +21,11 @@ import (
 type SummaryMessage struct {
 	UniqueID string `json:"uniqueid"`
 	Summary  string `json:"summary"`
+	Username string `json:"-"`
+}
+
+func (m SummaryMessage) TargetUsername() string {
+	return strings.TrimSpace(m.Username)
 }
 
 type watcher struct {
@@ -40,11 +45,16 @@ var notifySummaryFunc notifyFunc = func(SummaryMessage) {}
 var summaryPollInterval = 5 * time.Second
 var summaryWatchTimeout = 5 * time.Minute
 
-// StartSummaryWatch registers a watcher for the given unique ID.
+func buildWatchKey(uniqueID, username string) string {
+	return strings.TrimSpace(username) + ":" + strings.TrimSpace(uniqueID)
+}
+
+// StartSummaryWatch registers a watcher for the given user and unique ID.
 // It returns true if a new watcher was started, false if already active or misconfigured.
-func StartSummaryWatch(uniqueID string) bool {
+func StartSummaryWatch(uniqueID, username string) bool {
 	cleanUniqueID := strings.TrimSpace(uniqueID)
-	if cleanUniqueID == "" {
+	cleanUsername := strings.TrimSpace(username)
+	if cleanUniqueID == "" || cleanUsername == "" {
 		return false
 	}
 
@@ -53,17 +63,19 @@ func StartSummaryWatch(uniqueID string) bool {
 		return false
 	}
 
+	watchKey := buildWatchKey(cleanUniqueID, cleanUsername)
+
 	summaryWatcher.mutex.Lock()
-	if _, exists := summaryWatcher.active[cleanUniqueID]; exists {
+	if _, exists := summaryWatcher.active[watchKey]; exists {
 		summaryWatcher.mutex.Unlock()
 		return false
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), summaryWatchTimeout)
-	summaryWatcher.active[cleanUniqueID] = cancel
+	summaryWatcher.active[watchKey] = cancel
 	summaryWatcher.mutex.Unlock()
 
-	go summaryWatcher.watch(ctx, cleanUniqueID)
+	go summaryWatcher.watch(ctx, cleanUniqueID, cleanUsername)
 	return true
 }
 
@@ -84,8 +96,8 @@ func SetSummaryNotifier(fn notifyFunc) {
 	notifySummaryFunc = fn
 }
 
-func (w *watcher) watch(ctx context.Context, uniqueID string) {
-	if w.poll(uniqueID) {
+func (w *watcher) watch(ctx context.Context, uniqueID, username string) {
+	if w.poll(uniqueID, username) {
 		return
 	}
 
@@ -95,18 +107,18 @@ func (w *watcher) watch(ctx context.Context, uniqueID string) {
 	for {
 		select {
 		case <-ctx.Done():
-			w.remove(uniqueID)
-			logs.Log("[INFO][SUMMARY] Watch timeout reached for uniqueid: " + uniqueID)
+			w.remove(uniqueID, username)
+			logs.Log("[INFO][SUMMARY] Watch timeout reached for user " + username + " uniqueid: " + uniqueID)
 			return
 		case <-ticker.C:
-			if w.poll(uniqueID) {
+			if w.poll(uniqueID, username) {
 				return
 			}
 		}
 	}
 }
 
-func (w *watcher) poll(uniqueID string) bool {
+func (w *watcher) poll(uniqueID, username string) bool {
 	summaryText, found, err := fetchSummaryFunc(uniqueID)
 	if err != nil {
 		logs.Log("[ERROR][SUMMARY] Failed to fetch summary for uniqueid " + uniqueID + ": " + err.Error())
@@ -119,8 +131,8 @@ func (w *watcher) poll(uniqueID string) bool {
 			return false
 		}
 		if stop {
-			w.remove(uniqueID)
-			logs.Log("[INFO][SUMMARY] Watch stopped for uniqueid without summary: " + uniqueID)
+			w.remove(uniqueID, username)
+			logs.Log("[INFO][SUMMARY] Watch stopped for user " + username + " uniqueid without summary: " + uniqueID)
 			return true
 		}
 		return false
@@ -129,16 +141,18 @@ func (w *watcher) poll(uniqueID string) bool {
 	notifySummaryFunc(SummaryMessage{
 		UniqueID: uniqueID,
 		Summary:  summaryText,
+		Username: username,
 	})
-	w.remove(uniqueID)
-	logs.Log("[INFO][SUMMARY] Summary found for uniqueid: " + uniqueID)
+	w.remove(uniqueID, username)
+	logs.Log("[INFO][SUMMARY] Summary found for user " + username + " uniqueid: " + uniqueID)
 	return true
 }
 
-func (w *watcher) remove(uniqueID string) {
+func (w *watcher) remove(uniqueID, username string) {
+	watchKey := buildWatchKey(uniqueID, username)
 	w.mutex.Lock()
-	if cancel, exists := w.active[uniqueID]; exists {
-		delete(w.active, uniqueID)
+	if cancel, exists := w.active[watchKey]; exists {
+		delete(w.active, watchKey)
 		cancel()
 	}
 	w.mutex.Unlock()
