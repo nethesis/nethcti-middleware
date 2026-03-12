@@ -485,6 +485,8 @@ paths:
       responses:
         '200':
           description: Summary exists
+        '204':
+          description: Summary not ready yet
         '401':
           description: Unauthorized
         '403':

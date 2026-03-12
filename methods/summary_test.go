@@ -46,8 +46,8 @@ func TestCheckSummaryByUniqueID_NotFound(t *testing.T) {
 	checkUserParticipationFunc = func(string, []string) (bool, error) {
 		return true, nil
 	}
-	fetchSummaryStateFunc = func(string) (string, bool, bool, error) {
-		return "", false, false, nil
+	fetchSummaryStateFunc = func(string) (string, bool, bool, bool, error) {
+		return "", false, false, false, nil
 	}
 
 	router := gin.New()
@@ -63,6 +63,96 @@ func TestCheckSummaryByUniqueID_NotFound(t *testing.T) {
 
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("expected 404 not found, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestCheckSummaryByUniqueID_ReturnsNotFoundWhenSummaryIsMissing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store.UserSessionInit()
+	store.UserSessions["alice"] = &models.UserSession{Username: "alice", NethCTIToken: "token"}
+
+	configuration.Config.SatellitePgSQLHost = "test"
+	configuration.Config.SatellitePgSQLPort = "5432"
+	configuration.Config.SatellitePgSQLDB = "test"
+	configuration.Config.SatellitePgSQLUser = "test"
+
+	originalGetUserInfo := getUserInfoFunc
+	originalCheck := checkUserParticipationFunc
+	originalFetch := fetchSummaryStateFunc
+	defer func() {
+		getUserInfoFunc = originalGetUserInfo
+		checkUserParticipationFunc = originalCheck
+		fetchSummaryStateFunc = originalFetch
+	}()
+
+	getUserInfoFunc = func(string) (*UserInfo, error) {
+		return &UserInfo{PhoneNumbers: []string{"100"}}, nil
+	}
+	checkUserParticipationFunc = func(string, []string) (bool, error) {
+		return true, nil
+	}
+	fetchSummaryStateFunc = func(string) (string, bool, bool, bool, error) {
+		return "progress", false, true, true, nil
+	}
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("JWT_PAYLOAD", jwtv5.MapClaims{"id": "alice"})
+		c.Next()
+	})
+	router.HEAD("/summary/:uniqueid", CheckSummaryByUniqueID)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("HEAD", "/summary/abc123", nil)
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("expected 204 no content when summary is missing, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestCheckSummaryByUniqueID_ReturnsOKWhenSummaryExists(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store.UserSessionInit()
+	store.UserSessions["alice"] = &models.UserSession{Username: "alice", NethCTIToken: "token"}
+
+	configuration.Config.SatellitePgSQLHost = "test"
+	configuration.Config.SatellitePgSQLPort = "5432"
+	configuration.Config.SatellitePgSQLDB = "test"
+	configuration.Config.SatellitePgSQLUser = "test"
+
+	originalGetUserInfo := getUserInfoFunc
+	originalCheck := checkUserParticipationFunc
+	originalFetch := fetchSummaryStateFunc
+	defer func() {
+		getUserInfoFunc = originalGetUserInfo
+		checkUserParticipationFunc = originalCheck
+		fetchSummaryStateFunc = originalFetch
+	}()
+
+	getUserInfoFunc = func(string) (*UserInfo, error) {
+		return &UserInfo{PhoneNumbers: []string{"100"}}, nil
+	}
+	checkUserParticipationFunc = func(string, []string) (bool, error) {
+		return true, nil
+	}
+	fetchSummaryStateFunc = func(string) (string, bool, bool, bool, error) {
+		return "done", true, true, true, nil
+	}
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("JWT_PAYLOAD", jwtv5.MapClaims{"id": "alice"})
+		c.Next()
+	})
+	router.HEAD("/summary/:uniqueid", CheckSummaryByUniqueID)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("HEAD", "/summary/abc123", nil)
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 ok when summary exists, got %d: %s", w.Code, w.Body.String())
 	}
 }
 

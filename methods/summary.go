@@ -116,7 +116,7 @@ func WatchCallSummary(c *gin.Context) {
 	}))
 }
 
-// CheckSummaryByUniqueID verifies whether a transcript row exists for the given unique ID.
+// CheckSummaryByUniqueID verifies whether a non-deleted summary exists for the given unique ID.
 // It is intended for HEAD endpoints and returns status only (no response body).
 func CheckSummaryByUniqueID(c *gin.Context) {
 	uniqueID := strings.TrimSpace(c.Param("uniqueid"))
@@ -144,7 +144,7 @@ func CheckSummaryByUniqueID(c *gin.Context) {
 		return
 	}
 
-	_, _, exists, err := fetchSummaryStateFunc(uniqueID)
+	_, hasSummary, _, exists, err := fetchSummaryStateFunc(uniqueID)
 	if err != nil {
 		logs.Log("[ERROR][SUMMARY] Failed to fetch summary for uniqueid " + uniqueID + ": " + err.Error())
 		c.Status(http.StatusInternalServerError)
@@ -153,6 +153,11 @@ func CheckSummaryByUniqueID(c *gin.Context) {
 
 	if !exists {
 		c.Status(http.StatusNotFound)
+		return
+	}
+
+	if !hasSummary {
+		c.Status(http.StatusNoContent)
 		return
 	}
 
@@ -673,10 +678,10 @@ func fetchSummaryListFromDB(uniqueIDs []string) ([]SummaryListItem, error) {
 	return items, nil
 }
 
-func fetchSummaryStateFromDB(uniqueID string) (string, bool, bool, error) {
+func fetchSummaryStateFromDB(uniqueID string) (string, bool, bool, bool, error) {
 	database := db.GetSatelliteDB()
 	if database == nil {
-		return "", false, false, sql.ErrConnDone
+		return "", false, false, false, sql.ErrConnDone
 	}
 
 	queryCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -685,25 +690,29 @@ func fetchSummaryStateFromDB(uniqueID string) (string, bool, bool, error) {
 	var (
 		state     sql.NullString
 		summary   sql.NullString
+		cleaned   sql.NullString
+		raw       sql.NullString
 		deletedAt sql.NullTime
 	)
 
-	query := "SELECT state, summary, deleted_at FROM transcripts WHERE uniqueid = $1 LIMIT 1"
-	if err := database.QueryRowContext(queryCtx, query, uniqueID).Scan(&state, &summary, &deletedAt); err != nil {
+	query := "SELECT state, summary, cleaned_transcription, raw_transcription, deleted_at FROM transcripts WHERE uniqueid = $1 LIMIT 1"
+	if err := database.QueryRowContext(queryCtx, query, uniqueID).Scan(&state, &summary, &cleaned, &raw, &deletedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return "", false, false, nil
+			return "", false, false, false, nil
 		}
-		return "", false, false, err
+		return "", false, false, false, err
 	}
 
 	if deletedAt.Valid {
-		return "", false, false, nil
+		return "", false, false, false, nil
 	}
 
 	cleanState := strings.TrimSpace(state.String)
 	hasSummary := summary.Valid && strings.TrimSpace(summary.String) != ""
+	hasTranscription := (cleaned.Valid && strings.TrimSpace(cleaned.String) != "") ||
+		(raw.Valid && strings.TrimSpace(raw.String) != "")
 
-	return cleanState, hasSummary, true, nil
+	return cleanState, hasSummary, hasTranscription, true, nil
 }
 
 func fetchSummaryFromDB(uniqueID string) (string, bool, error) {

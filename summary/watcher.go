@@ -31,12 +31,14 @@ type watcher struct {
 var summaryWatcher = &watcher{active: make(map[string]context.CancelFunc)}
 
 var fetchSummaryFunc = fetchSummaryFromDB
+var fetchSummaryWatchStatusFunc = fetchSummaryWatchStatusFromDB
 
 type notifyFunc func(SummaryMessage)
 
 var notifySummaryFunc notifyFunc = func(SummaryMessage) {}
 
 var summaryPollInterval = 5 * time.Second
+var summaryWatchTimeout = 5 * time.Minute
 
 // StartSummaryWatch registers a watcher for the given unique ID.
 // It returns true if a new watcher was started, false if already active or misconfigured.
@@ -57,7 +59,7 @@ func StartSummaryWatch(uniqueID string) bool {
 		return false
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), summaryWatchTimeout)
 	summaryWatcher.active[cleanUniqueID] = cancel
 	summaryWatcher.mutex.Unlock()
 
@@ -83,6 +85,10 @@ func SetSummaryNotifier(fn notifyFunc) {
 }
 
 func (w *watcher) watch(ctx context.Context, uniqueID string) {
+	if w.poll(uniqueID) {
+		return
+	}
+
 	ticker := time.NewTicker(summaryPollInterval)
 	defer ticker.Stop()
 
@@ -93,22 +99,40 @@ func (w *watcher) watch(ctx context.Context, uniqueID string) {
 			logs.Log("[INFO][SUMMARY] Watch timeout reached for uniqueid: " + uniqueID)
 			return
 		case <-ticker.C:
-			summaryText, found, err := fetchSummaryFunc(uniqueID)
-			if err != nil {
-				logs.Log("[ERROR][SUMMARY] Failed to fetch summary for uniqueid " + uniqueID + ": " + err.Error())
-				continue
-			}
-			if found {
-				notifySummaryFunc(SummaryMessage{
-					UniqueID: uniqueID,
-					Summary:  summaryText,
-				})
-				w.remove(uniqueID)
-				logs.Log("[INFO][SUMMARY] Summary found for uniqueid: " + uniqueID)
+			if w.poll(uniqueID) {
 				return
 			}
 		}
 	}
+}
+
+func (w *watcher) poll(uniqueID string) bool {
+	summaryText, found, err := fetchSummaryFunc(uniqueID)
+	if err != nil {
+		logs.Log("[ERROR][SUMMARY] Failed to fetch summary for uniqueid " + uniqueID + ": " + err.Error())
+		return false
+	}
+	if !found {
+		stop, err := fetchSummaryWatchStatusFunc(uniqueID)
+		if err != nil {
+			logs.Log("[ERROR][SUMMARY] Failed to fetch watch status for uniqueid " + uniqueID + ": " + err.Error())
+			return false
+		}
+		if stop {
+			w.remove(uniqueID)
+			logs.Log("[INFO][SUMMARY] Watch stopped for uniqueid without summary: " + uniqueID)
+			return true
+		}
+		return false
+	}
+
+	notifySummaryFunc(SummaryMessage{
+		UniqueID: uniqueID,
+		Summary:  summaryText,
+	})
+	w.remove(uniqueID)
+	logs.Log("[INFO][SUMMARY] Summary found for uniqueid: " + uniqueID)
+	return true
 }
 
 func (w *watcher) remove(uniqueID string) {
@@ -144,4 +168,37 @@ func fetchSummaryFromDB(uniqueID string) (string, bool, error) {
 	}
 
 	return summary.String, true, nil
+}
+
+func fetchSummaryWatchStatusFromDB(uniqueID string) (bool, error) {
+	database := db.GetSatelliteDB()
+	if database == nil {
+		return false, sql.ErrConnDone
+	}
+
+	queryCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var (
+		state   sql.NullString
+		summary sql.NullString
+		cleaned sql.NullString
+		raw     sql.NullString
+	)
+
+	query := "SELECT state, summary, cleaned_transcription, raw_transcription FROM transcripts WHERE uniqueid = $1 AND deleted_at IS NULL LIMIT 1"
+	err := database.QueryRowContext(queryCtx, query, uniqueID).Scan(&state, &summary, &cleaned, &raw)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return false, nil
+		}
+		return false, err
+	}
+
+	hasSummary := summary.Valid && strings.TrimSpace(summary.String) != ""
+	hasTranscription := (cleaned.Valid && strings.TrimSpace(cleaned.String) != "") ||
+		(raw.Valid && strings.TrimSpace(raw.String) != "")
+	finalState := strings.TrimSpace(state.String) == "done" || strings.TrimSpace(state.String) == "failed"
+
+	return finalState && !hasSummary && !hasTranscription, nil
 }
