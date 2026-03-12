@@ -239,6 +239,18 @@ components:
               nullable: true
             state:
               type: string
+            src:
+              type: string
+            dst:
+              type: string
+            cnam:
+              type: string
+            dst_cnam:
+              type: string
+            call_timestamp:
+              type: string
+              format: date-time
+              nullable: true
             created_at:
               type: string
               format: date-time
@@ -261,6 +273,21 @@ components:
           type: object
           properties:
             uniqueid:
+              type: string
+
+    SummaryUpdateResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+        message:
+          type: string
+        data:
+          type: object
+          properties:
+            uniqueid:
+              type: string
+            summary:
               type: string
 
 paths:
@@ -325,7 +352,7 @@ paths:
       summary: Watch for call summary
       operationId: watchCallSummary
       tags:
-        - Transcripts
+        - Summary
       security:
         - bearerAuth: []
       requestBody:
@@ -361,7 +388,7 @@ paths:
       summary: List summary/transcription status for provided unique IDs
       operationId: listSummaryStatus
       tags:
-        - Transcripts
+        - Summary
       security:
         - bearerAuth: []
       requestBody:
@@ -443,10 +470,10 @@ paths:
 
   /summary/{uniqueid}:
     head:
-      summary: Check transcript existence by unique ID
+      summary: Check summary existence by unique ID
       operationId: headSummaryByUniqueId
       tags:
-        - Transcripts
+        - Summary
       security:
         - bearerAuth: []
       parameters:
@@ -457,7 +484,7 @@ paths:
             type: string
       responses:
         '200':
-          description: Uniqueid exists
+          description: Summary exists
         '401':
           description: Unauthorized
         '403':
@@ -470,7 +497,7 @@ paths:
       summary: Get summary by unique ID
       operationId: getSummaryByUniqueId
       tags:
-        - Transcripts
+        - Summary
       security:
         - bearerAuth: []
       parameters:
@@ -514,7 +541,7 @@ paths:
       summary: Update summary by unique ID
       operationId: updateSummaryByUniqueId
       tags:
-        - Transcripts
+        - Summary
       security:
         - bearerAuth: []
       parameters:
@@ -535,7 +562,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SummaryResponse'
+                $ref: '#/components/schemas/SummaryUpdateResponse'
         '400':
           description: Invalid request
           content:
@@ -570,7 +597,7 @@ paths:
       summary: Delete summary by unique ID
       operationId: deleteSummaryByUniqueId
       tags:
-        - Transcripts
+        - Summary
       security:
         - bearerAuth: []
       parameters:
@@ -1135,6 +1162,10 @@ paths:
 tags:
   - name: Authentication
     description: Login and session management
+  - name: Transcripts
+    description: Transcript retrieval endpoints
+  - name: Summary
+    description: Summary retrieval, updates, and watch/status endpoints
   - name: Two-Factor Authentication
     description: TOTP-based 2FA management
   - name: Phonebook

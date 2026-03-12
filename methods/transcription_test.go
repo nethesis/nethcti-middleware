@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	jwtv5 "github.com/golang-jwt/jwt/v5"
 	"github.com/gin-gonic/gin"
+	jwtv5 "github.com/golang-jwt/jwt/v5"
 
 	"github.com/nethesis/nethcti-middleware/configuration"
 	"github.com/nethesis/nethcti-middleware/models"
@@ -140,11 +140,16 @@ func TestGetSummaryByUniqueID_ReturnsExtendedData(t *testing.T) {
 		return true, nil
 	}
 	fetchSummaryDrawerFunc = func(uniqueID string) (*SummaryDrawer, bool, error) {
+		callTimestamp := time.Now()
 		return &SummaryDrawer{
 			UniqueID:      uniqueID,
 			Summary:       "summary text",
 			State:         "done",
-			Transcription: "transcription",
+			Src:           "100",
+			Dst:           "200",
+			CNam:          "Alice",
+			DstCNam:       "Bob",
+			CallTimestamp: &callTimestamp,
 			CreatedAt:     time.Now(),
 			UpdatedAt:     time.Now(),
 		}, true, nil
@@ -163,5 +168,21 @@ func TestGetSummaryByUniqueID_ReturnsExtendedData(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200 ok, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var response struct {
+		Data SummaryDrawer `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if response.Data.Src != "100" || response.Data.Dst != "200" {
+		t.Fatalf("unexpected src/dst: %+v", response.Data)
+	}
+	if response.Data.CNam != "Alice" || response.Data.DstCNam != "Bob" {
+		t.Fatalf("unexpected cnam fields: %+v", response.Data)
+	}
+	if response.Data.CallTimestamp == nil {
+		t.Fatalf("expected call_timestamp to be populated: %+v", response.Data)
 	}
 }

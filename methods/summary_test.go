@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	jwtv5 "github.com/golang-jwt/jwt/v5"
 	"github.com/gin-gonic/gin"
+	jwtv5 "github.com/golang-jwt/jwt/v5"
 
 	"github.com/nethesis/nethcti-middleware/configuration"
 	"github.com/nethesis/nethcti-middleware/models"

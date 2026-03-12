@@ -26,12 +26,20 @@ type SummaryWatchRequest struct {
 	UniqueID string `json:"uniqueid"`
 }
 
+type SummaryUpdateRequest struct {
+	Summary string `json:"summary"`
+}
+
 type SummaryDrawer struct {
 	UniqueID      string     `json:"uniqueid"`
 	Summary       string     `json:"summary"`
 	Sentiment     *int       `json:"sentiment,omitempty"`
 	State         string     `json:"state"`
-	Transcription string     `json:"transcription,omitempty"`
+	Src           string     `json:"src,omitempty"`
+	Dst           string     `json:"dst,omitempty"`
+	CNam          string     `json:"cnam,omitempty"`
+	DstCNam       string     `json:"dst_cnam,omitempty"`
+	CallTimestamp *time.Time `json:"call_timestamp,omitempty"`
 	CreatedAt     time.Time  `json:"created_at"`
 	UpdatedAt     time.Time  `json:"updated_at"`
 	DeletedAt     *time.Time `json:"deleted_at,omitempty"`
@@ -49,6 +57,9 @@ var (
 	fetchSummaryDrawerFunc = fetchSummaryDrawerFromDB
 	fetchSummaryListFunc   = fetchSummaryListFromDB
 	fetchSummaryStateFunc  = fetchSummaryStateFromDB
+	fetchSummaryFunc       = fetchSummaryFromDB
+	updateSummaryFunc      = updateSummaryInDB
+	deleteSummaryFunc      = deleteSummaryInDB
 )
 
 // WatchCallSummary starts watching for a summary in the satellite transcripts table.
@@ -146,6 +157,253 @@ func CheckSummaryByUniqueID(c *gin.Context) {
 	}
 
 	c.Status(http.StatusOK)
+}
+
+// GetSummaryByUniqueID returns the summary for the given unique ID.
+func GetSummaryByUniqueID(c *gin.Context) {
+	uniqueID := strings.TrimSpace(c.Param("uniqueid"))
+	if uniqueID == "" {
+		c.JSON(http.StatusBadRequest, structs.Map(models.StatusBadRequest{
+			Code:    http.StatusBadRequest,
+			Message: "uniqueid is required",
+			Data:    nil,
+		}))
+		return
+	}
+
+	if !summary.IsSatelliteDBConfigured() {
+		c.JSON(http.StatusServiceUnavailable, structs.Map(models.StatusServiceUnavailable{
+			Code:    http.StatusServiceUnavailable,
+			Message: "satellite database not configured",
+			Data:    nil,
+		}))
+		return
+	}
+
+	if ok, err := ensureUserParticipatedInCall(c, uniqueID); err != nil {
+		if errors.Is(err, errUnauthorized) {
+			c.JSON(http.StatusUnauthorized, structs.Map(models.StatusUnauthorized{
+				Code:    http.StatusUnauthorized,
+				Message: "unauthorized",
+				Data:    nil,
+			}))
+			return
+		}
+		logs.Log("[ERROR][SUMMARY] Failed to validate CDR participation for uniqueid " + uniqueID + ": " + err.Error())
+		c.JSON(http.StatusServiceUnavailable, structs.Map(models.StatusServiceUnavailable{
+			Code:    http.StatusServiceUnavailable,
+			Message: "cdr database unavailable",
+			Data:    nil,
+		}))
+		return
+	} else if !ok {
+		logForbiddenParticipation(c, uniqueID)
+		c.JSON(http.StatusForbidden, structs.Map(models.StatusForbidden{
+			Code:    http.StatusForbidden,
+			Message: "forbidden: user not part of call",
+			Data:    nil,
+		}))
+		return
+	}
+
+	details, found, err := fetchSummaryDrawerFunc(uniqueID)
+	if err != nil {
+		logs.Log("[ERROR][SUMMARY] Failed to fetch summary for uniqueid " + uniqueID + ": " + err.Error())
+		c.JSON(http.StatusInternalServerError, structs.Map(models.StatusInternalServerError{
+			Code:    http.StatusInternalServerError,
+			Message: "failed to fetch summary",
+			Data:    nil,
+		}))
+		return
+	}
+
+	if !found {
+		c.JSON(http.StatusNotFound, structs.Map(models.StatusNotFound{
+			Code:    http.StatusNotFound,
+			Message: "summary not found",
+			Data:    nil,
+		}))
+		return
+	}
+
+	c.JSON(http.StatusOK, models.StatusOK{
+		Code:    http.StatusOK,
+		Message: "success",
+		Data:    details,
+	})
+}
+
+// DeleteSummaryByUniqueID removes the summary for the given unique ID.
+func DeleteSummaryByUniqueID(c *gin.Context) {
+	uniqueID := strings.TrimSpace(c.Param("uniqueid"))
+	if uniqueID == "" {
+		c.JSON(http.StatusBadRequest, structs.Map(models.StatusBadRequest{
+			Code:    http.StatusBadRequest,
+			Message: "uniqueid is required",
+			Data:    nil,
+		}))
+		return
+	}
+
+	if !summary.IsSatelliteDBConfigured() {
+		c.JSON(http.StatusServiceUnavailable, structs.Map(models.StatusServiceUnavailable{
+			Code:    http.StatusServiceUnavailable,
+			Message: "satellite database not configured",
+			Data:    nil,
+		}))
+		return
+	}
+
+	if ok, err := ensureUserParticipatedInCall(c, uniqueID); err != nil {
+		if errors.Is(err, errUnauthorized) {
+			c.JSON(http.StatusUnauthorized, structs.Map(models.StatusUnauthorized{
+				Code:    http.StatusUnauthorized,
+				Message: "unauthorized",
+				Data:    nil,
+			}))
+			return
+		}
+		logs.Log("[ERROR][SUMMARY] Failed to validate CDR participation for uniqueid " + uniqueID + ": " + err.Error())
+		c.JSON(http.StatusServiceUnavailable, structs.Map(models.StatusServiceUnavailable{
+			Code:    http.StatusServiceUnavailable,
+			Message: "cdr database unavailable",
+			Data:    nil,
+		}))
+		return
+	} else if !ok {
+		logForbiddenParticipation(c, uniqueID)
+		c.JSON(http.StatusForbidden, structs.Map(models.StatusForbidden{
+			Code:    http.StatusForbidden,
+			Message: "forbidden: user not part of call",
+			Data:    nil,
+		}))
+		return
+	}
+
+	deleted, err := deleteSummaryFunc(uniqueID)
+	if err != nil {
+		logs.Log("[ERROR][SUMMARY] Failed to delete summary for uniqueid " + uniqueID + ": " + err.Error())
+		c.JSON(http.StatusInternalServerError, structs.Map(models.StatusInternalServerError{
+			Code:    http.StatusInternalServerError,
+			Message: "failed to delete summary",
+			Data:    nil,
+		}))
+		return
+	}
+
+	if !deleted {
+		c.JSON(http.StatusNotFound, structs.Map(models.StatusNotFound{
+			Code:    http.StatusNotFound,
+			Message: "summary not found",
+			Data:    nil,
+		}))
+		return
+	}
+
+	c.JSON(http.StatusOK, structs.Map(models.StatusOK{
+		Code:    http.StatusOK,
+		Message: "summary deleted",
+		Data: gin.H{
+			"uniqueid": uniqueID,
+		},
+	}))
+}
+
+// UpdateSummaryByUniqueID updates the summary for the given unique ID.
+func UpdateSummaryByUniqueID(c *gin.Context) {
+	uniqueID := strings.TrimSpace(c.Param("uniqueid"))
+	if uniqueID == "" {
+		c.JSON(http.StatusBadRequest, structs.Map(models.StatusBadRequest{
+			Code:    http.StatusBadRequest,
+			Message: "uniqueid is required",
+			Data:    nil,
+		}))
+		return
+	}
+
+	var req SummaryUpdateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, structs.Map(models.StatusBadRequest{
+			Code:    http.StatusBadRequest,
+			Message: "invalid request payload",
+			Data:    err.Error(),
+		}))
+		return
+	}
+
+	summaryText := strings.TrimSpace(req.Summary)
+	if summaryText == "" {
+		c.JSON(http.StatusBadRequest, structs.Map(models.StatusBadRequest{
+			Code:    http.StatusBadRequest,
+			Message: "summary is required",
+			Data:    nil,
+		}))
+		return
+	}
+
+	if !summary.IsSatelliteDBConfigured() {
+		c.JSON(http.StatusServiceUnavailable, structs.Map(models.StatusServiceUnavailable{
+			Code:    http.StatusServiceUnavailable,
+			Message: "satellite database not configured",
+			Data:    nil,
+		}))
+		return
+	}
+
+	if ok, err := ensureUserParticipatedInCall(c, uniqueID); err != nil {
+		if errors.Is(err, errUnauthorized) {
+			c.JSON(http.StatusUnauthorized, structs.Map(models.StatusUnauthorized{
+				Code:    http.StatusUnauthorized,
+				Message: "unauthorized",
+				Data:    nil,
+			}))
+			return
+		}
+		logs.Log("[ERROR][SUMMARY] Failed to validate CDR participation for uniqueid " + uniqueID + ": " + err.Error())
+		c.JSON(http.StatusServiceUnavailable, structs.Map(models.StatusServiceUnavailable{
+			Code:    http.StatusServiceUnavailable,
+			Message: "cdr database unavailable",
+			Data:    nil,
+		}))
+		return
+	} else if !ok {
+		logForbiddenParticipation(c, uniqueID)
+		c.JSON(http.StatusForbidden, structs.Map(models.StatusForbidden{
+			Code:    http.StatusForbidden,
+			Message: "forbidden: user not part of call",
+			Data:    nil,
+		}))
+		return
+	}
+
+	updated, err := updateSummaryFunc(uniqueID, summaryText)
+	if err != nil {
+		logs.Log("[ERROR][SUMMARY] Failed to update summary for uniqueid " + uniqueID + ": " + err.Error())
+		c.JSON(http.StatusInternalServerError, structs.Map(models.StatusInternalServerError{
+			Code:    http.StatusInternalServerError,
+			Message: "failed to update summary",
+			Data:    nil,
+		}))
+		return
+	}
+
+	if !updated {
+		c.JSON(http.StatusNotFound, structs.Map(models.StatusNotFound{
+			Code:    http.StatusNotFound,
+			Message: "summary not found",
+			Data:    nil,
+		}))
+		return
+	}
+
+	c.JSON(http.StatusOK, structs.Map(models.StatusOK{
+		Code:    http.StatusOK,
+		Message: "summary updated",
+		Data: gin.H{
+			"uniqueid": uniqueID,
+			"summary":  summaryText,
+		},
+	}))
 }
 
 // ListSummaryStatus returns the list of summary/transcription status for user's calls.
@@ -297,13 +555,6 @@ func fetchSummaryDrawerFromDB(uniqueID string) (*SummaryDrawer, bool, error) {
 		return nil, false, nil
 	}
 
-	transcription := ""
-	if dbCleaned.Valid && strings.TrimSpace(dbCleaned.String) != "" {
-		transcription = strings.TrimSpace(dbCleaned.String)
-	} else if dbRaw.Valid && strings.TrimSpace(dbRaw.String) != "" {
-		transcription = strings.TrimSpace(dbRaw.String)
-	}
-
 	var sentiment *int
 	if dbSentiment.Valid {
 		value := int(dbSentiment.Int16)
@@ -316,12 +567,34 @@ func fetchSummaryDrawerFromDB(uniqueID string) (*SummaryDrawer, bool, error) {
 		deletedAt = &value
 	}
 
+	src, dst, cnam, dstCNam, callTimestamp, err := fetchSummaryCDRFields(uniqueID)
+	if err != nil {
+		return nil, false, err
+	}
+	if callTimestamp != nil {
+		value := time.Date(
+			callTimestamp.Year(),
+			callTimestamp.Month(),
+			callTimestamp.Day(),
+			callTimestamp.Hour(),
+			callTimestamp.Minute(),
+			callTimestamp.Second(),
+			callTimestamp.Nanosecond(),
+			dbCreatedAt.Location(),
+		)
+		callTimestamp = &value
+	}
+
 	return &SummaryDrawer{
 		UniqueID:      dbUniqueID,
 		Summary:       strings.TrimSpace(dbSummary.String),
 		Sentiment:     sentiment,
 		State:         dbState,
-		Transcription: transcription,
+		Src:           src,
+		Dst:           dst,
+		CNam:          cnam,
+		DstCNam:       dstCNam,
+		CallTimestamp: callTimestamp,
 		CreatedAt:     dbCreatedAt,
 		UpdatedAt:     dbUpdatedAt,
 		DeletedAt:     deletedAt,
@@ -431,6 +704,112 @@ func fetchSummaryStateFromDB(uniqueID string) (string, bool, bool, error) {
 	hasSummary := summary.Valid && strings.TrimSpace(summary.String) != ""
 
 	return cleanState, hasSummary, true, nil
+}
+
+func fetchSummaryFromDB(uniqueID string) (string, bool, error) {
+	database := db.GetSatelliteDB()
+	if database == nil {
+		return "", false, sql.ErrConnDone
+	}
+
+	queryCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var summaryText sql.NullString
+	query := "SELECT summary FROM transcripts WHERE uniqueid = $1 LIMIT 1"
+	err := database.QueryRowContext(queryCtx, query, uniqueID).Scan(&summaryText)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+
+	if !summaryText.Valid || strings.TrimSpace(summaryText.String) == "" {
+		return "", false, nil
+	}
+
+	return summaryText.String, true, nil
+}
+
+func updateSummaryInDB(uniqueID, summaryText string) (bool, error) {
+	database := db.GetSatelliteDB()
+	if database == nil {
+		return false, sql.ErrConnDone
+	}
+
+	queryCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	query := "UPDATE transcripts SET summary = $1 WHERE uniqueid = $2"
+	result, err := database.ExecContext(queryCtx, query, summaryText, uniqueID)
+	if err != nil {
+		return false, err
+	}
+
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+
+	return affected > 0, nil
+}
+
+func deleteSummaryInDB(uniqueID string) (bool, error) {
+	database := db.GetSatelliteDB()
+	if database == nil {
+		return false, sql.ErrConnDone
+	}
+
+	queryCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	query := "UPDATE transcripts SET deleted_at = NOW() WHERE uniqueid = $1"
+	result, err := database.ExecContext(queryCtx, query, uniqueID)
+	if err != nil {
+		return false, err
+	}
+
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+
+	return affected > 0, nil
+}
+
+func fetchSummaryCDRFields(uniqueID string) (string, string, string, string, *time.Time, error) {
+	database := db.GetCDRDB()
+	if database == nil {
+		return "", "", "", "", nil, sql.ErrConnDone
+	}
+
+	queryCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var (
+		src      sql.NullString
+		dst      sql.NullString
+		cnam     sql.NullString
+		dstCNam  sql.NullString
+		callDate sql.NullTime
+	)
+
+	query := "SELECT src, dst, cnam, dst_cnam, calldate FROM cdr WHERE uniqueid = ? LIMIT 1"
+	if err := database.QueryRowContext(queryCtx, query, uniqueID).Scan(&src, &dst, &cnam, &dstCNam, &callDate); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", "", "", "", nil, nil
+		}
+		return "", "", "", "", nil, err
+	}
+
+	var callTimestamp *time.Time
+	if callDate.Valid {
+		value := callDate.Time
+		callTimestamp = &value
+	}
+
+	return strings.TrimSpace(src.String), strings.TrimSpace(dst.String), strings.TrimSpace(cnam.String), strings.TrimSpace(dstCNam.String), callTimestamp, nil
 }
 
 func buildPostgresPlaceholders(count int, startIndex int) string {
