@@ -38,11 +38,23 @@ type SummaryDrawer struct {
 	Src           string     `json:"src,omitempty"`
 	Dst           string     `json:"dst,omitempty"`
 	CNam          string     `json:"cnam,omitempty"`
+	Company       string     `json:"company,omitempty"`
+	DstCompany    string     `json:"dst_company,omitempty"`
 	DstCNam       string     `json:"dst_cnam,omitempty"`
 	CallTimestamp *time.Time `json:"call_timestamp,omitempty"`
 	CreatedAt     time.Time  `json:"created_at"`
 	UpdatedAt     time.Time  `json:"updated_at"`
 	DeletedAt     *time.Time `json:"deleted_at,omitempty"`
+}
+
+type CallMetadata struct {
+	Src           string
+	Dst           string
+	CNam          string
+	Company       string
+	DstCompany    string
+	DstCNam       string
+	CallTimestamp *time.Time
 }
 
 type SummaryListItem struct {
@@ -609,33 +621,23 @@ func fetchSummaryDrawerFromDB(uniqueID string) (*SummaryDrawer, bool, error) {
 		deletedAt = &value
 	}
 
-	src, dst, cnam, dstCNam, callTimestamp, err := fetchSummaryCDRFields(uniqueID)
+	callMeta, err := fetchSummaryCDRFields(uniqueID)
 	if err != nil {
 		return nil, false, err
 	}
-	if callTimestamp != nil {
-		value := time.Date(
-			callTimestamp.Year(),
-			callTimestamp.Month(),
-			callTimestamp.Day(),
-			callTimestamp.Hour(),
-			callTimestamp.Minute(),
-			callTimestamp.Second(),
-			callTimestamp.Nanosecond(),
-			dbCreatedAt.Location(),
-		)
-		callTimestamp = &value
-	}
+	callTimestamp := alignCallTimestampLocation(callMeta.CallTimestamp, &dbCreatedAt)
 
 	return &SummaryDrawer{
 		UniqueID:      dbUniqueID,
 		Summary:       strings.TrimSpace(dbSummary.String),
 		Sentiment:     sentiment,
 		State:         dbState,
-		Src:           src,
-		Dst:           dst,
-		CNam:          cnam,
-		DstCNam:       dstCNam,
+		Src:           callMeta.Src,
+		Dst:           callMeta.Dst,
+		CNam:          callMeta.CNam,
+		Company:       callMeta.Company,
+		DstCompany:    callMeta.DstCompany,
+		DstCNam:       callMeta.DstCNam,
 		CallTimestamp: callTimestamp,
 		CreatedAt:     dbCreatedAt,
 		UpdatedAt:     dbUpdatedAt,
@@ -824,29 +826,44 @@ func deleteSummaryInDB(uniqueID string) (bool, error) {
 	return affected > 0, nil
 }
 
-func fetchSummaryCDRFields(uniqueID string) (string, string, string, string, *time.Time, error) {
+func fetchSummaryCDRFields(uniqueID string) (*CallMetadata, error) {
 	database := db.GetCDRDB()
 	if database == nil {
-		return "", "", "", "", nil, sql.ErrConnDone
+		return nil, sql.ErrConnDone
 	}
 
 	queryCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
+	callMeta, err := fetchCallMetadataFromCDR(queryCtx, database, uniqueID)
+	if err != nil {
+		return nil, err
+	}
+	return callMeta, nil
+}
+
+func fetchCallMetadataFromCDR(queryCtx context.Context, database *sql.DB, uniqueID string) (*CallMetadata, error) {
 	var (
-		src      sql.NullString
-		dst      sql.NullString
-		cnam     sql.NullString
-		dstCNam  sql.NullString
-		callDate sql.NullTime
+		src        sql.NullString
+		dst        sql.NullString
+		cnam       sql.NullString
+		company    sql.NullString
+		dstCompany sql.NullString
+		dstCNam    sql.NullString
+		callDate   sql.NullTime
 	)
 
-	query := "SELECT src, dst, cnam, dst_cnam, calldate FROM cdr WHERE uniqueid = ? LIMIT 1"
-	if err := database.QueryRowContext(queryCtx, query, uniqueID).Scan(&src, &dst, &cnam, &dstCNam, &callDate); err != nil {
+	query := "SELECT src, dst, cnam, company, dst_company, dst_cnam, calldate FROM cdr WHERE uniqueid = ? LIMIT 1"
+	err := database.QueryRowContext(queryCtx, query, uniqueID).Scan(&src, &dst, &cnam, &company, &dstCompany, &dstCNam, &callDate)
+	if err != nil && isMissingColumnError(err) {
+		query = "SELECT src, dst, cnam, dst_cnam, calldate FROM cdr WHERE uniqueid = ? LIMIT 1"
+		err = database.QueryRowContext(queryCtx, query, uniqueID).Scan(&src, &dst, &cnam, &dstCNam, &callDate)
+	}
+	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return "", "", "", "", nil, nil
+			return &CallMetadata{}, nil
 		}
-		return "", "", "", "", nil, err
+		return nil, err
 	}
 
 	var callTimestamp *time.Time
@@ -855,7 +872,38 @@ func fetchSummaryCDRFields(uniqueID string) (string, string, string, string, *ti
 		callTimestamp = &value
 	}
 
-	return strings.TrimSpace(src.String), strings.TrimSpace(dst.String), strings.TrimSpace(cnam.String), strings.TrimSpace(dstCNam.String), callTimestamp, nil
+	return &CallMetadata{
+		Src:           strings.TrimSpace(src.String),
+		Dst:           strings.TrimSpace(dst.String),
+		CNam:          strings.TrimSpace(cnam.String),
+		Company:       strings.TrimSpace(company.String),
+		DstCompany:    strings.TrimSpace(dstCompany.String),
+		DstCNam:       strings.TrimSpace(dstCNam.String),
+		CallTimestamp: callTimestamp,
+	}, nil
+}
+
+func isMissingColumnError(err error) bool {
+	return strings.Contains(strings.ToLower(err.Error()), "unknown column")
+}
+
+func alignCallTimestampLocation(callTimestamp *time.Time, reference *time.Time) *time.Time {
+	if callTimestamp == nil || reference == nil {
+		return callTimestamp
+	}
+
+	value := time.Date(
+		callTimestamp.Year(),
+		callTimestamp.Month(),
+		callTimestamp.Day(),
+		callTimestamp.Hour(),
+		callTimestamp.Minute(),
+		callTimestamp.Second(),
+		callTimestamp.Nanosecond(),
+		reference.Location(),
+	)
+
+	return &value
 }
 
 func buildPostgresPlaceholders(count int, startIndex int) string {

@@ -27,10 +27,26 @@ import (
 var (
 	getUserInfoFunc            = GetUserInfo
 	fetchTranscriptionFunc     = fetchTranscriptionFromDB
+	fetchTranscriptionMetaFunc = fetchTranscriptionMetadataFromCDR
 	checkUserParticipationFunc = checkUserParticipationInCDR
 )
 
 var errUnauthorized = errors.New("unauthorized")
+
+type TranscriptionDrawer struct {
+	UniqueID      string     `json:"uniqueid"`
+	Transcription string     `json:"transcription"`
+	Src           string     `json:"src,omitempty"`
+	CNum          string     `json:"cnum,omitempty"`
+	CNam          string     `json:"cnam,omitempty"`
+	Company       string     `json:"company,omitempty"`
+	CCompany      string     `json:"ccompany,omitempty"`
+	DstCompany    string     `json:"dst_company,omitempty"`
+	DstCNam       string     `json:"dst_cnam,omitempty"`
+	Dst           string     `json:"dst,omitempty"`
+	CallTimestamp *time.Time `json:"call_timestamp,omitempty"`
+	CreatedAt     *time.Time `json:"created_at"`
+}
 
 // GetTranscriptionByUniqueID returns the transcription for the given unique ID.
 func GetTranscriptionByUniqueID(c *gin.Context) {
@@ -99,13 +115,33 @@ func GetTranscriptionByUniqueID(c *gin.Context) {
 		return
 	}
 
+	callMeta, err := fetchTranscriptionMetaFunc(uniqueID)
+	if err != nil {
+		logs.Log("[ERROR][TRANSCRIPTS] Failed to fetch CDR metadata for uniqueid " + uniqueID + ": " + err.Error())
+		c.JSON(http.StatusServiceUnavailable, structs.Map(models.StatusServiceUnavailable{
+			Code:    http.StatusServiceUnavailable,
+			Message: "cdr database unavailable",
+			Data:    nil,
+		}))
+		return
+	}
+
 	c.JSON(http.StatusOK, structs.Map(models.StatusOK{
 		Code:    http.StatusOK,
 		Message: "success",
 		Data: gin.H{
-			"uniqueid":      uniqueID,
-			"transcription": transcription,
-			"created_at":    createdAt,
+			"uniqueid":       uniqueID,
+			"transcription":  transcription,
+			"src":            callMeta.Src,
+			"cnum":           callMeta.Src,
+			"cnam":           callMeta.CNam,
+			"company":        callMeta.Company,
+			"ccompany":       callMeta.Company,
+			"dst_company":    callMeta.DstCompany,
+			"dst_cnam":       callMeta.DstCNam,
+			"dst":            callMeta.Dst,
+			"call_timestamp": alignCallTimestampLocation(callMeta.CallTimestamp, createdAt),
+			"created_at":     createdAt,
 		},
 	}))
 }
@@ -208,6 +244,22 @@ func fetchTranscriptionFromDB(uniqueID string) (string, *time.Time, bool, error)
 	}
 
 	return "", createdAtPtr, false, nil
+}
+
+func fetchTranscriptionMetadataFromCDR(uniqueID string) (*CallMetadata, error) {
+	database := db.GetCDRDB()
+	if database == nil {
+		return nil, sql.ErrConnDone
+	}
+
+	queryCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	callMeta, err := fetchCallMetadataFromCDR(queryCtx, database, uniqueID)
+	if err != nil {
+		return nil, err
+	}
+	return callMeta, nil
 }
 
 func checkUserParticipationInCDR(uniqueID string, phoneNumbers []string) (bool, error) {

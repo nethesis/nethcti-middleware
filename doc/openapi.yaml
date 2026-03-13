@@ -215,6 +215,26 @@ components:
               type: string
             transcription:
               type: string
+            src:
+              type: string
+            cnum:
+              type: string
+            cnam:
+              type: string
+            company:
+              type: string
+            ccompany:
+              type: string
+            dst_company:
+              type: string
+            dst_cnam:
+              type: string
+            dst:
+              type: string
+            call_timestamp:
+              type: string
+              format: date-time
+              nullable: true
             created_at:
               type: string
               format: date-time
@@ -244,6 +264,10 @@ components:
             dst:
               type: string
             cnam:
+              type: string
+            company:
+              type: string
+            dst_company:
               type: string
             dst_cnam:
               type: string

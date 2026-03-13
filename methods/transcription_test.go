@@ -61,6 +61,93 @@ func TestGetTranscription_UnauthorizedWhenNotParticipant(t *testing.T) {
 	}
 }
 
+func TestGetTranscriptionByUniqueID_ReturnsExtendedData(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store.UserSessionInit()
+	store.UserSessions["alice"] = &models.UserSession{Username: "alice", NethCTIToken: "token"}
+
+	configuration.Config.SatellitePgSQLHost = "test"
+	configuration.Config.SatellitePgSQLPort = "5432"
+	configuration.Config.SatellitePgSQLDB = "test"
+	configuration.Config.SatellitePgSQLUser = "test"
+
+	originalGetUserInfo := getUserInfoFunc
+	originalCheck := checkUserParticipationFunc
+	originalFetchTranscription := fetchTranscriptionFunc
+	originalFetchMeta := fetchTranscriptionMetaFunc
+	defer func() {
+		getUserInfoFunc = originalGetUserInfo
+		checkUserParticipationFunc = originalCheck
+		fetchTranscriptionFunc = originalFetchTranscription
+		fetchTranscriptionMetaFunc = originalFetchMeta
+	}()
+
+	getUserInfoFunc = func(string) (*UserInfo, error) {
+		return &UserInfo{PhoneNumbers: []string{"100"}}, nil
+	}
+	checkUserParticipationFunc = func(string, []string) (bool, error) {
+		return true, nil
+	}
+
+	createdAt := time.Now()
+	fetchTranscriptionFunc = func(string) (string, *time.Time, bool, error) {
+		return "transcription text", &createdAt, true, nil
+	}
+	callTimestamp := time.Now()
+	fetchTranscriptionMetaFunc = func(string) (*CallMetadata, error) {
+		return &CallMetadata{
+			Src:           "100",
+			Dst:           "200",
+			CNam:          "Alice",
+			Company:       "Acme",
+			DstCompany:    "Globex",
+			DstCNam:       "Bob",
+			CallTimestamp: &callTimestamp,
+		}, nil
+	}
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("JWT_PAYLOAD", jwtv5.MapClaims{"id": "alice"})
+		c.Next()
+	})
+	router.GET("/transcripts/:uniqueid", GetTranscriptionByUniqueID)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/transcripts/abc123", nil)
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 ok, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var response struct {
+		Data TranscriptionDrawer `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if response.Data.UniqueID != "abc123" || response.Data.Transcription != "transcription text" {
+		t.Fatalf("unexpected transcription payload: %+v", response.Data)
+	}
+	if response.Data.Src != "100" || response.Data.CNum != "100" || response.Data.Dst != "200" {
+		t.Fatalf("unexpected src/cnum/dst: %+v", response.Data)
+	}
+	if response.Data.CNam != "Alice" || response.Data.DstCNam != "Bob" {
+		t.Fatalf("unexpected cnam fields: %+v", response.Data)
+	}
+	if response.Data.Company != "Acme" || response.Data.CCompany != "Acme" || response.Data.DstCompany != "Globex" {
+		t.Fatalf("unexpected company fields: %+v", response.Data)
+	}
+	if response.Data.CallTimestamp == nil {
+		t.Fatalf("expected call_timestamp to be populated: %+v", response.Data)
+	}
+	if response.Data.CreatedAt == nil {
+		t.Fatalf("expected created_at to be populated: %+v", response.Data)
+	}
+}
+
 func TestUpdateSummary_SucceedsWhenAuthorized(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	store.UserSessionInit()
@@ -148,6 +235,8 @@ func TestGetSummaryByUniqueID_ReturnsExtendedData(t *testing.T) {
 			Src:           "100",
 			Dst:           "200",
 			CNam:          "Alice",
+			Company:       "Acme",
+			DstCompany:    "Globex",
 			DstCNam:       "Bob",
 			CallTimestamp: &callTimestamp,
 			CreatedAt:     time.Now(),
@@ -181,6 +270,9 @@ func TestGetSummaryByUniqueID_ReturnsExtendedData(t *testing.T) {
 	}
 	if response.Data.CNam != "Alice" || response.Data.DstCNam != "Bob" {
 		t.Fatalf("unexpected cnam fields: %+v", response.Data)
+	}
+	if response.Data.Company != "Acme" || response.Data.DstCompany != "Globex" {
+		t.Fatalf("unexpected company fields: %+v", response.Data)
 	}
 	if response.Data.CallTimestamp == nil {
 		t.Fatalf("expected call_timestamp to be populated: %+v", response.Data)
