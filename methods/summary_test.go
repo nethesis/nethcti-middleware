@@ -276,11 +276,21 @@ func TestListSummaryStatus_Succeeds(t *testing.T) {
 	configuration.Config.SatellitePgSQLDB = "test"
 	configuration.Config.SatellitePgSQLUser = "test"
 
+	originalGetUserInfo := getUserInfoFunc
+	originalCheck := checkUserParticipationFunc
 	originalFetchList := fetchSummaryListFunc
 	defer func() {
+		getUserInfoFunc = originalGetUserInfo
+		checkUserParticipationFunc = originalCheck
 		fetchSummaryListFunc = originalFetchList
 	}()
 
+	getUserInfoFunc = func(string) (*UserInfo, error) {
+		return &UserInfo{PhoneNumbers: []string{"100"}}, nil
+	}
+	checkUserParticipationFunc = func(string, []string) (bool, error) {
+		return true, nil
+	}
 	fetchSummaryListFunc = func([]string) ([]SummaryListItem, error) {
 		updatedAt := time.Now()
 		return []SummaryListItem{
@@ -332,11 +342,21 @@ func TestListSummaryStatus_MixedResults(t *testing.T) {
 	configuration.Config.SatellitePgSQLDB = "test"
 	configuration.Config.SatellitePgSQLUser = "test"
 
+	originalGetUserInfo := getUserInfoFunc
+	originalCheck := checkUserParticipationFunc
 	originalFetchList := fetchSummaryListFunc
 	defer func() {
+		getUserInfoFunc = originalGetUserInfo
+		checkUserParticipationFunc = originalCheck
 		fetchSummaryListFunc = originalFetchList
 	}()
 
+	getUserInfoFunc = func(string) (*UserInfo, error) {
+		return &UserInfo{PhoneNumbers: []string{"100"}}, nil
+	}
+	checkUserParticipationFunc = func(string, []string) (bool, error) {
+		return true, nil
+	}
 	fetchSummaryListFunc = func([]string) ([]SummaryListItem, error) {
 		updatedAt := time.Now()
 		return []SummaryListItem{
@@ -394,5 +414,96 @@ func TestListSummaryStatus_MixedResults(t *testing.T) {
 	}
 	if _, ok := second["state"]; ok {
 		t.Fatalf("did not expect state for missing item")
+	}
+}
+
+func TestListSummaryStatus_FiltersCallsOutsideUserParticipation(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store.UserSessionInit()
+	store.UserSessions["alice"] = &models.UserSession{Username: "alice", NethCTIToken: "token"}
+
+	configuration.Config.SatellitePgSQLHost = "test"
+	configuration.Config.SatellitePgSQLPort = "5432"
+	configuration.Config.SatellitePgSQLDB = "test"
+	configuration.Config.SatellitePgSQLUser = "test"
+
+	originalGetUserInfo := getUserInfoFunc
+	originalCheck := checkUserParticipationFunc
+	originalFetchList := fetchSummaryListFunc
+	defer func() {
+		getUserInfoFunc = originalGetUserInfo
+		checkUserParticipationFunc = originalCheck
+		fetchSummaryListFunc = originalFetchList
+	}()
+
+	getUserInfoFunc = func(string) (*UserInfo, error) {
+		return &UserInfo{PhoneNumbers: []string{"100"}}, nil
+	}
+	checkUserParticipationFunc = func(uniqueID string, phoneNumbers []string) (bool, error) {
+		return uniqueID == "abc123", nil
+	}
+
+	var fetchedUniqueIDs []string
+	fetchSummaryListFunc = func(uniqueIDs []string) ([]SummaryListItem, error) {
+		fetchedUniqueIDs = append([]string{}, uniqueIDs...)
+		updatedAt := time.Now()
+		return []SummaryListItem{
+			{
+				UniqueID:         "abc123",
+				State:            "done",
+				HasTranscription: true,
+				HasSummary:       true,
+				UpdatedAt:        &updatedAt,
+			},
+		}, nil
+	}
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("JWT_PAYLOAD", jwtv5.MapClaims{"id": "alice"})
+		c.Next()
+	})
+	router.POST("/summary/statuses", ListSummaryStatus)
+
+	w := httptest.NewRecorder()
+	body, _ := json.Marshal(map[string][]string{"uniqueids": {"abc123", "switchboard-1"}})
+	req, _ := http.NewRequest("POST", "/summary/statuses", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 ok, got %d: %s", w.Code, w.Body.String())
+	}
+	if len(fetchedUniqueIDs) != 1 || fetchedUniqueIDs[0] != "abc123" {
+		t.Fatalf("expected fetch only for authorized uniqueids, got %v", fetchedUniqueIDs)
+	}
+
+	var response struct {
+		Data []map[string]interface{} `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if len(response.Data) != 2 {
+		t.Fatalf("expected 2 items, got %d", len(response.Data))
+	}
+
+	first := response.Data[0]
+	if first["uniqueid"] != "abc123" {
+		t.Fatalf("unexpected first uniqueid: %v", first["uniqueid"])
+	}
+	if first["has_summary"] != true {
+		t.Fatalf("expected summary details for authorized item, got %v", first["has_summary"])
+	}
+
+	second := response.Data[1]
+	if second["uniqueid"] != "switchboard-1" {
+		t.Fatalf("unexpected second uniqueid: %v", second["uniqueid"])
+	}
+	if second["error"] != "not_found" {
+		t.Fatalf("expected not_found for unauthorized item, got %v", second["error"])
+	}
+	if _, ok := second["has_summary"]; ok {
+		t.Fatalf("did not expect summary details for unauthorized item")
 	}
 }

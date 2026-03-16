@@ -19,6 +19,7 @@ import (
 	"github.com/nethesis/nethcti-middleware/db"
 	"github.com/nethesis/nethcti-middleware/logs"
 	"github.com/nethesis/nethcti-middleware/models"
+	"github.com/nethesis/nethcti-middleware/store"
 	"github.com/nethesis/nethcti-middleware/summary"
 )
 
@@ -490,7 +491,27 @@ func ListSummaryStatus(c *gin.Context) {
 		return
 	}
 
-	items, err := fetchSummaryListFunc(uniqueIDs)
+	authorizedUniqueIDs, err := filterSummaryStatusUniqueIDsByParticipation(c, uniqueIDs)
+	if err != nil {
+		if errors.Is(err, errUnauthorized) {
+			c.JSON(http.StatusUnauthorized, structs.Map(models.StatusUnauthorized{
+				Code:    http.StatusUnauthorized,
+				Message: "unauthorized",
+				Data:    nil,
+			}))
+			return
+		}
+
+		logs.Log("[ERROR][SUMMARY] Failed to validate CDR participation for statuses: " + err.Error())
+		c.JSON(http.StatusServiceUnavailable, structs.Map(models.StatusServiceUnavailable{
+			Code:    http.StatusServiceUnavailable,
+			Message: "cdr database unavailable",
+			Data:    nil,
+		}))
+		return
+	}
+
+	items, err := fetchSummaryListFunc(authorizedUniqueIDs)
 	if err != nil {
 		logs.Log("[ERROR][SUMMARY] Failed to list summaries: " + err.Error())
 		c.JSON(http.StatusInternalServerError, structs.Map(models.StatusInternalServerError{
@@ -523,6 +544,43 @@ func ListSummaryStatus(c *gin.Context) {
 		Message: "success",
 		Data:    result,
 	}))
+}
+
+func filterSummaryStatusUniqueIDsByParticipation(c *gin.Context, uniqueIDs []string) ([]string, error) {
+	username, err := getUsernameFromContext(c)
+	if err != nil {
+		return nil, err
+	}
+
+	userSession := store.UserSessions[username]
+	if userSession == nil || strings.TrimSpace(userSession.NethCTIToken) == "" {
+		logs.Log("[WARNING][SUMMARY] Missing user session or token for user " + username + " while listing summary statuses")
+		return nil, errUnauthorized
+	}
+
+	userInfo, err := getUserInfoFunc(userSession.NethCTIToken)
+	if err != nil {
+		logs.Log("[ERROR][SUMMARY] Failed to load user info for user " + username + " while listing summary statuses: " + err.Error())
+		return nil, err
+	}
+
+	if len(userInfo.PhoneNumbers) == 0 {
+		logs.Log("[WARNING][SUMMARY] No phone numbers for user " + username + " while listing summary statuses")
+		return []string{}, nil
+	}
+
+	authorized := make([]string, 0, len(uniqueIDs))
+	for _, uniqueID := range uniqueIDs {
+		ok, err := checkUserParticipationFunc(uniqueID, userInfo.PhoneNumbers)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			authorized = append(authorized, uniqueID)
+		}
+	}
+
+	return authorized, nil
 }
 
 func extractSummaryStatusUniqueIDs(c *gin.Context) ([]string, error) {
