@@ -168,6 +168,9 @@ func createRouter() *gin.Engine {
 		// Phonebook import API
 		api.POST("/phonebook/import", middleware.RequireCapabilities("phonebook.ad_phonebook"), methods.ImportPhonebookCSV)
 
+		// Extension API
+		api.GET("/extensions/:mainextension/:type", methods.GetExtensionByMainExtensionAndType)
+
 		// Logout endpoint
 		api.POST("/logout", middleware.InstanceJWT().LogoutHandler)
 	}

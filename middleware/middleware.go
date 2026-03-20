@@ -397,7 +397,7 @@ func RequireSuperAdmin() gin.HandlerFunc {
 			return
 		}
 
-		logs.Log(fmt.Sprintf("[INFO][AUTH][INTERNAL] super admin request authorized from %s. %s %s", clientIP, c.Request.Method, c.Request.URL.Path))
+		logs.Log(fmt.Sprintf("[INFO][INTERNAL] super admin request authorized from %s. %s %s", clientIP, c.Request.Method, c.Request.URL.Path))
 		c.Next()
 	}
 }
