@@ -8,6 +8,7 @@ package summary
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"strings"
 	"sync"
 	"time"
@@ -15,13 +16,15 @@ import (
 	"github.com/nethesis/nethcti-middleware/configuration"
 	"github.com/nethesis/nethcti-middleware/db"
 	"github.com/nethesis/nethcti-middleware/logs"
+	"github.com/nethesis/nethcti-middleware/store"
 )
 
 // SummaryMessage represents the payload sent over WebSocket when a summary is available.
 type SummaryMessage struct {
-	UniqueID string `json:"uniqueid"`
-	Summary  string `json:"summary"`
-	Username string `json:"-"`
+	UniqueID      string `json:"uniqueid"`
+	DisplayName   string `json:"display_name,omitempty"`
+	DisplayNumber string `json:"display_number,omitempty"`
+	Username      string `json:"-"`
 }
 
 func (m SummaryMessage) TargetUsername() string {
@@ -37,6 +40,8 @@ var summaryWatcher = &watcher{active: make(map[string]context.CancelFunc)}
 
 var fetchSummaryFunc = fetchSummaryFromDB
 var fetchSummaryWatchStatusFunc = fetchSummaryWatchStatusFromDB
+var fetchSummaryMetadataFunc = fetchSummaryMetadataFromCDR
+var fetchUserDisplayInfoFunc = store.GetUserDisplayInfo
 
 type notifyFunc func(SummaryMessage)
 
@@ -119,7 +124,7 @@ func (w *watcher) watch(ctx context.Context, uniqueID, username string) {
 }
 
 func (w *watcher) poll(uniqueID, username string) bool {
-	summaryText, found, err := fetchSummaryFunc(uniqueID)
+	_, found, err := fetchSummaryFunc(uniqueID)
 	if err != nil {
 		logs.Log("[ERROR][SUMMARY] Failed to fetch summary for uniqueid " + uniqueID + ": " + err.Error())
 		return false
@@ -138,10 +143,12 @@ func (w *watcher) poll(uniqueID, username string) bool {
 		return false
 	}
 
+	displayName, displayNumber := resolveSummaryDisplay(uniqueID, username)
 	notifySummaryFunc(SummaryMessage{
-		UniqueID: uniqueID,
-		Summary:  summaryText,
-		Username: username,
+		UniqueID:      uniqueID,
+		DisplayName:   displayName,
+		DisplayNumber: displayNumber,
+		Username:      username,
 	})
 	w.remove(uniqueID, username)
 	logs.Log("[INFO][SUMMARY] Summary found for user " + username + " uniqueid: " + uniqueID)
@@ -215,4 +222,126 @@ func fetchSummaryWatchStatusFromDB(uniqueID string) (bool, error) {
 	finalState := strings.TrimSpace(state.String) == "done" || strings.TrimSpace(state.String) == "failed"
 
 	return finalState && !hasSummary && !hasTranscription, nil
+}
+
+type CallMetadata struct {
+	Src     string
+	Dst     string
+	CNam    string
+	DstCNam string
+}
+
+func resolveSummaryDisplay(uniqueID, username string) (string, string) {
+	_, phoneNumbers, err := fetchUserDisplayInfoFunc(username)
+	if err != nil {
+		logs.Log("[WARNING][SUMMARY] Failed to load display info for user " + username + " uniqueid: " + uniqueID + ": " + err.Error())
+		return "", ""
+	}
+
+	if len(phoneNumbers) == 0 {
+		return "", ""
+	}
+
+	callMeta, err := fetchSummaryMetadataFunc(uniqueID)
+	if err != nil {
+		logs.Log("[WARNING][SUMMARY] Failed to load CDR metadata for uniqueid " + uniqueID + ": " + err.Error())
+		return "", ""
+	}
+
+	if callMeta == nil {
+		return "", ""
+	}
+
+	return selectCounterpartDisplay(callMeta, phoneNumbers)
+}
+
+func fetchSummaryMetadataFromCDR(uniqueID string) (*CallMetadata, error) {
+	database := db.GetCDRDB()
+	if database == nil {
+		return nil, sql.ErrConnDone
+	}
+
+	queryCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	return fetchCallMetadataFromCDR(queryCtx, database, uniqueID)
+}
+
+func fetchCallMetadataFromCDR(queryCtx context.Context, database *sql.DB, uniqueID string) (*CallMetadata, error) {
+	var (
+		src     sql.NullString
+		dst     sql.NullString
+		cnam    sql.NullString
+		dstCNam sql.NullString
+	)
+
+	query := "SELECT src, dst, cnam, dst_cnam FROM cdr WHERE uniqueid = ? LIMIT 1"
+	err := database.QueryRowContext(queryCtx, query, uniqueID).Scan(&src, &dst, &cnam, &dstCNam)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return &CallMetadata{}, nil
+		}
+		return nil, err
+	}
+
+	return &CallMetadata{
+		Src:     strings.TrimSpace(src.String),
+		Dst:     strings.TrimSpace(dst.String),
+		CNam:    strings.TrimSpace(cnam.String),
+		DstCNam: strings.TrimSpace(dstCNam.String),
+	}, nil
+}
+
+func selectCounterpartDisplay(callMeta *CallMetadata, phoneNumbers []string) (string, string) {
+	if callMeta == nil {
+		return "", ""
+	}
+
+	srcIsUser := phoneNumbersContain(phoneNumbers, callMeta.Src)
+	dstIsUser := phoneNumbersContain(phoneNumbers, callMeta.Dst)
+
+	switch {
+	case srcIsUser && !dstIsUser:
+		return buildDisplay(callMeta.DstCNam, callMeta.Dst)
+	case dstIsUser && !srcIsUser:
+		return buildDisplay(callMeta.CNam, callMeta.Src)
+	case !srcIsUser && dstIsUser:
+		return buildDisplay(callMeta.CNam, callMeta.Src)
+	case srcIsUser && dstIsUser:
+		if name, number := buildDisplay(callMeta.DstCNam, callMeta.Dst); name != "" || number != "" {
+			return name, number
+		}
+		return buildDisplay(callMeta.CNam, callMeta.Src)
+	default:
+		if name, number := buildDisplay(callMeta.CNam, callMeta.Src); name != "" || number != "" {
+			return name, number
+		}
+		return buildDisplay(callMeta.DstCNam, callMeta.Dst)
+	}
+}
+
+func phoneNumbersContain(phoneNumbers []string, value string) bool {
+	cleanValue := strings.TrimSpace(value)
+	if cleanValue == "" {
+		return false
+	}
+
+	for _, phoneNumber := range phoneNumbers {
+		if strings.TrimSpace(phoneNumber) == cleanValue {
+			return true
+		}
+	}
+
+	return false
+}
+
+func buildDisplay(name, number string) (string, string) {
+	cleanName := strings.TrimSpace(name)
+	cleanNumber := strings.TrimSpace(number)
+
+	if cleanName == cleanNumber {
+		cleanNumber = ""
+	}
+
+	return cleanName, cleanNumber
 }

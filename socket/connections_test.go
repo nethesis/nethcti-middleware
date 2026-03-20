@@ -47,7 +47,6 @@ func TestBroadcastSummaryMessageSendsSatelliteSummaryEvent(t *testing.T) {
 
 	BroadcastSummaryMessage(map[string]string{
 		"uniqueid": "abc123",
-		"summary":  "done",
 	})
 
 	clientConn.SetReadDeadline(time.Now().Add(2 * time.Second))
@@ -57,7 +56,7 @@ func TestBroadcastSummaryMessageSendsSatelliteSummaryEvent(t *testing.T) {
 	if eventName != "satellite/summary" {
 		t.Fatalf("expected satellite/summary event, got %q", eventName)
 	}
-	if payload["uniqueid"] != "abc123" || payload["summary"] != "done" {
+	if payload["uniqueid"] != "abc123" {
 		t.Fatalf("unexpected summary payload: %#v", payload)
 	}
 }
@@ -108,7 +107,6 @@ func TestBroadcastSummaryMessageTargetsOnlyMatchingUser(t *testing.T) {
 
 	BroadcastSummaryMessage(map[string]interface{}{
 		"uniqueid": "abc123",
-		"summary":  "done",
 		"username": "alice",
 	})
 
@@ -118,7 +116,7 @@ func TestBroadcastSummaryMessageTargetsOnlyMatchingUser(t *testing.T) {
 	if eventName != "satellite/summary" {
 		t.Fatalf("expected satellite/summary event, got %q", eventName)
 	}
-	if payload["uniqueid"] != "abc123" || payload["summary"] != "done" {
+	if payload["uniqueid"] != "abc123" {
 		t.Fatalf("unexpected summary payload: %#v", payload)
 	}
 

@@ -26,10 +26,14 @@ func TestStartSummaryWatchBroadcastsAndStops(t *testing.T) {
 
 	originalFetch := fetchSummaryFunc
 	originalWatchStatus := fetchSummaryWatchStatusFunc
+	originalFetchMetadata := fetchSummaryMetadataFunc
+	originalFetchUserDisplayInfo := fetchUserDisplayInfoFunc
 	originalNotify := notifySummaryFunc
 	defer func() {
 		fetchSummaryFunc = originalFetch
 		fetchSummaryWatchStatusFunc = originalWatchStatus
+		fetchSummaryMetadataFunc = originalFetchMetadata
+		fetchUserDisplayInfoFunc = originalFetchUserDisplayInfo
 		notifySummaryFunc = originalNotify
 		summaryPollInterval = originalInterval
 		summaryWatchTimeout = originalTimeout
@@ -47,6 +51,16 @@ func TestStartSummaryWatchBroadcastsAndStops(t *testing.T) {
 	fetchSummaryWatchStatusFunc = func(uniqueID string) (bool, error) {
 		return false, nil
 	}
+	fetchUserDisplayInfoFunc = func(username string) (string, []string, error) {
+		return "Alice", []string{"100"}, nil
+	}
+	fetchSummaryMetadataFunc = func(uniqueID string) (*CallMetadata, error) {
+		return &CallMetadata{
+			Src:     "100",
+			Dst:     "+39021234567",
+			DstCNam: "Mario Rossi",
+		}, nil
+	}
 
 	ch := make(chan SummaryMessage, 1)
 	notifySummaryFunc = func(msg SummaryMessage) {
@@ -62,11 +76,14 @@ func TestStartSummaryWatchBroadcastsAndStops(t *testing.T) {
 		if msg.UniqueID != "abc123" {
 			t.Fatalf("unexpected uniqueid: %s", msg.UniqueID)
 		}
-		if msg.Summary != "summary text" {
-			t.Fatalf("unexpected summary: %s", msg.Summary)
-		}
 		if msg.Username != "alice" {
 			t.Fatalf("unexpected username: %s", msg.Username)
+		}
+		if msg.DisplayName != "Mario Rossi" {
+			t.Fatalf("unexpected display name: %s", msg.DisplayName)
+		}
+		if msg.DisplayNumber != "+39021234567" {
+			t.Fatalf("unexpected display number: %s", msg.DisplayNumber)
 		}
 	case <-time.After(200 * time.Millisecond):
 		t.Fatal("timeout waiting for summary broadcast")
@@ -86,10 +103,14 @@ func TestStartSummaryWatchIsIdempotent(t *testing.T) {
 
 	originalFetch := fetchSummaryFunc
 	originalWatchStatus := fetchSummaryWatchStatusFunc
+	originalFetchMetadata := fetchSummaryMetadataFunc
+	originalFetchUserDisplayInfo := fetchUserDisplayInfoFunc
 	originalNotify := notifySummaryFunc
 	defer func() {
 		fetchSummaryFunc = originalFetch
 		fetchSummaryWatchStatusFunc = originalWatchStatus
+		fetchSummaryMetadataFunc = originalFetchMetadata
+		fetchUserDisplayInfoFunc = originalFetchUserDisplayInfo
 		notifySummaryFunc = originalNotify
 		summaryPollInterval = originalInterval
 		summaryWatchTimeout = originalTimeout
@@ -132,10 +153,14 @@ func TestStartSummaryWatchPollsImmediately(t *testing.T) {
 
 	originalFetch := fetchSummaryFunc
 	originalWatchStatus := fetchSummaryWatchStatusFunc
+	originalFetchMetadata := fetchSummaryMetadataFunc
+	originalFetchUserDisplayInfo := fetchUserDisplayInfoFunc
 	originalNotify := notifySummaryFunc
 	defer func() {
 		fetchSummaryFunc = originalFetch
 		fetchSummaryWatchStatusFunc = originalWatchStatus
+		fetchSummaryMetadataFunc = originalFetchMetadata
+		fetchUserDisplayInfoFunc = originalFetchUserDisplayInfo
 		notifySummaryFunc = originalNotify
 		summaryPollInterval = originalInterval
 		summaryWatchTimeout = originalTimeout
@@ -147,6 +172,16 @@ func TestStartSummaryWatchPollsImmediately(t *testing.T) {
 	}
 	fetchSummaryWatchStatusFunc = func(uniqueID string) (bool, error) {
 		return false, nil
+	}
+	fetchUserDisplayInfoFunc = func(username string) (string, []string, error) {
+		return "Alice", []string{"100"}, nil
+	}
+	fetchSummaryMetadataFunc = func(uniqueID string) (*CallMetadata, error) {
+		return &CallMetadata{
+			Src:  "+39021234567",
+			CNam: "Mario Rossi",
+			Dst:  "100",
+		}, nil
 	}
 
 	ch := make(chan SummaryMessage, 1)
@@ -190,10 +225,14 @@ func TestStartSummaryWatchStopsWhenSummaryCannotBeProduced(t *testing.T) {
 
 	originalFetch := fetchSummaryFunc
 	originalWatchStatus := fetchSummaryWatchStatusFunc
+	originalFetchMetadata := fetchSummaryMetadataFunc
+	originalFetchUserDisplayInfo := fetchUserDisplayInfoFunc
 	originalNotify := notifySummaryFunc
 	defer func() {
 		fetchSummaryFunc = originalFetch
 		fetchSummaryWatchStatusFunc = originalWatchStatus
+		fetchSummaryMetadataFunc = originalFetchMetadata
+		fetchUserDisplayInfoFunc = originalFetchUserDisplayInfo
 		notifySummaryFunc = originalNotify
 		summaryPollInterval = originalInterval
 		summaryWatchTimeout = originalTimeout
