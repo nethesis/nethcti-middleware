@@ -129,10 +129,7 @@ components:
         message:
           type: string
         data:
-          type: object
-          properties:
-            uniqueid:
-              type: string
+          nullable: true
 
     SummaryUpdateRequest:
       type: object

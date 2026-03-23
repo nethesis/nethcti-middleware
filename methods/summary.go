@@ -149,9 +149,7 @@ func WatchCallSummary(c *gin.Context) {
 		c.JSON(http.StatusOK, structs.Map(models.StatusOK{
 			Code:    http.StatusOK,
 			Message: "watch already active or unavailable",
-			Data: gin.H{
-				"uniqueid": uniqueID,
-			},
+			Data:    nil,
 		}))
 		return
 	}
@@ -160,9 +158,7 @@ func WatchCallSummary(c *gin.Context) {
 	c.JSON(http.StatusAccepted, structs.Map(models.StatusOK{
 		Code:    http.StatusAccepted,
 		Message: "watch started",
-		Data: gin.H{
-			"uniqueid": uniqueID,
-		},
+		Data:    nil,
 	}))
 }
 
@@ -194,7 +190,7 @@ func CheckSummaryByUniqueID(c *gin.Context) {
 		return
 	}
 
-	_, hasSummary, _, exists, err := fetchSummaryStateFunc(uniqueID)
+	state, hasSummary, _, exists, err := fetchSummaryStateFunc(uniqueID)
 	if err != nil {
 		logs.Log("[ERROR][SUMMARY] Failed to fetch summary for uniqueid " + uniqueID + ": " + err.Error())
 		c.Status(http.StatusInternalServerError)
@@ -206,12 +202,26 @@ func CheckSummaryByUniqueID(c *gin.Context) {
 		return
 	}
 
-	if !hasSummary {
+	if hasSummary {
+		c.Status(http.StatusOK)
+		return
+	}
+
+	if shouldKeepWaitingForSummary(state) {
 		c.Status(http.StatusNoContent)
 		return
 	}
 
-	c.Status(http.StatusOK)
+	c.Status(http.StatusNotFound)
+}
+
+func shouldKeepWaitingForSummary(state string) bool {
+	switch strings.TrimSpace(state) {
+	case "progress", "summarizing":
+		return true
+	default:
+		return false
+	}
 }
 
 // GetSummaryByUniqueID returns the summary for the given unique ID.
