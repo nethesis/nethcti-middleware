@@ -136,10 +136,10 @@ func createRouter() *gin.Engine {
 	// Authentication required endpoints
 	api.Use(middleware.InstanceJWT().MiddlewareFunc())
 	{
-		// Transcription APIs
+		// Transcription
 		api.GET("/transcripts/:uniqueid", middleware.RequireCapabilities("nethvoice_cti.satellite_stt"), methods.GetTranscriptionByUniqueID)
 
-		// Summary APIs
+		// Summary
 		api.GET("/summary/:uniqueid", middleware.RequireCapabilities("nethvoice_cti.satellite_stt"), methods.GetSummaryByUniqueID)
 		api.HEAD("/summary/:uniqueid", middleware.RequireCapabilities("nethvoice_cti.satellite_stt"), methods.CheckSummaryByUniqueID)
 		api.PUT("/summary/:uniqueid", middleware.RequireCapabilities("nethvoice_cti.satellite_stt"), methods.UpdateSummaryByUniqueID)
@@ -154,7 +154,7 @@ func createRouter() *gin.Engine {
 		api.POST("/2fa/recovery-codes", methods.Get2FARecoveryCodes)
 		api.GET("/2fa/qr-code", methods.QRCode)
 
-		// Tokens
+		// Token
 		api.POST("/tokens/persistent/:audience", methods.CreatePersistentToken)
 		api.GET("/tokens/persistent/:audience", methods.CheckPersistentToken)
 		api.DELETE("/tokens/persistent/:audience", methods.RemovePersistentToken)
@@ -165,13 +165,16 @@ func createRouter() *gin.Engine {
 		api.POST("/authentication/persistent_token_remove", methods.PhoneIslandTokenRemove)
 		api.GET("/authentication/phone_island_token_check", methods.PhoneIslandTokenCheck)
 
-		// Phonebook import API
+		// Phonebook
 		api.POST("/phonebook/import", middleware.RequireCapabilities("phonebook.ad_phonebook"), methods.ImportPhonebookCSV)
 
-		// Extension API
+		// Extension
 		api.GET("/extensions/:mainextension/:type", methods.GetExtensionByMainExtensionAndType)
 
-		// Logout endpoint
+		// Voicemail
+		api.GET("/voicemail/list/:id", methods.ListVoicemailByID)
+
+		// Logout
 		api.POST("/logout", middleware.InstanceJWT().LogoutHandler)
 	}
 
