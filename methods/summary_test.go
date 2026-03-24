@@ -19,6 +19,7 @@ import (
 	"github.com/nethesis/nethcti-middleware/configuration"
 	"github.com/nethesis/nethcti-middleware/models"
 	"github.com/nethesis/nethcti-middleware/store"
+	"github.com/nethesis/nethcti-middleware/summary"
 )
 
 func TestWatchCallSummary_StartsUserScopedWatch(t *testing.T) {
@@ -48,10 +49,10 @@ func TestWatchCallSummary_StartsUserScopedWatch(t *testing.T) {
 	}
 
 	var gotUniqueID, gotUsername string
-	startSummaryWatchFunc = func(uniqueID, username string) bool {
+	startSummaryWatchFunc = func(uniqueID, username string) summary.WatchStartResult {
 		gotUniqueID = uniqueID
 		gotUsername = username
-		return true
+		return summary.WatchStarted
 	}
 
 	router := gin.New()
@@ -112,9 +113,9 @@ func TestWatchCallSummary_RejectsUserOutsideCall(t *testing.T) {
 	}
 
 	called := false
-	startSummaryWatchFunc = func(uniqueID, username string) bool {
+	startSummaryWatchFunc = func(uniqueID, username string) summary.WatchStartResult {
 		called = true
-		return true
+		return summary.WatchStarted
 	}
 
 	router := gin.New()
@@ -135,6 +136,116 @@ func TestWatchCallSummary_RejectsUserOutsideCall(t *testing.T) {
 	}
 	if called {
 		t.Fatalf("did not expect watch to start for non participant")
+	}
+}
+
+func TestWatchCallSummary_ReturnsAlreadyActiveWhenWatcherExists(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store.UserSessionInit()
+	store.UserSessions["alice"] = &models.UserSession{Username: "alice", NethCTIToken: "token"}
+
+	configuration.Config.SatellitePgSQLHost = "test"
+	configuration.Config.SatellitePgSQLPort = "5432"
+	configuration.Config.SatellitePgSQLDB = "test"
+	configuration.Config.SatellitePgSQLUser = "test"
+
+	originalGetUserInfo := getUserInfoFunc
+	originalCheck := checkUserParticipationFunc
+	originalStartWatch := startSummaryWatchFunc
+	defer func() {
+		getUserInfoFunc = originalGetUserInfo
+		checkUserParticipationFunc = originalCheck
+		startSummaryWatchFunc = originalStartWatch
+	}()
+
+	getUserInfoFunc = func(string) (*UserInfo, error) {
+		return &UserInfo{PhoneNumbers: []string{"100"}}, nil
+	}
+	checkUserParticipationFunc = func(string, []string) (bool, error) {
+		return true, nil
+	}
+	startSummaryWatchFunc = func(uniqueID, username string) summary.WatchStartResult {
+		return summary.WatchAlreadyActive
+	}
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("JWT_PAYLOAD", jwtv5.MapClaims{"id": "alice"})
+		c.Next()
+	})
+	router.POST("/summary/watch", WatchCallSummary)
+
+	w := httptest.NewRecorder()
+	body, _ := json.Marshal(map[string]string{"uniqueid": "abc123"})
+	req, _ := http.NewRequest("POST", "/summary/watch", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 ok, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var response map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if response["message"] != "watch already active" {
+		t.Fatalf("unexpected message: %#v", response["message"])
+	}
+}
+
+func TestWatchCallSummary_ReturnsUnavailableWhenWatcherIsMisconfigured(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store.UserSessionInit()
+	store.UserSessions["alice"] = &models.UserSession{Username: "alice", NethCTIToken: "token"}
+
+	configuration.Config.SatellitePgSQLHost = "test"
+	configuration.Config.SatellitePgSQLPort = "5432"
+	configuration.Config.SatellitePgSQLDB = "test"
+	configuration.Config.SatellitePgSQLUser = "test"
+
+	originalGetUserInfo := getUserInfoFunc
+	originalCheck := checkUserParticipationFunc
+	originalStartWatch := startSummaryWatchFunc
+	defer func() {
+		getUserInfoFunc = originalGetUserInfo
+		checkUserParticipationFunc = originalCheck
+		startSummaryWatchFunc = originalStartWatch
+	}()
+
+	getUserInfoFunc = func(string) (*UserInfo, error) {
+		return &UserInfo{PhoneNumbers: []string{"100"}}, nil
+	}
+	checkUserParticipationFunc = func(string, []string) (bool, error) {
+		return true, nil
+	}
+	startSummaryWatchFunc = func(uniqueID, username string) summary.WatchStartResult {
+		return summary.WatchMisconfigured
+	}
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("JWT_PAYLOAD", jwtv5.MapClaims{"id": "alice"})
+		c.Next()
+	})
+	router.POST("/summary/watch", WatchCallSummary)
+
+	w := httptest.NewRecorder()
+	body, _ := json.Marshal(map[string]string{"uniqueid": "abc123"})
+	req, _ := http.NewRequest("POST", "/summary/watch", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 ok, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var response map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if response["message"] != "watch unavailable: missing configuration" {
+		t.Fatalf("unexpected message: %#v", response["message"])
 	}
 }
 

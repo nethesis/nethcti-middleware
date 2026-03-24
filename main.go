@@ -171,6 +171,9 @@ func createRouter() *gin.Engine {
 		// Extension
 		api.GET("/extensions/:mainextension/:type", methods.GetExtensionByMainExtensionAndType)
 
+		// History
+		api.GET("/history/calls", methods.GetFilteredHistory)
+
 		// Voicemail
 		api.GET("/voicemail/list/:id", methods.ListVoicemailByID)
 

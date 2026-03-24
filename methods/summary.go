@@ -143,12 +143,23 @@ func WatchCallSummary(c *gin.Context) {
 		return
 	}
 
-	started := startSummaryWatchFunc(uniqueID, username)
-	if !started {
-		logs.Log("[INFO][SUMMARY] Watch already active or configuration missing for user " + username + " uniqueid: " + uniqueID)
+	startResult := startSummaryWatchFunc(uniqueID, username)
+	if startResult != summary.WatchStarted {
+		message := "watch unavailable"
+		switch startResult {
+		case summary.WatchAlreadyActive:
+			logs.Log("[INFO][SUMMARY] Watch already active for user " + username + " uniqueid: " + uniqueID)
+			message = "watch already active"
+		case summary.WatchMisconfigured:
+			logs.Log("[WARNING][SUMMARY] Watch unavailable due to missing configuration for user " + username + " uniqueid: " + uniqueID)
+			message = "watch unavailable: missing configuration"
+		default:
+			logs.Log("[WARNING][SUMMARY] Watch unavailable due to invalid input for user " + username + " uniqueid: " + uniqueID)
+			message = "watch unavailable"
+		}
 		c.JSON(http.StatusOK, structs.Map(models.StatusOK{
 			Code:    http.StatusOK,
-			Message: "watch already active or unavailable",
+			Message: message,
 			Data:    nil,
 		}))
 		return

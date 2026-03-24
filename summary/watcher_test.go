@@ -67,7 +67,7 @@ func TestStartSummaryWatchBroadcastsAndStops(t *testing.T) {
 		ch <- msg
 	}
 
-	if !StartSummaryWatch("abc123", "alice") {
+	if StartSummaryWatch("abc123", "alice") != WatchStarted {
 		t.Fatalf("expected watcher to start")
 	}
 
@@ -125,15 +125,15 @@ func TestStartSummaryWatchIsIdempotent(t *testing.T) {
 	}
 	notifySummaryFunc = func(msg SummaryMessage) {}
 
-	if !StartSummaryWatch("dup123", "alice") {
+	if StartSummaryWatch("dup123", "alice") != WatchStarted {
 		t.Fatalf("expected watcher to start")
 	}
 
-	if StartSummaryWatch("dup123", "alice") {
+	if StartSummaryWatch("dup123", "alice") != WatchAlreadyActive {
 		t.Fatalf("expected duplicate watcher to be rejected")
 	}
 
-	if !StartSummaryWatch("dup123", "bob") {
+	if StartSummaryWatch("dup123", "bob") != WatchStarted {
 		t.Fatalf("expected same uniqueid for another user to be allowed")
 	}
 
@@ -189,7 +189,7 @@ func TestStartSummaryWatchPollsImmediately(t *testing.T) {
 		ch <- msg
 	}
 
-	if !StartSummaryWatch("instant123", "alice") {
+	if StartSummaryWatch("instant123", "alice") != WatchStarted {
 		t.Fatalf("expected watcher to start")
 	}
 
@@ -251,7 +251,7 @@ func TestStartSummaryWatchStopsWhenSummaryCannotBeProduced(t *testing.T) {
 		notified = true
 	}
 
-	if !StartSummaryWatch("silent123", "alice") {
+	if StartSummaryWatch("silent123", "alice") != WatchStarted {
 		t.Fatalf("expected watcher to start")
 	}
 

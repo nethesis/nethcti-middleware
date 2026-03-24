@@ -36,6 +36,15 @@ type watcher struct {
 	active map[string]context.CancelFunc
 }
 
+type WatchStartResult string
+
+const (
+	WatchStarted              WatchStartResult = "started"
+	WatchAlreadyActive        WatchStartResult = "already_active"
+	WatchMisconfigured        WatchStartResult = "misconfigured"
+	WatchInvalidInput         WatchStartResult = "invalid_input"
+)
+
 var summaryWatcher = &watcher{active: make(map[string]context.CancelFunc)}
 
 var fetchSummaryFunc = fetchSummaryFromDB
@@ -55,17 +64,17 @@ func buildWatchKey(uniqueID, username string) string {
 }
 
 // StartSummaryWatch registers a watcher for the given user and unique ID.
-// It returns true if a new watcher was started, false if already active or misconfigured.
-func StartSummaryWatch(uniqueID, username string) bool {
+// It returns a result that distinguishes whether the watcher started, was already active, or could not start.
+func StartSummaryWatch(uniqueID, username string) WatchStartResult {
 	cleanUniqueID := strings.TrimSpace(uniqueID)
 	cleanUsername := strings.TrimSpace(username)
 	if cleanUniqueID == "" || cleanUsername == "" {
-		return false
+		return WatchInvalidInput
 	}
 
 	if !IsSatelliteDBConfigured() {
 		logs.Log("[ERROR][SUMMARY] Satellite DB configuration missing; cannot start watcher")
-		return false
+		return WatchMisconfigured
 	}
 
 	watchKey := buildWatchKey(cleanUniqueID, cleanUsername)
@@ -73,7 +82,7 @@ func StartSummaryWatch(uniqueID, username string) bool {
 	summaryWatcher.mutex.Lock()
 	if _, exists := summaryWatcher.active[watchKey]; exists {
 		summaryWatcher.mutex.Unlock()
-		return false
+		return WatchAlreadyActive
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), summaryWatchTimeout)
@@ -81,7 +90,7 @@ func StartSummaryWatch(uniqueID, username string) bool {
 	summaryWatcher.mutex.Unlock()
 
 	go summaryWatcher.watch(ctx, cleanUniqueID, cleanUsername)
-	return true
+	return WatchStarted
 }
 
 // IsSatelliteDBConfigured checks whether the satellite DB configuration is present.
