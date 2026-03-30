@@ -45,6 +45,8 @@ components:
     LoginResponse:
       type: object
       properties:
+        code:
+          type: integer
         expire:
           type: string
           format: date-time
@@ -55,27 +57,95 @@ components:
     ErrorResponse:
       type: object
       properties:
+        code:
+          type: integer
         message:
           type: string
+        data:
+          nullable: true
         error:
           type: string
 
     TwoFAStatus:
       type: object
       properties:
-        enabled:
+        status:
           type: boolean
-        method:
-          type: string
-          enum: [totp]
 
     QRCodeResponse:
       type: object
       properties:
-        qr_code:
+        code:
+          type: integer
+        message:
           type: string
-          format: byte
-          description: Base64-encoded QR code image
+        data:
+          type: object
+          properties:
+            url:
+              type: string
+              description: otpauth URL to generate the QR code client-side
+            key:
+              type: string
+              description: Shared TOTP secret generated for the user
+
+    VerifyOTPRequest:
+      type: object
+      required:
+        - username
+        - otp
+      properties:
+        username:
+          type: string
+        otp:
+          type: string
+          description: TOTP code or recovery code
+
+    VerifyOTPResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+        message:
+          type: string
+        data:
+          type: object
+          properties:
+            token:
+              type: string
+            expire:
+              type: string
+              format: date-time
+
+    Disable2FARequest:
+      type: object
+      required:
+        - password
+      properties:
+        username:
+          type: string
+          description: Accepted but ignored by the handler; the authenticated user is used
+        password:
+          type: string
+          format: password
+
+    Disable2FAResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+        message:
+          type: string
+        data:
+          nullable: true
+
+    RecoveryCodesResponse:
+      type: object
+      properties:
+        codes:
+          type: array
+          items:
+            type: string
 
     TokenResponse:
       type: object
@@ -112,6 +182,249 @@ components:
             type: string
           description: List of error messages encountered during import
 
+    ReloadProfilesResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+        message:
+          type: string
+        data:
+          type: object
+          additionalProperties: true
+
+    ExtensionLookupResponse:
+      type: object
+      properties:
+        username:
+          type: string
+        mainextension:
+          type: string
+        type:
+          type: string
+        extension:
+          type: string
+
+    ExtensionLookupErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+        mainextension:
+          type: string
+        type:
+          type: string
+
+    VoicemailListResponse:
+      type: object
+      properties:
+        count:
+          type: integer
+        rows:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+
+    SummaryWatchRequest:
+      type: object
+      required:
+        - uniqueid
+      properties:
+        uniqueid:
+          type: string
+          description: Unique ID of the call to watch
+
+    SummaryWatchResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+        message:
+          type: string
+        data:
+          nullable: true
+
+    SummaryUpdateRequest:
+      type: object
+      required:
+        - summary
+      properties:
+        summary:
+          type: string
+          description: Summary text to store for the call
+
+    SummaryListRequest:
+      type: object
+      required:
+        - uniqueids
+      properties:
+        uniqueids:
+          type: array
+          items:
+            type: string
+
+    SummaryListItem:
+      type: object
+      properties:
+        uniqueid:
+          type: string
+        state:
+          type: string
+        has_transcription:
+          type: boolean
+        has_summary:
+          type: boolean
+        updated_at:
+          type: string
+          format: date-time
+          nullable: true
+      required:
+        - uniqueid
+        - state
+        - has_transcription
+        - has_summary
+        - updated_at
+
+    SummaryListNotFoundItem:
+      type: object
+      properties:
+        uniqueid:
+          type: string
+        error:
+          type: string
+          enum: [not_found]
+      required:
+        - uniqueid
+        - error
+
+    SummaryListResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+        message:
+          type: string
+        data:
+          type: array
+          items:
+            oneOf:
+              - $ref: '#/components/schemas/SummaryListItem'
+              - $ref: '#/components/schemas/SummaryListNotFoundItem'
+
+    TranscriptionResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+        message:
+          type: string
+        data:
+          type: object
+          properties:
+            uniqueid:
+              type: string
+            transcription:
+              type: string
+            src:
+              type: string
+            cnum:
+              type: string
+            cnam:
+              type: string
+            company:
+              type: string
+            ccompany:
+              type: string
+            dst_company:
+              type: string
+            dst_cnam:
+              type: string
+            dst:
+              type: string
+            call_timestamp:
+              type: string
+              format: date-time
+              nullable: true
+            created_at:
+              type: string
+              format: date-time
+              nullable: true
+
+    SummaryResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+        message:
+          type: string
+        data:
+          type: object
+          properties:
+            uniqueid:
+              type: string
+            summary:
+              type: string
+            sentiment:
+              type: integer
+              nullable: true
+            state:
+              type: string
+            src:
+              type: string
+            dst:
+              type: string
+            cnam:
+              type: string
+            company:
+              type: string
+            dst_company:
+              type: string
+            dst_cnam:
+              type: string
+            call_timestamp:
+              type: string
+              format: date-time
+              nullable: true
+            created_at:
+              type: string
+              format: date-time
+            updated_at:
+              type: string
+              format: date-time
+            deleted_at:
+              type: string
+              format: date-time
+              nullable: true
+
+    SummaryDeleteResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+        message:
+          type: string
+        data:
+          type: object
+          properties:
+            uniqueid:
+              type: string
+
+    SummaryUpdateResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+        message:
+          type: string
+        data:
+          type: object
+          properties:
+            uniqueid:
+              type: string
+            summary:
+              type: string
+
 paths:
   /login:
     post:
@@ -139,6 +452,16 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /ws/:
+    get:
+      summary: WebSocket proxy
+      operationId: wsProxy
+      tags:
+        - WebSocket
+      responses:
+        '101':
+          description: Switching Protocols
+
   /logout:
     post:
       summary: User logout
@@ -150,8 +473,368 @@ paths:
       responses:
         '200':
           description: Successful logout
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
         '401':
           description: Unauthorized
+
+  /summary/watch:
+    post:
+      summary: Watch for call summary
+      operationId: watchCallSummary
+      tags:
+        - Summary
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SummaryWatchRequest'
+      responses:
+        '202':
+          description: Watch started
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SummaryWatchResponse'
+        '200':
+          description: Watch already active or unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SummaryWatchResponse'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden - user is not part of the call
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: Service unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /summary/statuses:
+    post:
+      summary: List summary/transcription status for provided unique IDs
+      operationId: listSummaryStatus
+      tags:
+        - Summary
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SummaryListRequest'
+      responses:
+        '200':
+          description: Summary status list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SummaryListResponse'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Failed to list summaries
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: Service unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /transcripts/{uniqueid}:
+    get:
+      summary: Get transcription by unique ID
+      operationId: getTranscriptionByUniqueId
+      tags:
+        - Transcripts
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: uniqueid
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Transcription retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TranscriptionResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Failed to fetch transcription
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: Service unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /summary/{uniqueid}:
+    head:
+      summary: Check summary existence by unique ID
+      operationId: headSummaryByUniqueId
+      tags:
+        - Summary
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: uniqueid
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Summary exists
+        '204':
+          description: Summary not ready yet
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden
+        '404':
+          description: Uniqueid not found
+        '500':
+          description: Failed to fetch summary state
+        '503':
+          description: Service unavailable
+    get:
+      summary: Get summary by unique ID
+      operationId: getSummaryByUniqueId
+      tags:
+        - Summary
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: uniqueid
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Summary retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SummaryResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '400':
+          description: Missing uniqueid
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Failed to fetch summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: Service unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    put:
+      summary: Update summary by unique ID
+      operationId: updateSummaryByUniqueId
+      tags:
+        - Summary
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: uniqueid
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SummaryUpdateRequest'
+      responses:
+        '200':
+          description: Summary updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SummaryUpdateResponse'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Failed to update summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: Service unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      summary: Delete summary by unique ID
+      operationId: deleteSummaryByUniqueId
+      tags:
+        - Summary
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: uniqueid
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Summary deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SummaryDeleteResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '400':
+          description: Missing uniqueid
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Failed to delete summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: Service unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /2fa/status:
     get:
@@ -170,6 +853,10 @@ paths:
                 $ref: '#/components/schemas/TwoFAStatus'
         '401':
           description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /2fa/qr-code:
     get:
@@ -181,13 +868,23 @@ paths:
         - bearerAuth: []
       responses:
         '200':
-          description: QR code image
+          description: TOTP setup payload
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/QRCodeResponse'
+        '400':
+          description: Failed to generate or persist the user secret
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '401':
           description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /2fa/verify-otp:
     post:
@@ -202,20 +899,38 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              required:
-                - otp_code
-              properties:
-                otp_code:
-                  type: string
-                  description: 6-digit TOTP code
+              $ref: '#/components/schemas/VerifyOTPRequest'
       responses:
         '200':
           description: OTP verified successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VerifyOTPResponse'
         '400':
           description: Invalid OTP
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '401':
           description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: User secret not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Failed to generate refreshed JWT
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /2fa/disable:
     post:
@@ -225,11 +940,31 @@ paths:
         - Two-Factor Authentication
       security:
         - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Disable2FARequest'
       responses:
         '200':
           description: 2FA disabled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Disable2FAResponse'
+        '400':
+          description: Invalid request or failed to revoke 2FA
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '401':
           description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /2fa/recovery-codes:
     post:
@@ -245,14 +980,13 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  recovery_codes:
-                    type: array
-                    items:
-                      type: string
+                $ref: '#/components/schemas/RecoveryCodesResponse'
         '401':
           description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /tokens/persistent/{audience}:
     post:
@@ -285,6 +1019,16 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         '401':
           description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Failed to generate or persist the token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
     get:
       summary: Check persistent integration token existence
       operationId: checkPersistentToken
@@ -315,6 +1059,10 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         '401':
           description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
     delete:
       summary: Remove persistent integration token(s)
       operationId: removePersistentToken
@@ -341,6 +1089,16 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         '401':
           description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Failed to persist token removal
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /authentication/phone_island_token_login:
     post:
@@ -370,6 +1128,16 @@ paths:
                 $ref: '#/components/schemas/TokenResponse'
         '401':
           description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Failed to generate or persist the token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /authentication/persistent_token_remove:
     post:
@@ -397,6 +1165,16 @@ paths:
           description: Token(s) removed
         '401':
           description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Failed to persist token removal
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /authentication/phone_island_token_check:
     get:
@@ -416,8 +1194,12 @@ paths:
                 $ref: '#/components/schemas/TokenExistsResponse'
         '401':
           description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
-  /phonebook/import/:
+  /phonebook/import:
     post:
       summary: Import phonebook contacts for authenticated user
       operationId: importPhonebook
@@ -460,11 +1242,13 @@ paths:
               schema:
                 $ref: '#/components/schemas/PhonebookImportResponse'
         '400':
-          description: Bad request - missing file or invalid CSV
+          description: Bad request - missing file, invalid CSV, or invalid authenticated user
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                oneOf:
+                  - $ref: '#/components/schemas/ErrorResponse'
+                  - $ref: '#/components/schemas/PhonebookImportResponse'
         '401':
           description: Unauthorized - invalid or missing JWT
           content:
@@ -544,28 +1328,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  message:
-                    type: string
-                    example: "phonebook import completed"
-                  total_rows:
-                    type: integer
-                    example: 10
-                  imported_rows:
-                    type: integer
-                    example: 9
-                  failed_rows:
-                    type: integer
-                    example: 0
-                  skipped_rows:
-                    type: integer
-                    example: 1
-                  error_messages:
-                    type: array
-                    items:
-                      type: string
-                    example: ["Row 5: invalid type 'business' (must be 'private' or 'public')"]
+                $ref: '#/components/schemas/PhonebookImportResponse'
         '400':
           description: Bad request - missing username field or invalid CSV
           content:
@@ -602,17 +1365,6 @@ paths:
                   message:
                     type: string
                     example: "access denied: IP not in allowed list"
-        '404':
-          description: Not found - target user does not exist
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  message:
-                    type: string
-                    example: "target user not found"
-
   /admin/reload/profiles:
     post:
       summary: Reload profiles and users configuration (Super Admin only)
@@ -631,16 +1383,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  code:
-                    type: integer
-                    example: 200
-                  message:
-                    type: string
-                    example: "profiles reloaded successfully"
-                  data:
-                    type: empty object
+                $ref: '#/components/schemas/ReloadProfilesResponse'
 
               examples:
                 success:
@@ -648,24 +1391,13 @@ paths:
                   value:
                     code: 200
                     message: "profiles reloaded successfully"
-                    data:
-                      trigger: "api"
+                    data: {}
         '500':
           description: Internal server error when reload fails
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  code:
-                    type: integer
-                    example: 500
-                  message:
-                    type: string
-                    example: "failed to reload profiles"
-                  data:
-                    type: string
-                    description: Error details
+                $ref: '#/components/schemas/ErrorResponse'
               examples:
                 failure:
                   summary: Failure example
@@ -674,14 +1406,112 @@ paths:
                     message: "failed to reload profiles"
                     data: "parse profiles: invalid character 'i'"
 
+  /extensions/{mainextension}/{type}:
+    get:
+      summary: Resolve endpoint extension by main extension and endpoint type
+      operationId: getExtensionByMainExtensionAndType
+      tags:
+        - Extensions
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: mainextension
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: type
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Endpoint type to resolve, for example `nethlink`
+      responses:
+        '200':
+          description: Extension resolved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExtensionLookupResponse'
+        '400':
+          description: Missing main extension or type
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExtensionLookupErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Matching extension not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExtensionLookupErrorResponse'
+
+  /voicemail/list/{id}:
+    get:
+      summary: Get voicemail by numeric ID or proxy legacy list selectors
+      operationId: listVoicemailById
+      tags:
+        - Voicemail
+      description: |
+        When `id` is numeric, the middleware fetches the legacy voicemail list and filters it locally.
+        When `id` is a legacy selector such as `all`, `old`, or `inbox`, the request is transparently
+        proxied to the legacy V1 API path.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Voicemail list or filtered voicemail item
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoicemailListResponse'
+        '400':
+          description: Missing voicemail id
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '502':
+          description: Failed to fetch the legacy voicemail list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
 tags:
   - name: Authentication
     description: Login and session management
+  - name: Transcripts
+    description: Transcript retrieval endpoints
+  - name: Summary
+    description: Summary retrieval, updates, and watch/status endpoints
   - name: Two-Factor Authentication
     description: TOTP-based 2FA management
+  - name: Integration Tokens
+    description: Long-lived integration tokens and legacy compatibility endpoints
   - name: Phonebook
     description: Phonebook management and CSV import
-  - name: Phone Island Integration
-    description: Phone Island token and authentication
+  - name: Extensions
+    description: Endpoint resolution helpers
+  - name: Voicemail
+    description: Voicemail retrieval and legacy proxy behavior
   - name: Administration
     description: Administrative operations requiring super admin authentication

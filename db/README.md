@@ -14,6 +14,13 @@ This file briefly documents how the `db` package initializes the MariaDB connect
 -- `NETHVOICE_MIDDLEWARE_MARIADB_USER` (default: `root`)
 -- `NETHVOICE_MIDDLEWARE_MARIADB_PASSWORD` (default: `root` in local/test)
 -- `NETHVOICE_MIDDLEWARE_MARIADB_DATABASE` (default: `nethcti3`)
+
+Satellite DB connection (transcripts, PostgreSQL):
+-- `SATELLITE_PGSQL_HOST` (default: `localhost`)
+-- `SATELLITE_PGSQL_PORT` (default: `5432` when host is set)
+-- `SATELLITE_PGSQL_USER` (default: `satellite` when host is set)
+-- `SATELLITE_PGSQL_PASSWORD`
+-- `SATELLITE_PGSQL_DB` (default: `satellite` when host is set)
 ## Schema Migrations & Upgrades
 
 If the database already exists when the application starts, `db.Init()` will run the embedded `db/upgrade.sql` automatically. The statements in `upgrade.sql` must be idempotent and safe to re-run.
