@@ -54,6 +54,9 @@ type Configuration struct {
 	SuperAdminToken      string   `json:"super_admin_token"`
 	SuperAdminAllowedIPs []string `json:"super_admin_allowed_ips"`
 
+	// NethVoice secret key for FreePBX SecretKey computation
+	NethVoiceSecretKey string `json:"nethvoice_secret_key"`
+
 	// Profiles and Users configuration paths
 	ProfilesConfigPath string `json:"profiles_config_path"`
 	UsersConfigPath    string `json:"users_config_path"`
@@ -303,6 +306,9 @@ func Init() {
 		Config.SuperAdminAllowedIPs = []string{"127.0.0.0/8"}
 		logs.Log("[INFO][ENV] NETHVOICE_MIDDLEWARE_SUPER_ADMIN_ALLOW_IPS variable is not set; using default IP range 127.0.0.0/8")
 	}
+
+	// Set NethVoice secret key (used for FreePBX SecretKey computation)
+	Config.NethVoiceSecretKey = os.Getenv("NETHVOICESECRETKEY")
 
 	// Set authorization config paths
 	if os.Getenv("AUTH_PROFILES_PATH") != "" {
