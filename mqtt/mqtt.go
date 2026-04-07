@@ -6,6 +6,7 @@
 package mqtt
 
 import (
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -149,4 +150,32 @@ func Close() {
 	if websocketChannel != nil {
 		close(websocketChannel)
 	}
+}
+
+// Publish sends a message to an MQTT topic.
+func Publish(topic string, payload interface{}) error {
+	if client == nil || !client.IsConnected() {
+		return fmt.Errorf("MQTT client not connected")
+	}
+
+	data := []byte{}
+	switch v := payload.(type) {
+	case []byte:
+		data = v
+	case string:
+		data = []byte(v)
+	default:
+		encoded, err := json.Marshal(payload)
+		if err != nil {
+			return err
+		}
+		data = encoded
+	}
+
+	token := client.Publish(topic, 0, false, data)
+	if token.Wait() && token.Error() != nil {
+		return token.Error()
+	}
+
+	return nil
 }

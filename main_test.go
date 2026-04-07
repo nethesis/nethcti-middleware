@@ -7,9 +7,12 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -32,6 +35,7 @@ import (
 // Global variables for test server URLs and mock server
 var testServerURL string
 var mockNetCTI *httptest.Server
+var restoreBatchInsert func()
 
 // TestMain sets up the test environment once for all tests
 func TestMain(m *testing.M) {
@@ -76,6 +80,13 @@ func setupTestEnvironment() {
 	// Create test secrets directory
 	os.MkdirAll(os.Getenv("NETHVOICE_MIDDLEWARE_SECRETS_DIR"), 0700)
 
+	restoreBatchInsert = store.SetBatchInsertPhonebookEntriesFuncForTest(func(_ context.Context, entries []*store.PhonebookEntry) (int, int, error) {
+		if len(entries) == 0 {
+			return 0, 0, nil
+		}
+		return len(entries), 0, nil
+	})
+
 	// Start the actual main server in a goroutine
 	go func() {
 		main()
@@ -84,8 +95,26 @@ func setupTestEnvironment() {
 	// Set test server URL
 	testServerURL = "http://127.0.0.1:8899"
 
-	// Give server time to fully start
-	time.Sleep(2 * time.Second)
+	// Wait for server to fully start
+	if err := waitForServer(testServerURL, 35*time.Second); err != nil {
+		_, _ = os.Stderr.WriteString("test server failed to start: " + err.Error() + "\n")
+		os.Exit(1)
+	}
+}
+
+func waitForServer(url string, timeout time.Duration) error {
+	address := strings.TrimPrefix(url, "http://")
+	address = strings.TrimPrefix(address, "https://")
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		conn, err := net.DialTimeout("tcp", address, 300*time.Millisecond)
+		if err == nil {
+			_ = conn.Close()
+			return nil
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	return fmt.Errorf("timeout waiting for %s", address)
 }
 
 // Mock NetCTI server for testing
@@ -125,6 +154,9 @@ func mockNetCTIServer() *httptest.Server {
 func cleanupTestEnvironment() {
 	if mockNetCTI != nil {
 		mockNetCTI.Close()
+	}
+	if restoreBatchInsert != nil {
+		restoreBatchInsert()
 	}
 	os.RemoveAll(os.Getenv("NETHVOICE_MIDDLEWARE_SECRETS_DIR"))
 

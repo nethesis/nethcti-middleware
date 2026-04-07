@@ -17,12 +17,14 @@ import (
 
 // UserConnection represents a WebSocket connection with user data
 type UserConnection struct {
-	Conn                 *websocket.Conn
-	Username             string
-	DisplayName          string
-	PhoneNumbers         []string
-	AccessKeyId          string
-	TranscriptionEnabled bool
+	Conn                  *websocket.Conn
+	Username              string
+	DisplayName           string
+	PhoneNumbers          []string
+	AccessKeyId           string
+	TranscriptionEnabled  bool
+	TranscriptionUniqueID string
+	writeMutex            sync.Mutex
 }
 
 // ConnectionManager manages all active WebSocket connections
@@ -175,7 +177,79 @@ func (cm *ConnectionManager) BroadcastMQTTMessage(messageType string, data inter
 			finalMsg := append([]byte("42"), socketIOPayload...)
 
 			// Send message (ignore errors, connection will be cleaned up elsewhere)
-			conn.WriteMessage(websocket.TextMessage, finalMsg)
+			if err := cm.WriteMessage(conn, websocket.TextMessage, finalMsg); err != nil {
+				logs.Log(fmt.Sprintf("[ERROR][BROADCAST] Failed to write websocket message: %v", err))
+			}
 		}(conn, user)
+	}
+}
+
+// WriteMessage serializes websocket writes for a connection to avoid concurrent writes.
+func (cm *ConnectionManager) WriteMessage(conn *websocket.Conn, messageType int, data []byte) error {
+	if user, exists := cm.GetConnection(conn); exists {
+		user.writeMutex.Lock()
+		defer user.writeMutex.Unlock()
+	}
+	return conn.WriteMessage(messageType, data)
+}
+
+// BroadcastSummaryMessage sends a summary update to all connected clients.
+func BroadcastSummaryMessage(message interface{}) {
+	if summaryMsg, ok := message.(map[string]interface{}); ok {
+		username, _ := summaryMsg["username"].(string)
+		if username != "" {
+			connManager.BroadcastSummaryMessageToUser(username, sanitizeSummaryPayload(summaryMsg))
+			return
+		}
+	}
+	if summaryMsg, ok := message.(SummaryTarget); ok {
+		connManager.BroadcastSummaryMessageToUser(summaryMsg.TargetUsername(), message)
+		return
+	}
+	connManager.BroadcastMQTTMessage("satellite/summary", message)
+}
+
+func sanitizeSummaryPayload(payload map[string]interface{}) map[string]interface{} {
+	result := make(map[string]interface{}, len(payload))
+	for key, value := range payload {
+		if key == "username" {
+			continue
+		}
+		result[key] = value
+	}
+	return result
+}
+
+type SummaryTarget interface {
+	TargetUsername() string
+}
+
+// BroadcastSummaryMessageToUser sends a summary update only to the target user's connections.
+func (cm *ConnectionManager) BroadcastSummaryMessageToUser(username string, data interface{}) {
+	cleanUsername := username
+	if cleanUsername == "" {
+		return
+	}
+
+	cm.mutex.RLock()
+	defer cm.mutex.RUnlock()
+
+	for conn, user := range cm.connections {
+		if user.Username != cleanUsername {
+			continue
+		}
+
+		go func(conn *websocket.Conn) {
+			socketIOPayload, err := json.Marshal([]interface{}{"satellite/summary", data})
+			if err != nil {
+				logs.Log(fmt.Sprintf("[ERROR][BROADCAST] Failed to marshal summary message: %v", err))
+				return
+			}
+
+			finalMsg := append([]byte("42"), socketIOPayload...)
+			if err := cm.WriteMessage(conn, websocket.TextMessage, finalMsg); err != nil {
+				logs.Log(fmt.Sprintf("[ERROR][BROADCAST] Failed to write summary websocket message: %v", err))
+			}
+		}(conn)
 	}
 }

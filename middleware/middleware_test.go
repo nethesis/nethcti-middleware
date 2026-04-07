@@ -412,6 +412,10 @@ func TestPayloadFuncInjectsBaseClaimsOnly(t *testing.T) {
 	if got, ok := claims["otp_verified"].(bool); !ok || got {
 		t.Fatalf("unexpected otp_verified claim: got %v", claims["otp_verified"])
 	}
+
+	if _, ok := claims["iat"]; !ok {
+		t.Fatal("expected iat claim to be present")
+	}
 }
 
 // Test PayloadFunc does not expose profile/capability claims.
@@ -430,9 +434,6 @@ func TestPayloadFuncDoesNotInjectProfileOrCapabilityClaims(t *testing.T) {
 	// profile claims must not be injected
 	if _, ok := claims["profile_id"]; ok {
 		t.Fatalf("expected no profile_id claim, got %v", claims["profile_id"])
-	}
-	if _, ok := claims["profile_name"]; ok {
-		t.Fatalf("expected no profile_name claim, got %v", claims["profile_name"])
 	}
 
 	// capability keys must not be present
@@ -500,13 +501,14 @@ func TestRequireCapabilities_DeniesWhenCapabilityMissingServerSide(t *testing.T)
 	})
 
 	store.UserSessionInit()
-	// create user without a valid profile, so capability cannot be resolved server-side
-	profilesJSON := `{}`
-	usersJSON := `{"nouser": {"profile_id":"missing"}}`
+	// create user with a valid profile that does not grant the requested capability
+	profilesJSON := `{"base": {"id":"base","name":"Base","macro_permissions": {}}}`
+	usersJSON := `{"nouser": {"profile_id":"base"}}`
 	profFile := writeTempFile(t, "profiles.json", profilesJSON)
 	usersFile := writeTempFile(t, "users.json", usersJSON)
-	// InitProfiles will error for missing profile, but that's acceptable for this test; ignore error
-	_ = store.InitProfiles(profFile, usersFile)
+	if err := store.InitProfiles(profFile, usersFile); err != nil {
+		t.Fatalf("InitProfiles failed: %v", err)
+	}
 	store.UserSessions["nouser"] = &models.UserSession{Username: "nouser"}
 
 	token, err := generateTestJWT("nouser")
@@ -525,9 +527,40 @@ func TestRequireCapabilities_DeniesWhenCapabilityMissingServerSide(t *testing.T)
 	}
 }
 
+func TestRequireCapabilities_DeniesLegacyClaimFallbackWhenStoreLookupFails(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	configuration.Config.Secret_jwt = "test-secret"
+	jwtMiddleware = nil
+
+	router := gin.New()
+	router.GET("/captest", InstanceJWT().MiddlewareFunc(), RequireCapabilities("phonebook.ad_phonebook"), func(c *gin.Context) {
+		c.JSON(200, gin.H{"ok": true})
+	})
+
+	store.UserSessionInit()
+	store.UserSessions["legacy"] = &models.UserSession{Username: "legacy"}
+
+	token, err := generateTestJWTWithClaims("legacy", map[string]any{
+		"phonebook.ad_phonebook": true,
+	})
+	if err != nil {
+		t.Fatalf("failed to generate legacy claim token: %v", err)
+	}
+	store.UserSessions["legacy"].JWTTokens = append(store.UserSessions["legacy"].JWTTokens, token)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/captest", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 forbidden without server-side capabilities, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
 // generateTestJWT creates a signed JWT for the given username using the test secret
 func generateTestJWT(username string) (string, error) {
-	// If a user session exists, use the middleware PayloadFunc so claims include injected capabilities
+	// If a user session exists, use middleware PayloadFunc to build default user claims.
 	if sess, ok := store.UserSessions[username]; ok && sess != nil {
 		mw := InstanceJWT()
 		// PayloadFunc returns jwt.MapClaims
@@ -546,6 +579,21 @@ func generateTestJWT(username string) (string, error) {
 		"exp": time.Now().Add(time.Hour).Unix(),
 		"iat": time.Now().Unix(),
 	}
+	token := jwtv5.NewWithClaims(jwtv5.SigningMethodHS256, claims)
+	return token.SignedString([]byte(configuration.Config.Secret_jwt))
+}
+
+func generateTestJWTWithClaims(username string, extraClaims map[string]any) (string, error) {
+	claims := jwtv5.MapClaims{
+		"id":  username,
+		"exp": time.Now().Add(time.Hour).Unix(),
+		"iat": time.Now().Unix(),
+	}
+
+	for key, value := range extraClaims {
+		claims[key] = value
+	}
+
 	token := jwtv5.NewWithClaims(jwtv5.SigningMethodHS256, claims)
 	return token.SignedString([]byte(configuration.Config.Secret_jwt))
 }

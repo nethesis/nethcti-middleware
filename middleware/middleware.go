@@ -176,19 +176,14 @@ func InitJWT() *jwt.GinJWTMiddleware {
 		PayloadFunc: func(data any) gojwt.MapClaims {
 			// read current user
 			if userSession, ok := data.(*models.UserSession); ok {
-				// check if user require 2fa
-				status, _ := methods.GetUserStatus(userSession.Username)
-
-				// create base claims map
-				// Note: otp_verified is always false on initial login
-				// It will be set to true only after OTP verification via regenerateUserToken
-				claims := gojwt.MapClaims{
-					identityKey:    userSession.Username,
-					"2fa":          status == "1",
-					"otp_verified": false,
-				}
-
-				return claims
+				// Note: otp_verified is always false on initial login.
+				// It will be set to true only after OTP verification via regenerateUserToken.
+				claims := methods.BuildUserJWTClaims(methods.UserJWTOptions{
+					Username:    userSession.Username,
+					OTPVerified: false,
+					IssuedAt:    time.Now(),
+				})
+				return gojwt.MapClaims(claims)
 			}
 
 			// return empty claims map
@@ -402,7 +397,7 @@ func RequireSuperAdmin() gin.HandlerFunc {
 			return
 		}
 
-		logs.Log(fmt.Sprintf("[INFO][AUTH][INTERNAL] super admin request authorized from %s. %s %s", clientIP, c.Request.Method, c.Request.URL.Path))
+		logs.Log(fmt.Sprintf("[INFO][INTERNAL] super admin request authorized from %s. %s %s", clientIP, c.Request.Method, c.Request.URL.Path))
 		c.Next()
 	}
 }
