@@ -174,9 +174,6 @@ func createRouter() *gin.Engine {
 		// Phonebook
 		api.POST("/phonebook/import", middleware.RequireCapabilities("phonebook.ad_phonebook"), methods.ImportPhonebookCSV)
 
-		// Extension
-		api.GET("/extensions/:mainextension/:type", methods.GetExtensionByMainExtensionAndType)
-
 		// History
 		api.GET("/history/calls", methods.GetFilteredHistory)
 
