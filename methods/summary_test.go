@@ -34,10 +34,12 @@ func TestWatchCallSummary_StartsUserScopedWatch(t *testing.T) {
 
 	originalGetUserInfo := getUserInfoFunc
 	originalCheck := checkUserParticipationFunc
+	originalCheckByLinkedID := checkUserParticipationByLinkedIDFunc
 	originalStartWatch := startSummaryWatchFunc
 	defer func() {
 		getUserInfoFunc = originalGetUserInfo
 		checkUserParticipationFunc = originalCheck
+		checkUserParticipationByLinkedIDFunc = originalCheckByLinkedID
 		startSummaryWatchFunc = originalStartWatch
 	}()
 
@@ -45,6 +47,9 @@ func TestWatchCallSummary_StartsUserScopedWatch(t *testing.T) {
 		return &UserInfo{PhoneNumbers: []string{"100"}}, nil
 	}
 	checkUserParticipationFunc = func(string, []string) (bool, error) {
+		return true, nil
+	}
+	checkUserParticipationByLinkedIDFunc = func(string, []string) (bool, error) {
 		return true, nil
 	}
 
@@ -98,10 +103,12 @@ func TestWatchCallSummary_RejectsUserOutsideCall(t *testing.T) {
 
 	originalGetUserInfo := getUserInfoFunc
 	originalCheck := checkUserParticipationFunc
+	originalCheckByLinkedID := checkUserParticipationByLinkedIDFunc
 	originalStartWatch := startSummaryWatchFunc
 	defer func() {
 		getUserInfoFunc = originalGetUserInfo
 		checkUserParticipationFunc = originalCheck
+		checkUserParticipationByLinkedIDFunc = originalCheckByLinkedID
 		startSummaryWatchFunc = originalStartWatch
 	}()
 
@@ -109,6 +116,9 @@ func TestWatchCallSummary_RejectsUserOutsideCall(t *testing.T) {
 		return &UserInfo{PhoneNumbers: []string{"100"}}, nil
 	}
 	checkUserParticipationFunc = func(string, []string) (bool, error) {
+		return false, nil
+	}
+	checkUserParticipationByLinkedIDFunc = func(string, []string) (bool, error) {
 		return false, nil
 	}
 
@@ -151,10 +161,12 @@ func TestWatchCallSummary_ReturnsAlreadyActiveWhenWatcherExists(t *testing.T) {
 
 	originalGetUserInfo := getUserInfoFunc
 	originalCheck := checkUserParticipationFunc
+	originalCheckByLinkedID := checkUserParticipationByLinkedIDFunc
 	originalStartWatch := startSummaryWatchFunc
 	defer func() {
 		getUserInfoFunc = originalGetUserInfo
 		checkUserParticipationFunc = originalCheck
+		checkUserParticipationByLinkedIDFunc = originalCheckByLinkedID
 		startSummaryWatchFunc = originalStartWatch
 	}()
 
@@ -162,6 +174,9 @@ func TestWatchCallSummary_ReturnsAlreadyActiveWhenWatcherExists(t *testing.T) {
 		return &UserInfo{PhoneNumbers: []string{"100"}}, nil
 	}
 	checkUserParticipationFunc = func(string, []string) (bool, error) {
+		return true, nil
+	}
+	checkUserParticipationByLinkedIDFunc = func(string, []string) (bool, error) {
 		return true, nil
 	}
 	startSummaryWatchFunc = func(uniqueID, username string) summary.WatchStartResult {
@@ -206,10 +221,12 @@ func TestWatchCallSummary_ReturnsUnavailableWhenWatcherIsMisconfigured(t *testin
 
 	originalGetUserInfo := getUserInfoFunc
 	originalCheck := checkUserParticipationFunc
+	originalCheckByLinkedID := checkUserParticipationByLinkedIDFunc
 	originalStartWatch := startSummaryWatchFunc
 	defer func() {
 		getUserInfoFunc = originalGetUserInfo
 		checkUserParticipationFunc = originalCheck
+		checkUserParticipationByLinkedIDFunc = originalCheckByLinkedID
 		startSummaryWatchFunc = originalStartWatch
 	}()
 
@@ -217,6 +234,9 @@ func TestWatchCallSummary_ReturnsUnavailableWhenWatcherIsMisconfigured(t *testin
 		return &UserInfo{PhoneNumbers: []string{"100"}}, nil
 	}
 	checkUserParticipationFunc = func(string, []string) (bool, error) {
+		return true, nil
+	}
+	checkUserParticipationByLinkedIDFunc = func(string, []string) (bool, error) {
 		return true, nil
 	}
 	startSummaryWatchFunc = func(uniqueID, username string) summary.WatchStartResult {
@@ -261,10 +281,12 @@ func TestCheckSummaryByUniqueID_NotFound(t *testing.T) {
 
 	originalGetUserInfo := getUserInfoFunc
 	originalCheck := checkUserParticipationFunc
+	originalCheckByLinkedID := checkUserParticipationByLinkedIDFunc
 	originalFetch := fetchSummaryStateFunc
 	defer func() {
 		getUserInfoFunc = originalGetUserInfo
 		checkUserParticipationFunc = originalCheck
+		checkUserParticipationByLinkedIDFunc = originalCheckByLinkedID
 		fetchSummaryStateFunc = originalFetch
 	}()
 
@@ -272,6 +294,9 @@ func TestCheckSummaryByUniqueID_NotFound(t *testing.T) {
 		return &UserInfo{PhoneNumbers: []string{"100"}}, nil
 	}
 	checkUserParticipationFunc = func(string, []string) (bool, error) {
+		return true, nil
+	}
+	checkUserParticipationByLinkedIDFunc = func(string, []string) (bool, error) {
 		return true, nil
 	}
 	fetchSummaryStateFunc = func(string) (string, bool, bool, bool, error) {
@@ -306,10 +331,12 @@ func TestCheckSummaryByUniqueID_ReturnsNoContentWhenSummaryIsStillProcessing(t *
 
 	originalGetUserInfo := getUserInfoFunc
 	originalCheck := checkUserParticipationFunc
+	originalCheckByLinkedID := checkUserParticipationByLinkedIDFunc
 	originalFetch := fetchSummaryStateFunc
 	defer func() {
 		getUserInfoFunc = originalGetUserInfo
 		checkUserParticipationFunc = originalCheck
+		checkUserParticipationByLinkedIDFunc = originalCheckByLinkedID
 		fetchSummaryStateFunc = originalFetch
 	}()
 
@@ -317,6 +344,9 @@ func TestCheckSummaryByUniqueID_ReturnsNoContentWhenSummaryIsStillProcessing(t *
 		return &UserInfo{PhoneNumbers: []string{"100"}}, nil
 	}
 	checkUserParticipationFunc = func(string, []string) (bool, error) {
+		return true, nil
+	}
+	checkUserParticipationByLinkedIDFunc = func(string, []string) (bool, error) {
 		return true, nil
 	}
 	fetchSummaryStateFunc = func(string) (string, bool, bool, bool, error) {
@@ -351,10 +381,12 @@ func TestCheckSummaryByUniqueID_ReturnsNoContentWhenSummaryIsSummarizing(t *test
 
 	originalGetUserInfo := getUserInfoFunc
 	originalCheck := checkUserParticipationFunc
+	originalCheckByLinkedID := checkUserParticipationByLinkedIDFunc
 	originalFetch := fetchSummaryStateFunc
 	defer func() {
 		getUserInfoFunc = originalGetUserInfo
 		checkUserParticipationFunc = originalCheck
+		checkUserParticipationByLinkedIDFunc = originalCheckByLinkedID
 		fetchSummaryStateFunc = originalFetch
 	}()
 
@@ -362,6 +394,9 @@ func TestCheckSummaryByUniqueID_ReturnsNoContentWhenSummaryIsSummarizing(t *test
 		return &UserInfo{PhoneNumbers: []string{"100"}}, nil
 	}
 	checkUserParticipationFunc = func(string, []string) (bool, error) {
+		return true, nil
+	}
+	checkUserParticipationByLinkedIDFunc = func(string, []string) (bool, error) {
 		return true, nil
 	}
 	fetchSummaryStateFunc = func(string) (string, bool, bool, bool, error) {
@@ -396,10 +431,12 @@ func TestCheckSummaryByUniqueID_ReturnsOKWhenSummaryExists(t *testing.T) {
 
 	originalGetUserInfo := getUserInfoFunc
 	originalCheck := checkUserParticipationFunc
+	originalCheckByLinkedID := checkUserParticipationByLinkedIDFunc
 	originalFetch := fetchSummaryStateFunc
 	defer func() {
 		getUserInfoFunc = originalGetUserInfo
 		checkUserParticipationFunc = originalCheck
+		checkUserParticipationByLinkedIDFunc = originalCheckByLinkedID
 		fetchSummaryStateFunc = originalFetch
 	}()
 
@@ -407,6 +444,9 @@ func TestCheckSummaryByUniqueID_ReturnsOKWhenSummaryExists(t *testing.T) {
 		return &UserInfo{PhoneNumbers: []string{"100"}}, nil
 	}
 	checkUserParticipationFunc = func(string, []string) (bool, error) {
+		return true, nil
+	}
+	checkUserParticipationByLinkedIDFunc = func(string, []string) (bool, error) {
 		return true, nil
 	}
 	fetchSummaryStateFunc = func(string) (string, bool, bool, bool, error) {
@@ -441,10 +481,12 @@ func TestCheckSummaryByUniqueID_ReturnsNotFoundWhenProcessingCompletedWithoutSum
 
 	originalGetUserInfo := getUserInfoFunc
 	originalCheck := checkUserParticipationFunc
+	originalCheckByLinkedID := checkUserParticipationByLinkedIDFunc
 	originalFetch := fetchSummaryStateFunc
 	defer func() {
 		getUserInfoFunc = originalGetUserInfo
 		checkUserParticipationFunc = originalCheck
+		checkUserParticipationByLinkedIDFunc = originalCheckByLinkedID
 		fetchSummaryStateFunc = originalFetch
 	}()
 
@@ -452,6 +494,9 @@ func TestCheckSummaryByUniqueID_ReturnsNotFoundWhenProcessingCompletedWithoutSum
 		return &UserInfo{PhoneNumbers: []string{"100"}}, nil
 	}
 	checkUserParticipationFunc = func(string, []string) (bool, error) {
+		return true, nil
+	}
+	checkUserParticipationByLinkedIDFunc = func(string, []string) (bool, error) {
 		return true, nil
 	}
 	fetchSummaryStateFunc = func(string) (string, bool, bool, bool, error) {
@@ -486,10 +531,12 @@ func TestCheckSummaryByUniqueID_ReturnsNotFoundWhenSummaryFailed(t *testing.T) {
 
 	originalGetUserInfo := getUserInfoFunc
 	originalCheck := checkUserParticipationFunc
+	originalCheckByLinkedID := checkUserParticipationByLinkedIDFunc
 	originalFetch := fetchSummaryStateFunc
 	defer func() {
 		getUserInfoFunc = originalGetUserInfo
 		checkUserParticipationFunc = originalCheck
+		checkUserParticipationByLinkedIDFunc = originalCheckByLinkedID
 		fetchSummaryStateFunc = originalFetch
 	}()
 
@@ -497,6 +544,9 @@ func TestCheckSummaryByUniqueID_ReturnsNotFoundWhenSummaryFailed(t *testing.T) {
 		return &UserInfo{PhoneNumbers: []string{"100"}}, nil
 	}
 	checkUserParticipationFunc = func(string, []string) (bool, error) {
+		return true, nil
+	}
+	checkUserParticipationByLinkedIDFunc = func(string, []string) (bool, error) {
 		return true, nil
 	}
 	fetchSummaryStateFunc = func(string) (string, bool, bool, bool, error) {
@@ -531,17 +581,24 @@ func TestListSummaryStatus_Succeeds(t *testing.T) {
 
 	originalGetUserInfo := getUserInfoFunc
 	originalCheck := checkUserParticipationFunc
+	originalCheckByLinkedID := checkUserParticipationByLinkedIDFunc
 	originalFetchList := fetchSummaryListFunc
+	originalResolve := resolveLinkedIDToUniqueIDFunc
 	defer func() {
 		getUserInfoFunc = originalGetUserInfo
 		checkUserParticipationFunc = originalCheck
+		checkUserParticipationByLinkedIDFunc = originalCheckByLinkedID
 		fetchSummaryListFunc = originalFetchList
+		resolveLinkedIDToUniqueIDFunc = originalResolve
 	}()
 
 	getUserInfoFunc = func(string) (*UserInfo, error) {
 		return &UserInfo{PhoneNumbers: []string{"100"}}, nil
 	}
 	checkUserParticipationFunc = func(string, []string) (bool, error) {
+		return true, nil
+	}
+	checkUserParticipationByLinkedIDFunc = func(string, []string) (bool, error) {
 		return true, nil
 	}
 	fetchSummaryListFunc = func([]string) ([]SummaryListItem, error) {
@@ -555,6 +612,10 @@ func TestListSummaryStatus_Succeeds(t *testing.T) {
 				UpdatedAt:        &updatedAt,
 			},
 		}, nil
+	}
+
+	resolveLinkedIDToUniqueIDFunc = func(string) (string, error) {
+		return "", nil
 	}
 
 	router := gin.New()
@@ -597,17 +658,24 @@ func TestListSummaryStatus_MixedResults(t *testing.T) {
 
 	originalGetUserInfo := getUserInfoFunc
 	originalCheck := checkUserParticipationFunc
+	originalCheckByLinkedID := checkUserParticipationByLinkedIDFunc
 	originalFetchList := fetchSummaryListFunc
+	originalResolve := resolveLinkedIDToUniqueIDFunc
 	defer func() {
 		getUserInfoFunc = originalGetUserInfo
 		checkUserParticipationFunc = originalCheck
+		checkUserParticipationByLinkedIDFunc = originalCheckByLinkedID
 		fetchSummaryListFunc = originalFetchList
+		resolveLinkedIDToUniqueIDFunc = originalResolve
 	}()
 
 	getUserInfoFunc = func(string) (*UserInfo, error) {
 		return &UserInfo{PhoneNumbers: []string{"100"}}, nil
 	}
 	checkUserParticipationFunc = func(string, []string) (bool, error) {
+		return true, nil
+	}
+	checkUserParticipationByLinkedIDFunc = func(string, []string) (bool, error) {
 		return true, nil
 	}
 	fetchSummaryListFunc = func([]string) ([]SummaryListItem, error) {
@@ -621,6 +689,10 @@ func TestListSummaryStatus_MixedResults(t *testing.T) {
 				UpdatedAt:        &updatedAt,
 			},
 		}, nil
+	}
+
+	resolveLinkedIDToUniqueIDFunc = func(string) (string, error) {
+		return "", nil
 	}
 
 	router := gin.New()
@@ -682,11 +754,15 @@ func TestListSummaryStatus_FiltersCallsOutsideUserParticipation(t *testing.T) {
 
 	originalGetUserInfo := getUserInfoFunc
 	originalCheck := checkUserParticipationFunc
+	originalCheckByLinkedID := checkUserParticipationByLinkedIDFunc
 	originalFetchList := fetchSummaryListFunc
+	originalResolve := resolveLinkedIDToUniqueIDFunc
 	defer func() {
 		getUserInfoFunc = originalGetUserInfo
 		checkUserParticipationFunc = originalCheck
+		checkUserParticipationByLinkedIDFunc = originalCheckByLinkedID
 		fetchSummaryListFunc = originalFetchList
+		resolveLinkedIDToUniqueIDFunc = originalResolve
 	}()
 
 	getUserInfoFunc = func(string) (*UserInfo, error) {
@@ -694,6 +770,9 @@ func TestListSummaryStatus_FiltersCallsOutsideUserParticipation(t *testing.T) {
 	}
 	checkUserParticipationFunc = func(uniqueID string, phoneNumbers []string) (bool, error) {
 		return uniqueID == "abc123", nil
+	}
+	checkUserParticipationByLinkedIDFunc = func(linkedID string, phoneNumbers []string) (bool, error) {
+		return linkedID == "abc123", nil
 	}
 
 	var fetchedUniqueIDs []string
@@ -709,6 +788,10 @@ func TestListSummaryStatus_FiltersCallsOutsideUserParticipation(t *testing.T) {
 				UpdatedAt:        &updatedAt,
 			},
 		}, nil
+	}
+
+	resolveLinkedIDToUniqueIDFunc = func(string) (string, error) {
+		return "", nil
 	}
 
 	router := gin.New()
