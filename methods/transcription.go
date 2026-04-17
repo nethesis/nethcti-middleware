@@ -25,10 +25,11 @@ import (
 )
 
 var (
-	getUserInfoFunc            = GetUserInfo
-	fetchTranscriptionFunc     = fetchTranscriptionFromDB
-	fetchTranscriptionMetaFunc = fetchTranscriptionMetadataFromCDR
-	checkUserParticipationFunc = checkUserParticipationInCDR
+	getUserInfoFunc                      = GetUserInfo
+	fetchTranscriptionFunc               = fetchTranscriptionFromDB
+	fetchTranscriptionMetaFunc           = fetchTranscriptionMetadataFromCDR
+	checkUserParticipationFunc           = checkUserParticipationInCDR
+	checkUserParticipationByLinkedIDFunc = checkUserParticipationByLinkedIDInCDR
 )
 
 var errUnauthorized = errors.New("unauthorized")
@@ -316,4 +317,92 @@ func checkUserParticipationInCDR(uniqueID string, phoneNumbers []string) (bool, 
 	}
 
 	return false, nil
+}
+
+// checkUserParticipationByLinkedIDInCDR checks whether any leg of the call chain
+// identified by linkedID has the user's phone number as src or dst. This is the
+// correct check for transferred calls and queue calls, where multiple CDR rows
+// share the same linkedid.
+func checkUserParticipationByLinkedIDInCDR(linkedID string, phoneNumbers []string) (bool, error) {
+	if linkedID == "" || len(phoneNumbers) == 0 {
+		return false, nil
+	}
+
+	database := db.GetCDRDB()
+	if database == nil {
+		return false, sql.ErrConnDone
+	}
+
+	phoneSet := make(map[string]struct{}, len(phoneNumbers))
+	for _, number := range phoneNumbers {
+		cleaned := strings.TrimSpace(number)
+		if cleaned != "" {
+			phoneSet[cleaned] = struct{}{}
+		}
+	}
+	if len(phoneSet) == 0 {
+		return false, nil
+	}
+
+	queryCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	rows, err := database.QueryContext(queryCtx, "SELECT src, dst FROM cdr WHERE linkedid = ?", linkedID)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var src, dst sql.NullString
+		if err := rows.Scan(&src, &dst); err != nil {
+			return false, err
+		}
+
+		if src.Valid {
+			if _, ok := phoneSet[strings.TrimSpace(src.String)]; ok {
+				return true, nil
+			}
+		}
+
+		if dst.Valid {
+			if _, ok := phoneSet[strings.TrimSpace(dst.String)]; ok {
+				return true, nil
+			}
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return false, err
+	}
+
+	return false, nil
+}
+
+// ensureUserParticipatedInCallChain checks participation across all CDR legs
+// sharing the same linkedID, which is needed for transfers and queue calls.
+func ensureUserParticipatedInCallChain(c *gin.Context, linkedID string) (bool, error) {
+	username, err := getUsernameFromContext(c)
+	if err != nil {
+		return false, err
+	}
+
+	userSession := store.UserSessions[username]
+	if userSession == nil || strings.TrimSpace(userSession.NethCTIToken) == "" {
+		logs.Log("[WARNING][TRANSCRIPTS] Missing user session or token for user " + username + " (linkedid: " + linkedID + ")")
+		return false, errUnauthorized
+	}
+
+	userInfo, err := getUserInfoFunc(userSession.NethCTIToken)
+	if err != nil {
+		logs.Log("[ERROR][TRANSCRIPTS] Failed to load user info for user " + username + " (linkedid: " + linkedID + "): " + err.Error())
+		return false, err
+	}
+
+	if len(userInfo.PhoneNumbers) == 0 {
+		logs.Log("[WARNING][TRANSCRIPTS] No phone numbers for user " + username + " (linkedid: " + linkedID + ")")
+		return false, nil
+	}
+
+	return checkUserParticipationByLinkedIDFunc(linkedID, userInfo.PhoneNumbers)
 }

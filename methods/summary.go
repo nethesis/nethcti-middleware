@@ -25,6 +25,7 @@ import (
 
 type SummaryWatchRequest struct {
 	UniqueID string `json:"uniqueid"`
+	LinkedID string `json:"linkedid"`
 }
 
 type SummaryUpdateRequest struct {
@@ -67,13 +68,14 @@ type SummaryListItem struct {
 }
 
 var (
-	fetchSummaryDrawerFunc = fetchSummaryDrawerFromDB
-	fetchSummaryListFunc   = fetchSummaryListFromDB
-	fetchSummaryStateFunc  = fetchSummaryStateFromDB
-	fetchSummaryFunc       = fetchSummaryFromDB
-	updateSummaryFunc      = updateSummaryInDB
-	deleteSummaryFunc      = deleteSummaryInDB
-	startSummaryWatchFunc  = summary.StartSummaryWatch
+	fetchSummaryDrawerFunc          = fetchSummaryDrawerFromDB
+	fetchSummaryListFunc            = fetchSummaryListFromDB
+	fetchSummaryStateFunc           = fetchSummaryStateFromDB
+	fetchSummaryFunc                = fetchSummaryFromDB
+	updateSummaryFunc               = updateSummaryInDB
+	deleteSummaryFunc               = deleteSummaryInDB
+	startSummaryWatchFunc           = summary.StartSummaryWatch
+	resolveLinkedIDToUniqueIDFunc   = resolveLinkedIDToUniqueIDFromCDR
 )
 
 // WatchCallSummary starts watching for a summary in the satellite transcripts table.
@@ -98,6 +100,13 @@ func WatchCallSummary(c *gin.Context) {
 		return
 	}
 
+	// linkedID is used for the participation check (covers all legs of the call chain).
+	// Falls back to uniqueID for backward compatibility.
+	linkedID := strings.TrimSpace(req.LinkedID)
+	if linkedID == "" {
+		linkedID = uniqueID
+	}
+
 	if !summary.IsSatelliteDBConfigured() {
 		c.JSON(http.StatusServiceUnavailable, structs.Map(models.StatusServiceUnavailable{
 			Code:    http.StatusServiceUnavailable,
@@ -117,7 +126,7 @@ func WatchCallSummary(c *gin.Context) {
 		return
 	}
 
-	if ok, err := ensureUserParticipatedInCall(c, uniqueID); err != nil {
+	if ok, err := ensureUserParticipatedInCallChain(c, linkedID); err != nil {
 		if errors.Is(err, errUnauthorized) {
 			c.JSON(http.StatusUnauthorized, structs.Map(models.StatusUnauthorized{
 				Code:    http.StatusUnauthorized,
@@ -126,7 +135,7 @@ func WatchCallSummary(c *gin.Context) {
 			}))
 			return
 		}
-		logs.Log("[ERROR][SUMMARY] Failed to validate CDR participation for watch uniqueid " + uniqueID + ": " + err.Error())
+		logs.Log("[ERROR][SUMMARY] Failed to validate CDR participation for watch linkedid " + linkedID + ": " + err.Error())
 		c.JSON(http.StatusServiceUnavailable, structs.Map(models.StatusServiceUnavailable{
 			Code:    http.StatusServiceUnavailable,
 			Message: "cdr database unavailable",
@@ -134,7 +143,7 @@ func WatchCallSummary(c *gin.Context) {
 		}))
 		return
 	} else if !ok {
-		logForbiddenParticipation(c, uniqueID)
+		logForbiddenParticipation(c, linkedID)
 		c.JSON(http.StatusForbidden, structs.Map(models.StatusForbidden{
 			Code:    http.StatusForbidden,
 			Message: "forbidden: user not part of call",
@@ -143,6 +152,7 @@ func WatchCallSummary(c *gin.Context) {
 		return
 	}
 
+	// The watch is keyed by uniqueID: satellite records transcripts by uniqueid.
 	startResult := startSummaryWatchFunc(uniqueID, username)
 	if startResult != summary.WatchStarted {
 		message := "watch unavailable"
@@ -175,11 +185,21 @@ func WatchCallSummary(c *gin.Context) {
 
 // CheckSummaryByUniqueID verifies whether a non-deleted summary exists for the given unique ID.
 // It is intended for HEAD endpoints and returns status only (no response body).
+// The path param (:uniqueid) carries the linkedID of the call chain.
+// An optional ?uniqueid= query param carries the actual Asterisk uniqueid for the satellite DB lookup,
+// which differs from the linkedID in transferred or queue calls.
 func CheckSummaryByUniqueID(c *gin.Context) {
-	uniqueID := strings.TrimSpace(c.Param("uniqueid"))
-	if uniqueID == "" {
+	linkedID := strings.TrimSpace(c.Param("uniqueid"))
+	if linkedID == "" {
 		c.Status(http.StatusBadRequest)
 		return
+	}
+
+	// If a ?uniqueid= query param is provided and differs from the path param,
+	// use it for the satellite DB lookup (actual call leg). Otherwise fall back to linkedID.
+	lookupID := linkedID
+	if q := strings.TrimSpace(c.Query("uniqueid")); q != "" && q != linkedID {
+		lookupID = q
 	}
 
 	if !summary.IsSatelliteDBConfigured() {
@@ -187,23 +207,23 @@ func CheckSummaryByUniqueID(c *gin.Context) {
 		return
 	}
 
-	if ok, err := ensureUserParticipatedInCall(c, uniqueID); err != nil {
+	if ok, err := ensureUserParticipatedInCallChain(c, linkedID); err != nil {
 		if errors.Is(err, errUnauthorized) {
 			c.Status(http.StatusUnauthorized)
 			return
 		}
-		logs.Log("[ERROR][SUMMARY] Failed to validate CDR participation for uniqueid " + uniqueID + ": " + err.Error())
+		logs.Log("[ERROR][SUMMARY] Failed to validate CDR participation for linkedid " + linkedID + ": " + err.Error())
 		c.Status(http.StatusServiceUnavailable)
 		return
 	} else if !ok {
-		logForbiddenParticipation(c, uniqueID)
+		logForbiddenParticipation(c, linkedID)
 		c.Status(http.StatusForbidden)
 		return
 	}
 
-	state, hasSummary, _, exists, err := fetchSummaryStateFunc(uniqueID)
+	state, hasSummary, _, exists, err := fetchSummaryStateFunc(lookupID)
 	if err != nil {
-		logs.Log("[ERROR][SUMMARY] Failed to fetch summary for uniqueid " + uniqueID + ": " + err.Error())
+		logs.Log("[ERROR][SUMMARY] Failed to fetch summary for uniqueid " + lookupID + ": " + err.Error())
 		c.Status(http.StatusInternalServerError)
 		return
 	}
@@ -483,6 +503,11 @@ func UpdateSummaryByUniqueID(c *gin.Context) {
 }
 
 // ListSummaryStatus returns the list of summary/transcription status for user's calls.
+// The incoming "uniqueids" field carries linkedIDs (call chain identifiers from CDR history).
+// For each linkedID the function resolves the actual Asterisk uniqueid via the CDR table
+// (which differs in transferred/queue calls) and uses it to query the satellite DB.
+// Responses always echo back the input linkedID as "uniqueid" so that clients can
+// index results by the same key they used in the request.
 func ListSummaryStatus(c *gin.Context) {
 	if !summary.IsSatelliteDBConfigured() {
 		c.JSON(http.StatusServiceUnavailable, structs.Map(models.StatusServiceUnavailable{
@@ -493,7 +518,7 @@ func ListSummaryStatus(c *gin.Context) {
 		return
 	}
 
-	uniqueIDs, err := extractSummaryStatusUniqueIDs(c)
+	linkedIDs, err := extractSummaryStatusUniqueIDs(c)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, structs.Map(models.StatusBadRequest{
 			Code:    http.StatusBadRequest,
@@ -503,7 +528,7 @@ func ListSummaryStatus(c *gin.Context) {
 		return
 	}
 
-	if len(uniqueIDs) == 0 {
+	if len(linkedIDs) == 0 {
 		c.JSON(http.StatusBadRequest, structs.Map(models.StatusBadRequest{
 			Code:    http.StatusBadRequest,
 			Message: "uniqueids is required",
@@ -512,7 +537,7 @@ func ListSummaryStatus(c *gin.Context) {
 		return
 	}
 
-	authorizedUniqueIDs, err := filterSummaryStatusUniqueIDsByParticipation(c, uniqueIDs)
+	authorizedLinkedIDs, err := filterSummaryStatusByLinkedIDParticipation(c, linkedIDs)
 	if err != nil {
 		if errors.Is(err, errUnauthorized) {
 			c.JSON(http.StatusUnauthorized, structs.Map(models.StatusUnauthorized{
@@ -532,7 +557,22 @@ func ListSummaryStatus(c *gin.Context) {
 		return
 	}
 
-	items, err := fetchSummaryListFunc(authorizedUniqueIDs)
+	// Resolve each linkedID to the Asterisk uniqueid stored in satellite.
+	linkedToUnique := make(map[string]string, len(authorizedLinkedIDs))
+	uniqueIDsToFetch := make([]string, 0, len(authorizedLinkedIDs))
+	for _, linkedID := range authorizedLinkedIDs {
+		uid, err := resolveLinkedIDToUniqueIDFunc(linkedID)
+		if err != nil {
+			logs.Log("[WARNING][SUMMARY] Failed to resolve linkedid " + linkedID + " to uniqueid: " + err.Error())
+		}
+		if uid == "" {
+			uid = linkedID // fallback: non-transferred call where linkedid == uniqueid
+		}
+		linkedToUnique[linkedID] = uid
+		uniqueIDsToFetch = append(uniqueIDsToFetch, uid)
+	}
+
+	items, err := fetchSummaryListFunc(uniqueIDsToFetch)
 	if err != nil {
 		logs.Log("[ERROR][SUMMARY] Failed to list summaries: " + err.Error())
 		c.JSON(http.StatusInternalServerError, structs.Map(models.StatusInternalServerError{
@@ -543,19 +583,27 @@ func ListSummaryStatus(c *gin.Context) {
 		return
 	}
 
-	itemByID := make(map[string]SummaryListItem, len(items))
+	// Index satellite results by their uniqueid.
+	itemByUniqueID := make(map[string]SummaryListItem, len(items))
 	for _, item := range items {
-		itemByID[item.UniqueID] = item
+		itemByUniqueID[item.UniqueID] = item
 	}
 
-	result := make([]interface{}, 0, len(uniqueIDs))
-	for _, id := range uniqueIDs {
-		if item, ok := itemByID[id]; ok {
+	// Build response: one entry per input linkedID, always echoing linkedID as "uniqueid"
+	// so that the client can map responses using the same key it sent.
+	result := make([]interface{}, 0, len(linkedIDs))
+	for _, linkedID := range linkedIDs {
+		uid := linkedToUnique[linkedID]
+		if uid == "" {
+			uid = linkedID
+		}
+		if item, ok := itemByUniqueID[uid]; ok {
+			item.UniqueID = linkedID
 			result = append(result, item)
 			continue
 		}
 		result = append(result, gin.H{
-			"uniqueid": id,
+			"uniqueid": linkedID,
 			"error":    "not_found",
 		})
 	}
@@ -602,6 +650,77 @@ func filterSummaryStatusUniqueIDsByParticipation(c *gin.Context, uniqueIDs []str
 	}
 
 	return authorized, nil
+}
+
+// filterSummaryStatusByLinkedIDParticipation filters linkedIDs keeping only those
+// where the authenticated user participated in any leg of the call chain.
+func filterSummaryStatusByLinkedIDParticipation(c *gin.Context, linkedIDs []string) ([]string, error) {
+	username, err := getUsernameFromContext(c)
+	if err != nil {
+		return nil, err
+	}
+
+	userSession := store.UserSessions[username]
+	if userSession == nil || strings.TrimSpace(userSession.NethCTIToken) == "" {
+		logs.Log("[WARNING][SUMMARY] Missing user session or token for user " + username + " while listing summary statuses")
+		return nil, errUnauthorized
+	}
+
+	userInfo, err := getUserInfoFunc(userSession.NethCTIToken)
+	if err != nil {
+		logs.Log("[ERROR][SUMMARY] Failed to load user info for user " + username + " while listing summary statuses: " + err.Error())
+		return nil, err
+	}
+
+	if len(userInfo.PhoneNumbers) == 0 {
+		logs.Log("[WARNING][SUMMARY] No phone numbers for user " + username + " while listing summary statuses")
+		return []string{}, nil
+	}
+
+	authorized := make([]string, 0, len(linkedIDs))
+	for _, linkedID := range linkedIDs {
+		ok, err := checkUserParticipationByLinkedIDFunc(linkedID, userInfo.PhoneNumbers)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			authorized = append(authorized, linkedID)
+		}
+	}
+
+	return authorized, nil
+}
+
+// resolveLinkedIDToUniqueIDFromCDR returns the Asterisk uniqueid of the answered call leg
+// that shares the given linkedID. For non-transferred calls linkedID == uniqueID and the
+// same value is returned. For transferred or queue calls the uniqueid of the last answered
+// leg is returned so that it matches the key used by satellite to store the transcript.
+func resolveLinkedIDToUniqueIDFromCDR(linkedID string) (string, error) {
+	if linkedID == "" {
+		return "", nil
+	}
+
+	database := db.GetCDRDB()
+	if database == nil {
+		return "", sql.ErrConnDone
+	}
+
+	queryCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var uniqueID string
+	err := database.QueryRowContext(
+		queryCtx,
+		"SELECT uniqueid FROM cdr WHERE linkedid = ? AND disposition = 'ANSWERED' ORDER BY calldate DESC LIMIT 1",
+		linkedID,
+	).Scan(&uniqueID)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return uniqueID, nil
 }
 
 func extractSummaryStatusUniqueIDs(c *gin.Context) ([]string, error) {
