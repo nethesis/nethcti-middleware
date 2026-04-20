@@ -271,34 +271,49 @@ func filterHistoryRowsByArtifact(c *gin.Context, artifact string, rows []map[str
 			return nil, fmt.Errorf("satellite database not configured")
 		}
 
-		linkedIDs := collectHistoryLinkedIDs(rows)
-		if len(linkedIDs) == 0 {
+		lookups := collectHistorySummaryLookups(rows)
+		if len(lookups) == 0 {
 			return []map[string]interface{}{}, nil
 		}
 
-		authorizedIDs, err := filterSummaryStatusUniqueIDsByParticipation(c, linkedIDs)
+		resolvedLookups, err := resolveSummaryStatusLookups(c, lookups)
 		if err != nil {
 			return nil, err
 		}
 
-		statusItems, err := fetchSummaryListFunc(authorizedIDs)
+		statusItems, err := fetchSummaryListFunc(collectResolvedUniqueIDs(resolvedLookups))
 		if err != nil {
 			return nil, err
 		}
 
-		statusMap := make(map[string]SummaryListItem, len(statusItems))
+		itemByUniqueID := make(map[string]SummaryListItem, len(statusItems))
 		for _, item := range statusItems {
-			statusMap[item.UniqueID] = item
+			itemByUniqueID[item.UniqueID] = item
+		}
+
+		statusMap := make(map[string]SummaryListItem, len(resolvedLookups))
+		for _, lookup := range resolvedLookups {
+			if lookup.ResolvedUniqueID == "" {
+				continue
+			}
+			item, ok := itemByUniqueID[lookup.ResolvedUniqueID]
+			if !ok {
+				continue
+			}
+			statusMap[historySummaryLookupKey(lookup.LinkedID, lookup.UniqueID)] = item
 		}
 
 		filtered := make([]map[string]interface{}, 0, len(rows))
 		for _, row := range rows {
-			linkedID := strings.TrimSpace(getHistoryRowString(row, "linkedid"))
-			if linkedID == "" {
+			lookupKey := historySummaryLookupKey(
+				strings.TrimSpace(getHistoryRowString(row, "linkedid")),
+				strings.TrimSpace(getHistoryRowString(row, "uniqueid")),
+			)
+			if lookupKey == "" {
 				continue
 			}
 
-			item, ok := statusMap[linkedID]
+			item, ok := statusMap[lookupKey]
 			if !ok || strings.TrimSpace(item.State) != "done" {
 				continue
 			}
@@ -319,20 +334,32 @@ func filterHistoryRowsByArtifact(c *gin.Context, artifact string, rows []map[str
 	}
 }
 
-func collectHistoryLinkedIDs(rows []map[string]interface{}) []string {
-	collected := make([]string, 0, len(rows))
+func historySummaryLookupKey(linkedID string, uniqueID string) string {
+	if linkedID != "" {
+		return linkedID
+	}
+	return uniqueID
+}
+
+func collectHistorySummaryLookups(rows []map[string]interface{}) []SummaryStatusLookup {
+	collected := make([]SummaryStatusLookup, 0, len(rows))
 	seen := make(map[string]struct{})
 
 	for _, row := range rows {
 		linkedID := strings.TrimSpace(getHistoryRowString(row, "linkedid"))
-		if linkedID == "" {
+		uniqueID := strings.TrimSpace(getHistoryRowString(row, "uniqueid"))
+		lookupKey := historySummaryLookupKey(linkedID, uniqueID)
+		if lookupKey == "" {
 			continue
 		}
-		if _, ok := seen[linkedID]; ok {
+		if _, ok := seen[lookupKey]; ok {
 			continue
 		}
-		seen[linkedID] = struct{}{}
-		collected = append(collected, linkedID)
+		seen[lookupKey] = struct{}{}
+		collected = append(collected, SummaryStatusLookup{
+			UniqueID: uniqueID,
+			LinkedID: linkedID,
+		})
 	}
 
 	return collected

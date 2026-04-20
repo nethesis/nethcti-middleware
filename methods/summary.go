@@ -19,12 +19,12 @@ import (
 	"github.com/nethesis/nethcti-middleware/db"
 	"github.com/nethesis/nethcti-middleware/logs"
 	"github.com/nethesis/nethcti-middleware/models"
-	"github.com/nethesis/nethcti-middleware/store"
 	"github.com/nethesis/nethcti-middleware/summary"
 )
 
 type SummaryWatchRequest struct {
 	UniqueID string `json:"uniqueid"`
+	LinkedID string `json:"linkedid,omitempty"`
 }
 
 type SummaryUpdateRequest struct {
@@ -59,6 +59,7 @@ type CallMetadata struct {
 }
 
 type SummaryListItem struct {
+	LinkedID         string     `json:"linkedid,omitempty"`
 	UniqueID         string     `json:"uniqueid"`
 	State            string     `json:"state"`
 	HasTranscription bool       `json:"has_transcription"`
@@ -76,6 +77,21 @@ var (
 	startSummaryWatchFunc  = summary.StartSummaryWatch
 )
 
+func getUniqueIDFromPath(c *gin.Context) string {
+	return strings.TrimSpace(c.Param("uniqueid"))
+}
+
+type SummaryStatusLookup struct {
+	UniqueID string `json:"uniqueid,omitempty"`
+	LinkedID string `json:"linkedid,omitempty"`
+}
+
+type resolvedSummaryStatusLookup struct {
+	UniqueID         string
+	LinkedID         string
+	ResolvedUniqueID string
+}
+
 // WatchCallSummary starts watching for a summary in the satellite transcripts table.
 func WatchCallSummary(c *gin.Context) {
 	var req SummaryWatchRequest
@@ -88,8 +104,8 @@ func WatchCallSummary(c *gin.Context) {
 		return
 	}
 
-	uniqueID := strings.TrimSpace(req.UniqueID)
-	if uniqueID == "" {
+	uniqueIDHint := strings.TrimSpace(req.UniqueID)
+	if uniqueIDHint == "" {
 		c.JSON(http.StatusBadRequest, structs.Map(models.StatusBadRequest{
 			Code:    http.StatusBadRequest,
 			Message: "uniqueid is required",
@@ -117,7 +133,8 @@ func WatchCallSummary(c *gin.Context) {
 		return
 	}
 
-	if ok, err := ensureUserParticipatedInCall(c, uniqueID); err != nil {
+	uniqueID, ok, err := ensureUserParticipatedInCall(c, uniqueIDHint, strings.TrimSpace(req.LinkedID))
+	if err != nil {
 		if errors.Is(err, errUnauthorized) {
 			c.JSON(http.StatusUnauthorized, structs.Map(models.StatusUnauthorized{
 				Code:    http.StatusUnauthorized,
@@ -126,15 +143,16 @@ func WatchCallSummary(c *gin.Context) {
 			}))
 			return
 		}
-		logs.Log("[ERROR][SUMMARY] Failed to validate CDR participation for watch uniqueid " + uniqueID + ": " + err.Error())
+		logs.Log("[ERROR][SUMMARY] Failed to validate CDR participation for watch uniqueid " + uniqueIDHint + ": " + err.Error())
 		c.JSON(http.StatusServiceUnavailable, structs.Map(models.StatusServiceUnavailable{
 			Code:    http.StatusServiceUnavailable,
 			Message: "cdr database unavailable",
 			Data:    nil,
 		}))
 		return
-	} else if !ok {
-		logForbiddenParticipation(c, uniqueID)
+	}
+	if !ok {
+		logForbiddenParticipation(c, uniqueIDHint)
 		c.JSON(http.StatusForbidden, structs.Map(models.StatusForbidden{
 			Code:    http.StatusForbidden,
 			Message: "forbidden: user not part of call",
@@ -173,11 +191,12 @@ func WatchCallSummary(c *gin.Context) {
 	}))
 }
 
-// CheckSummaryByUniqueID verifies whether a non-deleted summary exists for the given unique ID.
+// CheckSummaryByUniqueID verifies whether a non-deleted summary exists for the given uniqueid.
 // It is intended for HEAD endpoints and returns status only (no response body).
 func CheckSummaryByUniqueID(c *gin.Context) {
-	uniqueID := strings.TrimSpace(c.Param("uniqueid"))
-	if uniqueID == "" {
+	uniqueIDHint := getUniqueIDFromPath(c)
+	linkedID := getLinkedIDFromQuery(c)
+	if uniqueIDHint == "" {
 		c.Status(http.StatusBadRequest)
 		return
 	}
@@ -187,16 +206,18 @@ func CheckSummaryByUniqueID(c *gin.Context) {
 		return
 	}
 
-	if ok, err := ensureUserParticipatedInCall(c, uniqueID); err != nil {
+	uniqueID, ok, err := ensureUserParticipatedInCall(c, uniqueIDHint, linkedID)
+	if err != nil {
 		if errors.Is(err, errUnauthorized) {
 			c.Status(http.StatusUnauthorized)
 			return
 		}
-		logs.Log("[ERROR][SUMMARY] Failed to validate CDR participation for uniqueid " + uniqueID + ": " + err.Error())
+		logs.Log("[ERROR][SUMMARY] Failed to validate CDR participation for uniqueid " + uniqueIDHint + ": " + err.Error())
 		c.Status(http.StatusServiceUnavailable)
 		return
-	} else if !ok {
-		logForbiddenParticipation(c, uniqueID)
+	}
+	if !ok {
+		logForbiddenParticipation(c, uniqueIDHint)
 		c.Status(http.StatusForbidden)
 		return
 	}
@@ -208,18 +229,25 @@ func CheckSummaryByUniqueID(c *gin.Context) {
 		return
 	}
 
-	if !exists {
-		c.Status(http.StatusNotFound)
-		return
-	}
+	foundRecord := exists
+	keepWaiting := shouldKeepWaitingForSummary(state)
 
 	if hasSummary {
 		c.Status(http.StatusOK)
 		return
 	}
 
-	if shouldKeepWaitingForSummary(state) {
+	if keepWaiting {
 		c.Status(http.StatusNoContent)
+		return
+	}
+
+	if !foundRecord {
+		if linkedID != "" {
+			c.Status(http.StatusNoContent)
+			return
+		}
+		c.Status(http.StatusNotFound)
 		return
 	}
 
@@ -235,10 +263,11 @@ func shouldKeepWaitingForSummary(state string) bool {
 	}
 }
 
-// GetSummaryByUniqueID returns the summary for the given unique ID.
+// GetSummaryByUniqueID returns the summary for the given uniqueid.
 func GetSummaryByUniqueID(c *gin.Context) {
-	uniqueID := strings.TrimSpace(c.Param("uniqueid"))
-	if uniqueID == "" {
+	uniqueIDHint := getUniqueIDFromPath(c)
+	linkedID := getLinkedIDFromQuery(c)
+	if uniqueIDHint == "" {
 		c.JSON(http.StatusBadRequest, structs.Map(models.StatusBadRequest{
 			Code:    http.StatusBadRequest,
 			Message: "uniqueid is required",
@@ -256,7 +285,8 @@ func GetSummaryByUniqueID(c *gin.Context) {
 		return
 	}
 
-	if ok, err := ensureUserParticipatedInCall(c, uniqueID); err != nil {
+	uniqueID, ok, err := ensureUserParticipatedInCall(c, uniqueIDHint, linkedID)
+	if err != nil {
 		if errors.Is(err, errUnauthorized) {
 			c.JSON(http.StatusUnauthorized, structs.Map(models.StatusUnauthorized{
 				Code:    http.StatusUnauthorized,
@@ -265,15 +295,16 @@ func GetSummaryByUniqueID(c *gin.Context) {
 			}))
 			return
 		}
-		logs.Log("[ERROR][SUMMARY] Failed to validate CDR participation for uniqueid " + uniqueID + ": " + err.Error())
+		logs.Log("[ERROR][SUMMARY] Failed to validate CDR participation for uniqueid " + uniqueIDHint + ": " + err.Error())
 		c.JSON(http.StatusServiceUnavailable, structs.Map(models.StatusServiceUnavailable{
 			Code:    http.StatusServiceUnavailable,
 			Message: "cdr database unavailable",
 			Data:    nil,
 		}))
 		return
-	} else if !ok {
-		logForbiddenParticipation(c, uniqueID)
+	}
+	if !ok {
+		logForbiddenParticipation(c, uniqueIDHint)
 		c.JSON(http.StatusForbidden, structs.Map(models.StatusForbidden{
 			Code:    http.StatusForbidden,
 			Message: "forbidden: user not part of call",
@@ -309,10 +340,11 @@ func GetSummaryByUniqueID(c *gin.Context) {
 	})
 }
 
-// DeleteSummaryByUniqueID removes the summary for the given unique ID.
+// DeleteSummaryByUniqueID removes the summary for the given uniqueid.
 func DeleteSummaryByUniqueID(c *gin.Context) {
-	uniqueID := strings.TrimSpace(c.Param("uniqueid"))
-	if uniqueID == "" {
+	uniqueIDHint := getUniqueIDFromPath(c)
+	linkedID := getLinkedIDFromQuery(c)
+	if uniqueIDHint == "" {
 		c.JSON(http.StatusBadRequest, structs.Map(models.StatusBadRequest{
 			Code:    http.StatusBadRequest,
 			Message: "uniqueid is required",
@@ -330,7 +362,8 @@ func DeleteSummaryByUniqueID(c *gin.Context) {
 		return
 	}
 
-	if ok, err := ensureUserParticipatedInCall(c, uniqueID); err != nil {
+	uniqueID, ok, err := ensureUserParticipatedInCall(c, uniqueIDHint, linkedID)
+	if err != nil {
 		if errors.Is(err, errUnauthorized) {
 			c.JSON(http.StatusUnauthorized, structs.Map(models.StatusUnauthorized{
 				Code:    http.StatusUnauthorized,
@@ -339,15 +372,16 @@ func DeleteSummaryByUniqueID(c *gin.Context) {
 			}))
 			return
 		}
-		logs.Log("[ERROR][SUMMARY] Failed to validate CDR participation for uniqueid " + uniqueID + ": " + err.Error())
+		logs.Log("[ERROR][SUMMARY] Failed to validate CDR participation for uniqueid " + uniqueIDHint + ": " + err.Error())
 		c.JSON(http.StatusServiceUnavailable, structs.Map(models.StatusServiceUnavailable{
 			Code:    http.StatusServiceUnavailable,
 			Message: "cdr database unavailable",
 			Data:    nil,
 		}))
 		return
-	} else if !ok {
-		logForbiddenParticipation(c, uniqueID)
+	}
+	if !ok {
+		logForbiddenParticipation(c, uniqueIDHint)
 		c.JSON(http.StatusForbidden, structs.Map(models.StatusForbidden{
 			Code:    http.StatusForbidden,
 			Message: "forbidden: user not part of call",
@@ -385,10 +419,11 @@ func DeleteSummaryByUniqueID(c *gin.Context) {
 	}))
 }
 
-// UpdateSummaryByUniqueID updates the summary for the given unique ID.
+// UpdateSummaryByUniqueID updates the summary for the given uniqueid.
 func UpdateSummaryByUniqueID(c *gin.Context) {
-	uniqueID := strings.TrimSpace(c.Param("uniqueid"))
-	if uniqueID == "" {
+	uniqueIDHint := getUniqueIDFromPath(c)
+	linkedID := getLinkedIDFromQuery(c)
+	if uniqueIDHint == "" {
 		c.JSON(http.StatusBadRequest, structs.Map(models.StatusBadRequest{
 			Code:    http.StatusBadRequest,
 			Message: "uniqueid is required",
@@ -426,7 +461,8 @@ func UpdateSummaryByUniqueID(c *gin.Context) {
 		return
 	}
 
-	if ok, err := ensureUserParticipatedInCall(c, uniqueID); err != nil {
+	uniqueID, ok, err := ensureUserParticipatedInCall(c, uniqueIDHint, linkedID)
+	if err != nil {
 		if errors.Is(err, errUnauthorized) {
 			c.JSON(http.StatusUnauthorized, structs.Map(models.StatusUnauthorized{
 				Code:    http.StatusUnauthorized,
@@ -435,15 +471,16 @@ func UpdateSummaryByUniqueID(c *gin.Context) {
 			}))
 			return
 		}
-		logs.Log("[ERROR][SUMMARY] Failed to validate CDR participation for uniqueid " + uniqueID + ": " + err.Error())
+		logs.Log("[ERROR][SUMMARY] Failed to validate CDR participation for uniqueid " + uniqueIDHint + ": " + err.Error())
 		c.JSON(http.StatusServiceUnavailable, structs.Map(models.StatusServiceUnavailable{
 			Code:    http.StatusServiceUnavailable,
 			Message: "cdr database unavailable",
 			Data:    nil,
 		}))
 		return
-	} else if !ok {
-		logForbiddenParticipation(c, uniqueID)
+	}
+	if !ok {
+		logForbiddenParticipation(c, uniqueIDHint)
 		c.JSON(http.StatusForbidden, structs.Map(models.StatusForbidden{
 			Code:    http.StatusForbidden,
 			Message: "forbidden: user not part of call",
@@ -493,7 +530,7 @@ func ListSummaryStatus(c *gin.Context) {
 		return
 	}
 
-	uniqueIDs, err := extractSummaryStatusUniqueIDs(c)
+	lookups, err := extractSummaryStatusLookups(c)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, structs.Map(models.StatusBadRequest{
 			Code:    http.StatusBadRequest,
@@ -503,7 +540,7 @@ func ListSummaryStatus(c *gin.Context) {
 		return
 	}
 
-	if len(uniqueIDs) == 0 {
+	if len(lookups) == 0 {
 		c.JSON(http.StatusBadRequest, structs.Map(models.StatusBadRequest{
 			Code:    http.StatusBadRequest,
 			Message: "uniqueids is required",
@@ -512,7 +549,7 @@ func ListSummaryStatus(c *gin.Context) {
 		return
 	}
 
-	authorizedUniqueIDs, err := filterSummaryStatusUniqueIDsByParticipation(c, uniqueIDs)
+	resolvedLookups, err := resolveSummaryStatusLookups(c, lookups)
 	if err != nil {
 		if errors.Is(err, errUnauthorized) {
 			c.JSON(http.StatusUnauthorized, structs.Map(models.StatusUnauthorized{
@@ -532,7 +569,8 @@ func ListSummaryStatus(c *gin.Context) {
 		return
 	}
 
-	items, err := fetchSummaryListFunc(authorizedUniqueIDs)
+	resolvedUniqueIDs := collectResolvedUniqueIDs(resolvedLookups)
+	items, err := fetchSummaryListFunc(resolvedUniqueIDs)
 	if err != nil {
 		logs.Log("[ERROR][SUMMARY] Failed to list summaries: " + err.Error())
 		c.JSON(http.StatusInternalServerError, structs.Map(models.StatusInternalServerError{
@@ -543,19 +581,25 @@ func ListSummaryStatus(c *gin.Context) {
 		return
 	}
 
-	itemByID := make(map[string]SummaryListItem, len(items))
+	itemByUniqueID := make(map[string]SummaryListItem, len(items))
 	for _, item := range items {
-		itemByID[item.UniqueID] = item
+		itemByUniqueID[item.UniqueID] = item
 	}
 
-	result := make([]interface{}, 0, len(uniqueIDs))
-	for _, id := range uniqueIDs {
-		if item, ok := itemByID[id]; ok {
+	result := make([]interface{}, 0, len(resolvedLookups))
+	for _, lookup := range resolvedLookups {
+		if item, ok := itemByUniqueID[lookup.ResolvedUniqueID]; ok {
+			item.LinkedID = lookup.LinkedID
 			result = append(result, item)
 			continue
 		}
+		reportedUniqueID := lookup.ResolvedUniqueID
+		if reportedUniqueID == "" {
+			reportedUniqueID = lookup.UniqueID
+		}
 		result = append(result, gin.H{
-			"uniqueid": id,
+			"uniqueid": reportedUniqueID,
+			"linkedid": lookup.LinkedID,
 			"error":    "not_found",
 		})
 	}
@@ -567,59 +611,112 @@ func ListSummaryStatus(c *gin.Context) {
 	}))
 }
 
-func filterSummaryStatusUniqueIDsByParticipation(c *gin.Context, uniqueIDs []string) ([]string, error) {
-	username, err := getUsernameFromContext(c)
-	if err != nil {
-		return nil, err
-	}
-
-	userSession := store.UserSessions[username]
-	if userSession == nil || strings.TrimSpace(userSession.NethCTIToken) == "" {
-		logs.Log("[WARNING][SUMMARY] Missing user session or token for user " + username + " while listing summary statuses")
-		return nil, errUnauthorized
-	}
-
-	userInfo, err := getUserInfoFunc(userSession.NethCTIToken)
-	if err != nil {
-		logs.Log("[ERROR][SUMMARY] Failed to load user info for user " + username + " while listing summary statuses: " + err.Error())
-		return nil, err
-	}
-
-	if len(userInfo.PhoneNumbers) == 0 {
-		logs.Log("[WARNING][SUMMARY] No phone numbers for user " + username + " while listing summary statuses")
-		return []string{}, nil
-	}
-
-	authorized := make([]string, 0, len(uniqueIDs))
-	for _, uniqueID := range uniqueIDs {
-		ok, err := checkUserParticipationFunc(uniqueID, userInfo.PhoneNumbers)
-		if err != nil {
-			return nil, err
-		}
-		if ok {
-			authorized = append(authorized, uniqueID)
-		}
-	}
-
-	return authorized, nil
-}
-
-func extractSummaryStatusUniqueIDs(c *gin.Context) ([]string, error) {
+func extractSummaryStatusLookups(c *gin.Context) ([]SummaryStatusLookup, error) {
 	var req struct {
-		UniqueIDs []string `json:"uniqueids"`
+		UniqueIDs []string              `json:"uniqueids"`
+		Lookups   []SummaryStatusLookup `json:"lookups"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		return nil, err
 	}
 
-	return normalizeUniqueIDs(req.UniqueIDs), nil
+	if len(req.Lookups) > 0 {
+		return normalizeSummaryStatusLookups(req.Lookups), nil
+	}
+
+	if len(req.UniqueIDs) == 0 {
+		return []SummaryStatusLookup{}, nil
+	}
+
+	normalizedUniqueIDs := normalizeLookupIDs(req.UniqueIDs)
+	lookups := make([]SummaryStatusLookup, 0, len(normalizedUniqueIDs))
+	for _, uniqueID := range normalizedUniqueIDs {
+		lookups = append(lookups, SummaryStatusLookup{UniqueID: uniqueID})
+	}
+	return lookups, nil
 }
 
-func normalizeUniqueIDs(uniqueIDs []string) []string {
-	cleaned := make([]string, 0, len(uniqueIDs))
+func normalizeSummaryStatusLookups(lookups []SummaryStatusLookup) []SummaryStatusLookup {
+	cleaned := make([]SummaryStatusLookup, 0, len(lookups))
 	seen := make(map[string]struct{})
 
-	for _, id := range uniqueIDs {
+	for _, lookup := range lookups {
+		normalized := SummaryStatusLookup{
+			UniqueID: strings.TrimSpace(lookup.UniqueID),
+			LinkedID: strings.TrimSpace(lookup.LinkedID),
+		}
+		if normalized.UniqueID == "" && normalized.LinkedID == "" {
+			continue
+		}
+
+		key := normalized.LinkedID
+		if key == "" {
+			key = normalized.UniqueID
+		}
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		cleaned = append(cleaned, normalized)
+	}
+
+	return cleaned
+}
+
+func resolveSummaryStatusLookups(c *gin.Context, lookups []SummaryStatusLookup) ([]resolvedSummaryStatusLookup, error) {
+	phoneNumbers, err := getUserPhoneNumbersFromContext(c)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(phoneNumbers) == 0 {
+		return []resolvedSummaryStatusLookup{}, nil
+	}
+
+	resolved := make([]resolvedSummaryStatusLookup, 0, len(lookups))
+	for _, lookup := range lookups {
+		resolvedUniqueID, ok, err := resolveAuthorizedUniqueID(lookup.UniqueID, lookup.LinkedID, phoneNumbers)
+		if err != nil {
+			return nil, err
+		}
+
+		entry := resolvedSummaryStatusLookup{
+			UniqueID:         lookup.UniqueID,
+			LinkedID:         lookup.LinkedID,
+			ResolvedUniqueID: resolvedUniqueID,
+		}
+		if !ok {
+			entry.ResolvedUniqueID = ""
+		}
+		resolved = append(resolved, entry)
+	}
+
+	return resolved, nil
+}
+
+func collectResolvedUniqueIDs(lookups []resolvedSummaryStatusLookup) []string {
+	collected := make([]string, 0, len(lookups))
+	seen := make(map[string]struct{})
+
+	for _, lookup := range lookups {
+		if lookup.ResolvedUniqueID == "" {
+			continue
+		}
+		if _, exists := seen[lookup.ResolvedUniqueID]; exists {
+			continue
+		}
+		seen[lookup.ResolvedUniqueID] = struct{}{}
+		collected = append(collected, lookup.ResolvedUniqueID)
+	}
+
+	return collected
+}
+
+func normalizeLookupIDs(lookupIDs []string) []string {
+	cleaned := make([]string, 0, len(lookupIDs))
+	seen := make(map[string]struct{})
+
+	for _, id := range lookupIDs {
 		for _, candidate := range strings.Split(id, ",") {
 			value := strings.TrimSpace(candidate)
 			if value == "" {
