@@ -6,6 +6,7 @@
 package main
 
 import (
+	"fmt"
 	"io"
 	"regexp"
 	"strings"
@@ -102,7 +103,21 @@ func createRouter() *gin.Engine {
 	router := gin.New()
 	router.RedirectTrailingSlash = false
 	router.Use(
-		gin.LoggerWithWriter(gin.DefaultWriter),
+		gin.LoggerWithFormatter(func(params gin.LogFormatterParams) string {
+			proxyFlag := ""
+			if _, proxied := params.Keys["proxied"]; proxied {
+				proxyFlag = " [proxied]"
+			}
+			return fmt.Sprintf("[GIN] %v | %3d | %13v | %15s | %-7s %#v%s\n",
+				params.TimeStamp.Format("2006/01/02 - 15:04:05"),
+				params.StatusCode,
+				params.Latency,
+				params.ClientIP,
+				params.Method,
+				params.Path,
+				proxyFlag,
+			)
+		}),
 		gin.Recovery(),
 	)
 
