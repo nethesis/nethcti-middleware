@@ -178,7 +178,7 @@ func createRouter() *gin.Engine {
 		// keep old /authentication/* token endpoints for older clients.
 		api.POST("/authentication/phone_island_token_login", methods.PhoneIslandTokenLogin)
 		api.POST("/authentication/persistent_token_remove", methods.PhoneIslandTokenRemove)
-		api.GET("/authentication/phone_island_token_check", methods.PhoneIslandTokenCheck)
+		api.GET("/authentication/phone_island_token_check/:subtype", methods.PhoneIslandTokenCheck)
 
 		// Phonebook
 		api.POST("/phonebook/import", middleware.RequireCapabilities("phonebook.ad_phonebook"), methods.ImportPhonebookCSV)
