@@ -155,15 +155,21 @@ func createRouter() *gin.Engine {
 		api.GET("/2fa/qr-code", methods.QRCode)
 
 		// Token
+		// @migration-replaces: POST /authentication/phone_island_token_login
+		// @migration-note: Replaced by the new persistent token API. The old path is kept as a compatibility shim.
 		api.POST("/tokens/persistent/:audience", methods.CreatePersistentToken)
+		// @migration-replaces: GET /authentication/phone_island_token_check/:subtype
+		// @migration-note: Replaced by the new persistent token API. The old path is kept as a compatibility shim.
 		api.GET("/tokens/persistent/:audience", methods.CheckPersistentToken)
+		// @migration-replaces: POST /authentication/persistent_token_remove
+		// @migration-note: Replaced by the new persistent token API. The old path is kept as a compatibility shim.
 		api.DELETE("/tokens/persistent/:audience", methods.RemovePersistentToken)
 
 		// LEGACY COMPATIBILITY (to be removed in a future cleanup):
 		// keep old /authentication/* token endpoints for older clients.
 		api.POST("/authentication/phone_island_token_login", methods.PhoneIslandTokenLogin)
 		api.POST("/authentication/persistent_token_remove", methods.PhoneIslandTokenRemove)
-		api.GET("/authentication/phone_island_token_check", methods.PhoneIslandTokenCheck)
+		api.GET("/authentication/phone_island_token_check/:subtype", methods.PhoneIslandTokenCheck)
 
 		// Phonebook
 		api.POST("/phonebook/import", middleware.RequireCapabilities("phonebook.ad_phonebook"), methods.ImportPhonebookCSV)

@@ -51,7 +51,8 @@ func PhoneIslandTokenLogin(c *gin.Context) {
 // PhoneIslandTokenCheck is a legacy compatibility endpoint.
 // Historically this endpoint checked the phone-island integration token existence.
 func PhoneIslandTokenCheck(c *gin.Context) {
-	checkIntegrationToken(c, "phone-island")
+	subtype := c.Param("subtype")
+	checkIntegrationToken(c, mapLegacySubtypeToAudience(subtype))
 }
 
 // PhoneIslandTokenRemove is a legacy compatibility endpoint.

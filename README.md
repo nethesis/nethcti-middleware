@@ -1,5 +1,38 @@
 # nethcti-middleware
 
+## Migration status annotations
+
+When a legacy `nethcti-server` endpoint is replaced by a new path in this middleware,
+add `@migration-replaces` annotations in `main.go` directly above the route definition.
+These annotations are read automatically by the
+[NethVoice migration status dashboard](https://migration.ta.nethserver.net/migration-status).
+
+### Format
+
+```go
+// @migration-replaces: METHOD /legacy/path
+// @migration-note: Optional explanation of why the path changed.
+api.METHOD("/new/path", methods.Handler)
+```
+
+- **`@migration-replaces`** — required. Must include the HTTP method and the full legacy path.
+  Add one line per legacy path if the new endpoint replaces multiple old ones.
+- **`@migration-note`** — optional. Free-form description of the change.
+
+The annotation block may contain blank lines and plain `//` comments between entries,
+but must not be interrupted by any other code before the route line.
+
+### Example
+
+```go
+// @migration-replaces: POST /authentication/phone_island_token_login
+// @migration-note: Replaced by the new persistent token API.
+api.POST("/tokens/persistent/:audience", methods.CreatePersistentToken)
+```
+
+> **Note:** Annotations are only needed when the path **changes**. If the middleware
+> exposes the exact same path as the legacy server, the dashboard detects it automatically.
+
 ## Configuration
 
 The application can be configured using the following environment variables:
