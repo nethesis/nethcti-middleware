@@ -37,11 +37,13 @@ func TestWatchCallSummary_StartsUserScopedWatch(t *testing.T) {
 	originalGetUserInfo := getUserInfoFunc
 	originalCheck := checkUserParticipationFunc
 	originalCheckByLinkedID := checkUserParticipationByLinkedIDFunc
+	originalResolve := resolveLinkedIDToUniqueIDFunc
 	originalStartWatch := startSummaryWatchFunc
 	defer func() {
 		getUserInfoFunc = originalGetUserInfo
 		checkUserParticipationFunc = originalCheck
 		checkUserParticipationByLinkedIDFunc = originalCheckByLinkedID
+		resolveLinkedIDToUniqueIDFunc = originalResolve
 		startSummaryWatchFunc = originalStartWatch
 	}()
 
@@ -54,10 +56,14 @@ func TestWatchCallSummary_StartsUserScopedWatch(t *testing.T) {
 	checkUserParticipationByLinkedIDFunc = func(string, []string) (bool, error) {
 		return true, nil
 	}
+	resolveLinkedIDToUniqueIDFunc = func(string, []string) (string, error) {
+		return "abc123", nil
+	}
 
-	var gotUniqueID, gotUsername string
-	startSummaryWatchFunc = func(uniqueID, username string) summary.WatchStartResult {
+	var gotUniqueID, gotLinkedID, gotUsername string
+	startSummaryWatchFunc = func(uniqueID, linkedID, username string) summary.WatchStartResult {
 		gotUniqueID = uniqueID
+		gotLinkedID = linkedID
 		gotUsername = username
 		return summary.WatchStarted
 	}
@@ -70,7 +76,7 @@ func TestWatchCallSummary_StartsUserScopedWatch(t *testing.T) {
 	router.POST("/summary/watch", WatchCallSummary)
 
 	w := httptest.NewRecorder()
-	body, _ := json.Marshal(map[string]string{"uniqueid": "abc123"})
+	body, _ := json.Marshal(map[string]string{"uniqueid": "abc123", "linkedid": "linked123"})
 	req, _ := http.NewRequest("POST", "/summary/watch", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	router.ServeHTTP(w, req)
@@ -87,6 +93,9 @@ func TestWatchCallSummary_StartsUserScopedWatch(t *testing.T) {
 	}
 	if gotUniqueID != "abc123" {
 		t.Fatalf("unexpected watched uniqueid: %s", gotUniqueID)
+	}
+	if gotLinkedID != "linked123" {
+		t.Fatalf("unexpected watched linkedid: %s", gotLinkedID)
 	}
 	if gotUsername != "alice" {
 		t.Fatalf("unexpected watched username: %s", gotUsername)
@@ -125,7 +134,7 @@ func TestWatchCallSummary_RejectsUserOutsideCall(t *testing.T) {
 	}
 
 	called := false
-	startSummaryWatchFunc = func(uniqueID, username string) summary.WatchStartResult {
+	startSummaryWatchFunc = func(uniqueID, linkedID, username string) summary.WatchStartResult {
 		called = true
 		return summary.WatchStarted
 	}
@@ -181,7 +190,7 @@ func TestWatchCallSummary_ReturnsAlreadyActiveWhenWatcherExists(t *testing.T) {
 	checkUserParticipationByLinkedIDFunc = func(string, []string) (bool, error) {
 		return true, nil
 	}
-	startSummaryWatchFunc = func(uniqueID, username string) summary.WatchStartResult {
+	startSummaryWatchFunc = func(uniqueID, linkedID, username string) summary.WatchStartResult {
 		return summary.WatchAlreadyActive
 	}
 
@@ -241,7 +250,7 @@ func TestWatchCallSummary_ReturnsUnavailableWhenWatcherIsMisconfigured(t *testin
 	checkUserParticipationByLinkedIDFunc = func(string, []string) (bool, error) {
 		return true, nil
 	}
-	startSummaryWatchFunc = func(uniqueID, username string) summary.WatchStartResult {
+	startSummaryWatchFunc = func(uniqueID, linkedID, username string) summary.WatchStartResult {
 		return summary.WatchMisconfigured
 	}
 

@@ -75,7 +75,7 @@ var (
 	fetchSummaryFunc       = fetchSummaryFromDB
 	updateSummaryFunc      = updateSummaryInDB
 	deleteSummaryFunc      = deleteSummaryInDB
-	startSummaryWatchFunc  = summary.StartSummaryWatch
+	startSummaryWatchFunc  = summary.StartSummaryWatchWithLinkedID
 )
 
 func getUniqueIDFromPath(c *gin.Context) string {
@@ -106,6 +106,7 @@ func WatchCallSummary(c *gin.Context) {
 	}
 
 	uniqueIDHint := strings.TrimSpace(req.UniqueID)
+	linkedID := strings.TrimSpace(req.LinkedID)
 	if uniqueIDHint == "" {
 		c.JSON(http.StatusBadRequest, structs.Map(models.StatusBadRequest{
 			Code:    http.StatusBadRequest,
@@ -134,7 +135,7 @@ func WatchCallSummary(c *gin.Context) {
 		return
 	}
 
-	uniqueID, ok, err := ensureUserParticipatedInCall(c, uniqueIDHint, strings.TrimSpace(req.LinkedID))
+	uniqueID, ok, err := ensureUserParticipatedInCall(c, uniqueIDHint, linkedID)
 	if err != nil {
 		if errors.Is(err, errUnauthorized) {
 			c.JSON(http.StatusUnauthorized, structs.Map(models.StatusUnauthorized{
@@ -162,7 +163,7 @@ func WatchCallSummary(c *gin.Context) {
 		return
 	}
 
-	startResult := startSummaryWatchFunc(uniqueID, username)
+	startResult := startSummaryWatchFunc(uniqueID, linkedID, username)
 	if startResult != summary.WatchStarted {
 		message := "watch unavailable"
 		switch startResult {
