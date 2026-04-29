@@ -31,6 +31,7 @@ var (
 	checkUserParticipationFunc           = checkUserParticipationInCDR
 	checkUserParticipationByLinkedIDFunc = checkUserParticipationByLinkedIDInCDR
 	resolveLinkedIDToUniqueIDFunc        = resolveUniqueIDByLinkedIDForUserInCDR
+	discoverLinkedIDFromCDRFunc          = discoverLinkedIDFromCDR
 )
 
 var errUnauthorized = errors.New("unauthorized")
@@ -179,6 +180,19 @@ func getUserPhoneNumbersFromContext(c *gin.Context) ([]string, error) {
 func resolveAuthorizedUniqueID(uniqueID string, linkedID string, phoneNumbers []string) (string, bool, error) {
 	if len(phoneNumbers) == 0 {
 		return "", false, nil
+	}
+
+	// If linkedID not provided by client, try to discover it from CDR.
+	// This handles older clients and queue/transfer calls where the frontend
+	// only knows the initial leg's uniqueID, not the shared linkedID.
+	if linkedID == "" && uniqueID != "" {
+		discovered, err := discoverLinkedIDFromCDRFunc(uniqueID)
+		if err != nil {
+			return "", false, err
+		}
+		if discovered != "" {
+			linkedID = discovered
+		}
 	}
 
 	if linkedID != "" {
@@ -487,5 +501,36 @@ func resolveUniqueIDByLinkedIDForUserInCDR(linkedID string, phoneNumbers []strin
 		return "", err
 	}
 
+	return "", nil
+}
+
+// discoverLinkedIDFromCDR looks up the linkedid for a given uniqueid in the CDR.
+// This is used as a fallback when the client did not provide a linkedid, allowing
+// the middleware to find all legs of a multi-leg call (e.g., queue or transfer calls).
+func discoverLinkedIDFromCDR(uniqueID string) (string, error) {
+	if uniqueID == "" {
+		return "", nil
+	}
+
+	database := db.GetCDRDB()
+	if database == nil {
+		return "", nil
+	}
+
+	queryCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var linkedID sql.NullString
+	err := database.QueryRowContext(queryCtx, "SELECT linkedid FROM cdr WHERE uniqueid = ? LIMIT 1", uniqueID).Scan(&linkedID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", nil
+		}
+		return "", err
+	}
+
+	if linkedID.Valid {
+		return strings.TrimSpace(linkedID.String), nil
+	}
 	return "", nil
 }
