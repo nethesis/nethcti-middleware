@@ -67,7 +67,7 @@ func TestStartSummaryWatchBroadcastsAndStops(t *testing.T) {
 		ch <- msg
 	}
 
-	if StartSummaryWatch("abc123", "alice") != WatchStarted {
+	if StartSummaryWatchWithLinkedID("abc123", "linked123", "alice") != WatchStarted {
 		t.Fatalf("expected watcher to start")
 	}
 
@@ -75,6 +75,9 @@ func TestStartSummaryWatchBroadcastsAndStops(t *testing.T) {
 	case msg := <-ch:
 		if msg.UniqueID != "abc123" {
 			t.Fatalf("unexpected uniqueid: %s", msg.UniqueID)
+		}
+		if msg.LinkedID != "linked123" {
+			t.Fatalf("unexpected linkedid: %s", msg.LinkedID)
 		}
 		if msg.Username != "alice" {
 			t.Fatalf("unexpected username: %s", msg.Username)

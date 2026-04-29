@@ -22,6 +22,7 @@ import (
 // SummaryMessage represents the payload sent over WebSocket when a summary is available.
 type SummaryMessage struct {
 	UniqueID      string `json:"uniqueid"`
+	LinkedID      string `json:"linkedid,omitempty"`
 	DisplayName   string `json:"display_name,omitempty"`
 	DisplayNumber string `json:"display_number,omitempty"`
 	Username      string `json:"-"`
@@ -39,10 +40,10 @@ type watcher struct {
 type WatchStartResult string
 
 const (
-	WatchStarted              WatchStartResult = "started"
-	WatchAlreadyActive        WatchStartResult = "already_active"
-	WatchMisconfigured        WatchStartResult = "misconfigured"
-	WatchInvalidInput         WatchStartResult = "invalid_input"
+	WatchStarted       WatchStartResult = "started"
+	WatchAlreadyActive WatchStartResult = "already_active"
+	WatchMisconfigured WatchStartResult = "misconfigured"
+	WatchInvalidInput  WatchStartResult = "invalid_input"
 )
 
 var summaryWatcher = &watcher{active: make(map[string]context.CancelFunc)}
@@ -66,7 +67,16 @@ func buildWatchKey(uniqueID, username string) string {
 // StartSummaryWatch registers a watcher for the given user and unique ID.
 // It returns a result that distinguishes whether the watcher started, was already active, or could not start.
 func StartSummaryWatch(uniqueID, username string) WatchStartResult {
+	return StartSummaryWatchWithLinkedID(uniqueID, "", username)
+}
+
+// StartSummaryWatchWithLinkedID registers a watcher and keeps the linked ID for the notification payload.
+func StartSummaryWatchWithLinkedID(uniqueID, linkedID, username string) WatchStartResult {
 	cleanUniqueID := strings.TrimSpace(uniqueID)
+	cleanLinkedID := strings.TrimSpace(linkedID)
+	if cleanLinkedID == "" {
+		cleanLinkedID = cleanUniqueID
+	}
 	cleanUsername := strings.TrimSpace(username)
 	if cleanUniqueID == "" || cleanUsername == "" {
 		return WatchInvalidInput
@@ -89,7 +99,7 @@ func StartSummaryWatch(uniqueID, username string) WatchStartResult {
 	summaryWatcher.active[watchKey] = cancel
 	summaryWatcher.mutex.Unlock()
 
-	go summaryWatcher.watch(ctx, cleanUniqueID, cleanUsername)
+	go summaryWatcher.watch(ctx, cleanUniqueID, cleanLinkedID, cleanUsername)
 	return WatchStarted
 }
 
@@ -110,8 +120,8 @@ func SetSummaryNotifier(fn notifyFunc) {
 	notifySummaryFunc = fn
 }
 
-func (w *watcher) watch(ctx context.Context, uniqueID, username string) {
-	if w.poll(uniqueID, username) {
+func (w *watcher) watch(ctx context.Context, uniqueID, linkedID, username string) {
+	if w.poll(uniqueID, linkedID, username) {
 		return
 	}
 
@@ -125,14 +135,14 @@ func (w *watcher) watch(ctx context.Context, uniqueID, username string) {
 			logs.Log("[INFO][SUMMARY] Watch timeout reached for user " + username + " uniqueid: " + uniqueID)
 			return
 		case <-ticker.C:
-			if w.poll(uniqueID, username) {
+			if w.poll(uniqueID, linkedID, username) {
 				return
 			}
 		}
 	}
 }
 
-func (w *watcher) poll(uniqueID, username string) bool {
+func (w *watcher) poll(uniqueID, linkedID, username string) bool {
 	_, found, err := fetchSummaryFunc(uniqueID)
 	if err != nil {
 		logs.Log("[ERROR][SUMMARY] Failed to fetch summary for uniqueid " + uniqueID + ": " + err.Error())
@@ -155,6 +165,7 @@ func (w *watcher) poll(uniqueID, username string) bool {
 	displayName, displayNumber := resolveSummaryDisplay(uniqueID, username)
 	notifySummaryFunc(SummaryMessage{
 		UniqueID:      uniqueID,
+		LinkedID:      linkedID,
 		DisplayName:   displayName,
 		DisplayNumber: displayNumber,
 		Username:      username,
