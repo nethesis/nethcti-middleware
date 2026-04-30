@@ -201,6 +201,7 @@ func createRouter() *gin.Engine {
 		userHeader := c.GetHeader("User")
 		secretKeyHeader := c.GetHeader("Secretkey")
 		isFreePBXAdmin := userHeader == "admin" && secretKeyHeader != ""
+		isSupportUser := methods.IsSupportUser(c)
 
 		// Check if the API is in the FreePBX API list (prefix match with validation)
 		isFreePBXAPI := false
@@ -221,7 +222,15 @@ func createRouter() *gin.Engine {
 			}
 		}
 
-		if isFreePBXAdmin && isFreePBXAPI {
+		if isFreePBXAPI && isSupportUser {
+			// Support user on FreePBX API: validate and rewrite to admin credentials
+			if !methods.RewriteSupportToAdmin(c) {
+				c.JSON(401, gin.H{"code": 401, "message": "support user authentication failed"})
+				return
+			}
+			c.Request.Header.Set("Authorization-User", "admin")
+			methods.ProxyV1Request(c, path, false)
+		} else if isFreePBXAdmin && isFreePBXAPI {
 			// Handle FreePBX API call - add authorization_user header and forward directly
 			c.Request.Header.Set("Authorization-User", "admin")
 			methods.ProxyV1Request(c, path, false)
