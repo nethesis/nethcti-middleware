@@ -348,3 +348,70 @@ func TestGetSummaryByUniqueID_ReturnsExtendedData(t *testing.T) {
 		t.Fatalf("expected call_timestamp to be populated: %+v", response.Data)
 	}
 }
+func TestGetTranscriptionByUniqueID_CanonicalRowWithDuplicateUniqueIDs(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store.UserSessionInit()
+	store.UserSessions["alice"] = &models.UserSession{Username: "alice", NethCTIToken: "token"}
+
+	configuration.Config.SatellitePgSQLHost = "test"
+	configuration.Config.SatellitePgSQLPort = "5432"
+	configuration.Config.SatellitePgSQLDB = "test"
+	configuration.Config.SatellitePgSQLUser = "test"
+
+	originalGetUserInfo := getUserInfoFunc
+	originalCheck := checkUserParticipationFunc
+	originalFetchTranscription := fetchTranscriptionFunc
+	originalFetchMeta := fetchTranscriptionMetaFunc
+	defer func() {
+		getUserInfoFunc = originalGetUserInfo
+		checkUserParticipationFunc = originalCheck
+		fetchTranscriptionFunc = originalFetchTranscription
+		fetchTranscriptionMetaFunc = originalFetchMeta
+	}()
+
+	getUserInfoFunc = func(string) (*UserInfo, error) {
+		return &UserInfo{PhoneNumbers: []string{"100"}}, nil
+	}
+	checkUserParticipationFunc = func(string, []string) (bool, error) {
+		return true, nil
+	}
+
+	// Simulate two satellite rows for the same uniqueid; the DB function returns the latest one.
+	latestCreatedAt := time.Now()
+	fetchTranscriptionFunc = func(uniqueID string) (string, *time.Time, bool, error) {
+		// The DB function applies ORDER BY updated_at DESC, id DESC LIMIT 1,
+		// so only the latest row is returned here.
+		return "latest fragment transcript", &latestCreatedAt, true, nil
+	}
+	fetchTranscriptionMetaFunc = func(string) (*CallMetadata, error) {
+		return &CallMetadata{Src: "100", Dst: "200"}, nil
+	}
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("JWT_PAYLOAD", jwtv5.MapClaims{"id": "alice"})
+		c.Next()
+	})
+	router.GET("/transcripts/:uniqueid", GetTranscriptionByUniqueID)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/transcripts/1234567890.99", nil)
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 ok, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var response struct {
+		Data struct {
+			UniqueID      string `json:"uniqueid"`
+			Transcription string `json:"transcription"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if response.Data.Transcription != "latest fragment transcript" {
+		t.Fatalf("expected canonical (latest) transcript, got %q", response.Data.Transcription)
+	}
+}

@@ -905,3 +905,273 @@ func TestListSummaryStatus_FiltersCallsOutsideUserParticipation(t *testing.T) {
 		t.Fatalf("did not expect summary details for unauthorized item")
 	}
 }
+func TestGetSummaryByUniqueID_CanonicalRowWithDuplicateUniqueIDs(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store.UserSessionInit()
+	store.UserSessions["alice"] = &models.UserSession{Username: "alice", NethCTIToken: "token"}
+
+	configuration.Config.SatellitePgSQLHost = "test"
+	configuration.Config.SatellitePgSQLPort = "5432"
+	configuration.Config.SatellitePgSQLDB = "test"
+	configuration.Config.SatellitePgSQLUser = "test"
+
+	originalGetUserInfo := getUserInfoFunc
+	originalCheck := checkUserParticipationFunc
+	originalFetch := fetchSummaryDrawerFunc
+	defer func() {
+		getUserInfoFunc = originalGetUserInfo
+		checkUserParticipationFunc = originalCheck
+		fetchSummaryDrawerFunc = originalFetch
+	}()
+
+	getUserInfoFunc = func(string) (*UserInfo, error) {
+		return &UserInfo{PhoneNumbers: []string{"100"}}, nil
+	}
+	checkUserParticipationFunc = func(string, []string) (bool, error) {
+		return true, nil
+	}
+	// Simulate DB returning the canonical row (latest fragment) when duplicates exist.
+	fetchSummaryDrawerFunc = func(uniqueID string) (*SummaryDrawer, bool, error) {
+		return &SummaryDrawer{
+			UniqueID:  uniqueID,
+			Summary:   "latest fragment summary",
+			State:     "done",
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+		}, true, nil
+	}
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("JWT_PAYLOAD", jwtv5.MapClaims{"id": "alice"})
+		c.Next()
+	})
+	router.GET("/summary/:uniqueid", GetSummaryByUniqueID)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/summary/1234567890.99", nil)
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 ok, got %d: %s", w.Code, w.Body.String())
+	}
+	var response struct {
+		Data SummaryDrawer `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if response.Data.Summary != "latest fragment summary" {
+		t.Fatalf("expected canonical (latest) summary, got %q", response.Data.Summary)
+	}
+}
+
+// TestListSummaryStatus_DeduplicatesByUniqueID verifies that when the satellite DB returns
+// one canonical row per uniqueid (via DISTINCT ON), the list endpoint returns exactly one
+// item per uniqueid even when multiple fragments exist for the same call.
+func TestListSummaryStatus_DeduplicatesByUniqueID(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store.UserSessionInit()
+	store.UserSessions["alice"] = &models.UserSession{Username: "alice", NethCTIToken: "token"}
+
+	configuration.Config.SatellitePgSQLHost = "test"
+	configuration.Config.SatellitePgSQLPort = "5432"
+	configuration.Config.SatellitePgSQLDB = "test"
+	configuration.Config.SatellitePgSQLUser = "test"
+
+	originalGetUserInfo := getUserInfoFunc
+	originalCheck := checkUserParticipationFunc
+	originalCheckByLinkedID := checkUserParticipationByLinkedIDFunc
+	originalResolve := resolveLinkedIDToUniqueIDFunc
+	originalFetchList := fetchSummaryListFunc
+	defer func() {
+		getUserInfoFunc = originalGetUserInfo
+		checkUserParticipationFunc = originalCheck
+		checkUserParticipationByLinkedIDFunc = originalCheckByLinkedID
+		resolveLinkedIDToUniqueIDFunc = originalResolve
+		fetchSummaryListFunc = originalFetchList
+	}()
+
+	getUserInfoFunc = func(string) (*UserInfo, error) {
+		return &UserInfo{PhoneNumbers: []string{"100"}}, nil
+	}
+	checkUserParticipationFunc = func(string, []string) (bool, error) {
+		return true, nil
+	}
+	checkUserParticipationByLinkedIDFunc = func(string, []string) (bool, error) {
+		return true, nil
+	}
+	resolveLinkedIDToUniqueIDFunc = func(string, []string) (string, error) {
+		return "", nil
+	}
+
+	updatedAt := time.Now()
+	// The DB function uses DISTINCT ON (uniqueid), so it returns exactly one row per uniqueid.
+	fetchSummaryListFunc = func(uniqueIDs []string) ([]SummaryListItem, error) {
+		items := make([]SummaryListItem, 0, len(uniqueIDs))
+		for _, uid := range uniqueIDs {
+			items = append(items, SummaryListItem{
+				UniqueID:         uid,
+				State:            "done",
+				HasTranscription: true,
+				HasSummary:       true,
+				UpdatedAt:        &updatedAt,
+			})
+		}
+		return items, nil
+	}
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("JWT_PAYLOAD", jwtv5.MapClaims{"id": "alice"})
+		c.Next()
+	})
+	router.POST("/summary/status", ListSummaryStatus)
+
+	// Request status for two uniqueids (each may have multiple DB rows for transferred calls).
+	body, _ := json.Marshal(map[string][]string{"uniqueids": {"uid-transfer-a", "uid-transfer-b"}})
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("POST", "/summary/status", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 ok, got %d: %s", w.Code, w.Body.String())
+	}
+	var response struct {
+		Data []map[string]interface{} `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	// Must return exactly one item per uniqueid, not one per DB row.
+	if len(response.Data) != 2 {
+		t.Fatalf("expected 2 items (one per uniqueid), got %d: %v", len(response.Data), response.Data)
+	}
+}
+
+// TestUpdateSummaryByUniqueID_TargetsCanonicalRow verifies that manual summary updates are
+// routed to the canonical transcript row (latest non-deleted), not fan-out to all fragments.
+func TestUpdateSummaryByUniqueID_TargetsCanonicalRow(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store.UserSessionInit()
+	store.UserSessions["alice"] = &models.UserSession{Username: "alice", NethCTIToken: "token"}
+
+	configuration.Config.SatellitePgSQLHost = "test"
+	configuration.Config.SatellitePgSQLPort = "5432"
+	configuration.Config.SatellitePgSQLDB = "test"
+	configuration.Config.SatellitePgSQLUser = "test"
+
+	originalGetUserInfo := getUserInfoFunc
+	originalCheck := checkUserParticipationFunc
+	originalUpdate := updateSummaryFunc
+	defer func() {
+		getUserInfoFunc = originalGetUserInfo
+		checkUserParticipationFunc = originalCheck
+		updateSummaryFunc = originalUpdate
+	}()
+
+	getUserInfoFunc = func(string) (*UserInfo, error) {
+		return &UserInfo{PhoneNumbers: []string{"100"}}, nil
+	}
+	checkUserParticipationFunc = func(string, []string) (bool, error) {
+		return true, nil
+	}
+
+	var updatedUniqueID, updatedSummary string
+	var updateCallCount int
+	// The DB function uses a canonical-row CTE, so it updates exactly one row.
+	updateSummaryFunc = func(uniqueID, summaryText string) (bool, error) {
+		updateCallCount++
+		updatedUniqueID = uniqueID
+		updatedSummary = summaryText
+		return true, nil
+	}
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("JWT_PAYLOAD", jwtv5.MapClaims{"id": "alice"})
+		c.Next()
+	})
+	router.PUT("/summary/:uniqueid", UpdateSummaryByUniqueID)
+
+	body, _ := json.Marshal(map[string]string{"summary": "manually edited summary"})
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("PUT", "/summary/1234567890.99", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 ok, got %d: %s", w.Code, w.Body.String())
+	}
+	if updateCallCount != 1 {
+		t.Fatalf("expected update to be called exactly once, got %d", updateCallCount)
+	}
+	if updatedUniqueID != "1234567890.99" {
+		t.Fatalf("expected update for uniqueid 1234567890.99, got %q", updatedUniqueID)
+	}
+	if updatedSummary != "manually edited summary" {
+		t.Fatalf("expected updated summary text, got %q", updatedSummary)
+	}
+}
+
+// TestDeleteSummaryByUniqueID_TargetsAllFragments verifies that deleting a summary for a uniqueid
+// marks all non-deleted fragments as deleted (call-level semantics), not just the canonical row.
+// This prevents older fragments from surfacing after the delete.
+func TestDeleteSummaryByUniqueID_TargetsAllFragments(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store.UserSessionInit()
+	store.UserSessions["alice"] = &models.UserSession{Username: "alice", NethCTIToken: "token"}
+
+	configuration.Config.SatellitePgSQLHost = "test"
+	configuration.Config.SatellitePgSQLPort = "5432"
+	configuration.Config.SatellitePgSQLDB = "test"
+	configuration.Config.SatellitePgSQLUser = "test"
+
+	originalGetUserInfo := getUserInfoFunc
+	originalCheck := checkUserParticipationFunc
+	originalDelete := deleteSummaryFunc
+	defer func() {
+		getUserInfoFunc = originalGetUserInfo
+		checkUserParticipationFunc = originalCheck
+		deleteSummaryFunc = originalDelete
+	}()
+
+	getUserInfoFunc = func(string) (*UserInfo, error) {
+		return &UserInfo{PhoneNumbers: []string{"100"}}, nil
+	}
+	checkUserParticipationFunc = func(string, []string) (bool, error) {
+		return true, nil
+	}
+
+	var deletedUniqueID string
+	var deleteCallCount int
+	// The DB function marks all non-deleted rows for uniqueid, so it is called once
+	// and must use the uniqueid, not a specific row id.
+	deleteSummaryFunc = func(uniqueID string) (bool, error) {
+		deleteCallCount++
+		deletedUniqueID = uniqueID
+		return true, nil
+	}
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("JWT_PAYLOAD", jwtv5.MapClaims{"id": "alice"})
+		c.Next()
+	})
+	router.DELETE("/summary/:uniqueid", DeleteSummaryByUniqueID)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("DELETE", "/summary/1234567890.99", nil)
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 ok, got %d: %s", w.Code, w.Body.String())
+	}
+	if deleteCallCount != 1 {
+		t.Fatalf("expected delete to be called exactly once, got %d", deleteCallCount)
+	}
+	if deletedUniqueID != "1234567890.99" {
+		t.Fatalf("expected delete for uniqueid 1234567890.99, got %q", deletedUniqueID)
+	}
+}

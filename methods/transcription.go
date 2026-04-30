@@ -288,7 +288,7 @@ func fetchTranscriptionFromDB(uniqueID string) (string, *time.Time, bool, error)
 	var cleaned sql.NullString
 	var raw sql.NullString
 	var createdAt sql.NullTime
-	query := "SELECT cleaned_transcription, raw_transcription, created_at FROM transcripts WHERE uniqueid = $1 LIMIT 1"
+	query := "SELECT cleaned_transcription, raw_transcription, created_at FROM transcripts WHERE uniqueid = $1 AND deleted_at IS NULL ORDER BY updated_at DESC, id DESC LIMIT 1"
 	err := database.QueryRowContext(queryCtx, query, uniqueID).Scan(&cleaned, &raw, &createdAt)
 	if err != nil {
 		if err == sql.ErrNoRows {

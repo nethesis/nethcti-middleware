@@ -746,7 +746,8 @@ func fetchSummaryDrawerFromDB(uniqueID string) (*SummaryDrawer, bool, error) {
 	query := `
 		SELECT uniqueid, summary, sentiment, state, cleaned_transcription, raw_transcription, created_at, updated_at, deleted_at
 		FROM transcripts
-		WHERE uniqueid = $1
+		WHERE uniqueid = $1 AND deleted_at IS NULL
+		ORDER BY updated_at DESC, id DESC
 		LIMIT 1`
 
 	var (
@@ -837,10 +838,10 @@ func fetchSummaryListFromDB(uniqueIDs []string) ([]SummaryListItem, error) {
 
 	placeholders := buildPostgresPlaceholders(len(uniqueIDs), 1)
 	query := fmt.Sprintf(`
-		SELECT uniqueid, cleaned_transcription, raw_transcription, summary, state, updated_at
+		SELECT DISTINCT ON (uniqueid) uniqueid, cleaned_transcription, raw_transcription, summary, state, updated_at
 		FROM transcripts
 		WHERE deleted_at IS NULL AND uniqueid IN (%s)
-		ORDER BY updated_at DESC`, placeholders)
+		ORDER BY uniqueid, updated_at DESC, id DESC`, placeholders)
 
 	args := make([]interface{}, 0, len(uniqueIDs))
 	for _, id := range uniqueIDs {
@@ -911,7 +912,7 @@ func fetchSummaryStateFromDB(uniqueID string) (string, bool, bool, bool, error) 
 		deletedAt sql.NullTime
 	)
 
-	query := "SELECT state, summary, cleaned_transcription, raw_transcription, deleted_at FROM transcripts WHERE uniqueid = $1 LIMIT 1"
+	query := "SELECT state, summary, cleaned_transcription, raw_transcription, deleted_at FROM transcripts WHERE uniqueid = $1 AND deleted_at IS NULL ORDER BY updated_at DESC, id DESC LIMIT 1"
 	if err := database.QueryRowContext(queryCtx, query, uniqueID).Scan(&state, &summary, &cleaned, &raw, &deletedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return "", false, false, false, nil
@@ -941,7 +942,7 @@ func fetchSummaryFromDB(uniqueID string) (string, bool, error) {
 	defer cancel()
 
 	var summaryText sql.NullString
-	query := "SELECT summary FROM transcripts WHERE uniqueid = $1 LIMIT 1"
+	query := "SELECT summary FROM transcripts WHERE uniqueid = $1 AND deleted_at IS NULL ORDER BY updated_at DESC, id DESC LIMIT 1"
 	err := database.QueryRowContext(queryCtx, query, uniqueID).Scan(&summaryText)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -966,7 +967,11 @@ func updateSummaryInDB(uniqueID, summaryText string) (bool, error) {
 	queryCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	query := "UPDATE transcripts SET summary = $1 WHERE uniqueid = $2"
+	query := `
+		WITH canonical AS (
+			SELECT id FROM transcripts WHERE uniqueid = $2 AND deleted_at IS NULL ORDER BY updated_at DESC, id DESC LIMIT 1
+		)
+		UPDATE transcripts SET summary = $1 WHERE id IN (SELECT id FROM canonical)`
 	result, err := database.ExecContext(queryCtx, query, summaryText, uniqueID)
 	if err != nil {
 		return false, err
@@ -989,7 +994,7 @@ func deleteSummaryInDB(uniqueID string) (bool, error) {
 	queryCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	query := "UPDATE transcripts SET deleted_at = NOW() WHERE uniqueid = $1"
+	query := "UPDATE transcripts SET deleted_at = NOW() WHERE uniqueid = $1 AND deleted_at IS NULL"
 	result, err := database.ExecContext(queryCtx, query, uniqueID)
 	if err != nil {
 		return false, err
@@ -1030,10 +1035,10 @@ func fetchCallMetadataFromCDR(queryCtx context.Context, database *sql.DB, unique
 		callDate   sql.NullTime
 	)
 
-	query := "SELECT src, dst, cnam, company, dst_company, dst_cnam, calldate FROM cdr WHERE uniqueid = ? LIMIT 1"
+	query := "SELECT src, dst, cnam, company, dst_company, dst_cnam, calldate FROM cdr WHERE uniqueid = ? ORDER BY calldate DESC LIMIT 1"
 	err := database.QueryRowContext(queryCtx, query, uniqueID).Scan(&src, &dst, &cnam, &company, &dstCompany, &dstCNam, &callDate)
 	if err != nil && isMissingColumnError(err) {
-		query = "SELECT src, dst, cnam, dst_cnam, calldate FROM cdr WHERE uniqueid = ? LIMIT 1"
+		query = "SELECT src, dst, cnam, dst_cnam, calldate FROM cdr WHERE uniqueid = ? ORDER BY calldate DESC LIMIT 1"
 		err = database.QueryRowContext(queryCtx, query, uniqueID).Scan(&src, &dst, &cnam, &dstCNam, &callDate)
 	}
 	if err != nil {
