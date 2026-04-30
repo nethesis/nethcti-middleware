@@ -21,7 +21,7 @@ import (
 	"github.com/nethesis/nethcti-middleware/store"
 )
 
-func TestGetTranscription_UnauthorizedWhenNotParticipant(t *testing.T) {
+func TestGetTranscriptionByUniqueID_UnauthorizedWhenNotParticipant(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	store.UserSessionInit()
 	store.UserSessions["alice"] = &models.UserSession{Username: "alice", NethCTIToken: "token"}
@@ -33,15 +33,20 @@ func TestGetTranscription_UnauthorizedWhenNotParticipant(t *testing.T) {
 
 	originalGetUserInfo := getUserInfoFunc
 	originalCheck := checkUserParticipationFunc
+	originalCheckByLinkedID := checkUserParticipationByLinkedIDFunc
 	defer func() {
 		getUserInfoFunc = originalGetUserInfo
 		checkUserParticipationFunc = originalCheck
+		checkUserParticipationByLinkedIDFunc = originalCheckByLinkedID
 	}()
 
 	getUserInfoFunc = func(string) (*UserInfo, error) {
 		return &UserInfo{PhoneNumbers: []string{"100"}}, nil
 	}
 	checkUserParticipationFunc = func(string, []string) (bool, error) {
+		return false, nil
+	}
+	checkUserParticipationByLinkedIDFunc = func(string, []string) (bool, error) {
 		return false, nil
 	}
 
@@ -88,13 +93,18 @@ func TestGetTranscriptionByUniqueID_ReturnsExtendedData(t *testing.T) {
 	checkUserParticipationFunc = func(string, []string) (bool, error) {
 		return true, nil
 	}
-
 	createdAt := time.Now()
-	fetchTranscriptionFunc = func(string) (string, *time.Time, bool, error) {
+	fetchTranscriptionFunc = func(uniqueID string) (string, *time.Time, bool, error) {
+		if uniqueID != "abc123" {
+			return "", nil, false, nil
+		}
 		return "transcription text", &createdAt, true, nil
 	}
 	callTimestamp := time.Now()
-	fetchTranscriptionMetaFunc = func(string) (*CallMetadata, error) {
+	fetchTranscriptionMetaFunc = func(uniqueID string) (*CallMetadata, error) {
+		if uniqueID != "abc123" {
+			t.Fatalf("unexpected cdr metadata lookup id: %s", uniqueID)
+		}
 		return &CallMetadata{
 			Src:           "100",
 			Dst:           "200",
@@ -173,11 +183,12 @@ func TestUpdateSummary_SucceedsWhenAuthorized(t *testing.T) {
 	checkUserParticipationFunc = func(string, []string) (bool, error) {
 		return true, nil
 	}
-
+	var updatedUniqueID string
 	var updatedSummary string
 	updateSummaryFunc = func(uniqueID, summaryText string) (bool, error) {
+		updatedUniqueID = uniqueID
 		updatedSummary = summaryText
-		return true, nil
+		return uniqueID == "abc123", nil
 	}
 
 	router := gin.New()
@@ -198,6 +209,59 @@ func TestUpdateSummary_SucceedsWhenAuthorized(t *testing.T) {
 	}
 	if updatedSummary != "test summary" {
 		t.Fatalf("expected summary to be updated, got %q", updatedSummary)
+	}
+	if updatedUniqueID != "abc123" {
+		t.Fatalf("expected update to use path uniqueid, got %q", updatedUniqueID)
+	}
+}
+
+func TestDeleteSummary_SucceedsWhenAuthorized(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store.UserSessionInit()
+	store.UserSessions["alice"] = &models.UserSession{Username: "alice", NethCTIToken: "token"}
+
+	configuration.Config.SatellitePgSQLHost = "test"
+	configuration.Config.SatellitePgSQLPort = "5432"
+	configuration.Config.SatellitePgSQLDB = "test"
+	configuration.Config.SatellitePgSQLUser = "test"
+
+	originalGetUserInfo := getUserInfoFunc
+	originalCheck := checkUserParticipationFunc
+	originalDelete := deleteSummaryFunc
+	defer func() {
+		getUserInfoFunc = originalGetUserInfo
+		checkUserParticipationFunc = originalCheck
+		deleteSummaryFunc = originalDelete
+	}()
+
+	getUserInfoFunc = func(string) (*UserInfo, error) {
+		return &UserInfo{PhoneNumbers: []string{"100"}}, nil
+	}
+	checkUserParticipationFunc = func(string, []string) (bool, error) {
+		return true, nil
+	}
+	var deletedUniqueID string
+	deleteSummaryFunc = func(uniqueID string) (bool, error) {
+		deletedUniqueID = uniqueID
+		return uniqueID == "abc123", nil
+	}
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("JWT_PAYLOAD", jwtv5.MapClaims{"id": "alice"})
+		c.Next()
+	})
+	router.DELETE("/summary/:uniqueid", DeleteSummaryByUniqueID)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("DELETE", "/summary/abc123", nil)
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 ok, got %d: %s", w.Code, w.Body.String())
+	}
+	if deletedUniqueID != "abc123" {
+		t.Fatalf("expected delete to use path uniqueid, got %q", deletedUniqueID)
 	}
 }
 
@@ -227,6 +291,9 @@ func TestGetSummaryByUniqueID_ReturnsExtendedData(t *testing.T) {
 		return true, nil
 	}
 	fetchSummaryDrawerFunc = func(uniqueID string) (*SummaryDrawer, bool, error) {
+		if uniqueID != "abc123" {
+			return nil, false, nil
+		}
 		callTimestamp := time.Now()
 		return &SummaryDrawer{
 			UniqueID:      uniqueID,
@@ -265,6 +332,9 @@ func TestGetSummaryByUniqueID_ReturnsExtendedData(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
+	if response.Data.UniqueID != "abc123" {
+		t.Fatalf("expected response uniqueid to stay aligned with the API identifier, got %+v", response.Data)
+	}
 	if response.Data.Src != "100" || response.Data.Dst != "200" {
 		t.Fatalf("unexpected src/dst: %+v", response.Data)
 	}
@@ -276,5 +346,72 @@ func TestGetSummaryByUniqueID_ReturnsExtendedData(t *testing.T) {
 	}
 	if response.Data.CallTimestamp == nil {
 		t.Fatalf("expected call_timestamp to be populated: %+v", response.Data)
+	}
+}
+func TestGetTranscriptionByUniqueID_CanonicalRowWithDuplicateUniqueIDs(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store.UserSessionInit()
+	store.UserSessions["alice"] = &models.UserSession{Username: "alice", NethCTIToken: "token"}
+
+	configuration.Config.SatellitePgSQLHost = "test"
+	configuration.Config.SatellitePgSQLPort = "5432"
+	configuration.Config.SatellitePgSQLDB = "test"
+	configuration.Config.SatellitePgSQLUser = "test"
+
+	originalGetUserInfo := getUserInfoFunc
+	originalCheck := checkUserParticipationFunc
+	originalFetchTranscription := fetchTranscriptionFunc
+	originalFetchMeta := fetchTranscriptionMetaFunc
+	defer func() {
+		getUserInfoFunc = originalGetUserInfo
+		checkUserParticipationFunc = originalCheck
+		fetchTranscriptionFunc = originalFetchTranscription
+		fetchTranscriptionMetaFunc = originalFetchMeta
+	}()
+
+	getUserInfoFunc = func(string) (*UserInfo, error) {
+		return &UserInfo{PhoneNumbers: []string{"100"}}, nil
+	}
+	checkUserParticipationFunc = func(string, []string) (bool, error) {
+		return true, nil
+	}
+
+	// Simulate two satellite rows for the same uniqueid; the DB function returns the latest one.
+	latestCreatedAt := time.Now()
+	fetchTranscriptionFunc = func(uniqueID string) (string, *time.Time, bool, error) {
+		// The DB function applies ORDER BY updated_at DESC, id DESC LIMIT 1,
+		// so only the latest row is returned here.
+		return "latest fragment transcript", &latestCreatedAt, true, nil
+	}
+	fetchTranscriptionMetaFunc = func(string) (*CallMetadata, error) {
+		return &CallMetadata{Src: "100", Dst: "200"}, nil
+	}
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("JWT_PAYLOAD", jwtv5.MapClaims{"id": "alice"})
+		c.Next()
+	})
+	router.GET("/transcripts/:uniqueid", GetTranscriptionByUniqueID)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/transcripts/1234567890.99", nil)
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 ok, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var response struct {
+		Data struct {
+			UniqueID      string `json:"uniqueid"`
+			Transcription string `json:"transcription"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if response.Data.Transcription != "latest fragment transcript" {
+		t.Fatalf("expected canonical (latest) transcript, got %q", response.Data.Transcription)
 	}
 }

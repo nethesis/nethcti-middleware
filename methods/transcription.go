@@ -25,10 +25,13 @@ import (
 )
 
 var (
-	getUserInfoFunc            = GetUserInfo
-	fetchTranscriptionFunc     = fetchTranscriptionFromDB
-	fetchTranscriptionMetaFunc = fetchTranscriptionMetadataFromCDR
-	checkUserParticipationFunc = checkUserParticipationInCDR
+	getUserInfoFunc                      = GetUserInfo
+	fetchTranscriptionFunc               = fetchTranscriptionFromDB
+	fetchTranscriptionMetaFunc           = fetchTranscriptionMetadataFromCDR
+	checkUserParticipationFunc           = checkUserParticipationInCDR
+	checkUserParticipationByLinkedIDFunc = checkUserParticipationByLinkedIDInCDR
+	resolveLinkedIDToUniqueIDFunc        = resolveUniqueIDByLinkedIDForUserInCDR
+	discoverLinkedIDFromCDRFunc          = discoverLinkedIDFromCDR
 )
 
 var errUnauthorized = errors.New("unauthorized")
@@ -48,10 +51,11 @@ type TranscriptionDrawer struct {
 	CreatedAt     *time.Time `json:"created_at"`
 }
 
-// GetTranscriptionByUniqueID returns the transcription for the given unique ID.
+// GetTranscriptionByUniqueID returns the transcription for the given uniqueid.
 func GetTranscriptionByUniqueID(c *gin.Context) {
-	uniqueID := strings.TrimSpace(c.Param("uniqueid"))
-	if uniqueID == "" {
+	uniqueIDHint := getUniqueIDFromPath(c)
+	linkedID := getLinkedIDFromQuery(c)
+	if uniqueIDHint == "" {
 		c.JSON(http.StatusBadRequest, structs.Map(models.StatusBadRequest{
 			Code:    http.StatusBadRequest,
 			Message: "uniqueid is required",
@@ -69,7 +73,8 @@ func GetTranscriptionByUniqueID(c *gin.Context) {
 		return
 	}
 
-	if ok, err := ensureUserParticipatedInCall(c, uniqueID); err != nil {
+	uniqueID, ok, err := ensureUserParticipatedInCall(c, uniqueIDHint, linkedID)
+	if err != nil {
 		if errors.Is(err, errUnauthorized) {
 			c.JSON(http.StatusUnauthorized, structs.Map(models.StatusUnauthorized{
 				Code:    http.StatusUnauthorized,
@@ -78,15 +83,16 @@ func GetTranscriptionByUniqueID(c *gin.Context) {
 			}))
 			return
 		}
-		logs.Log("[ERROR][TRANSCRIPTS] Failed to validate CDR participation for uniqueid " + uniqueID + ": " + err.Error())
+		logs.Log("[ERROR][TRANSCRIPTS] Failed to validate CDR participation for uniqueid " + uniqueIDHint + ": " + err.Error())
 		c.JSON(http.StatusServiceUnavailable, structs.Map(models.StatusServiceUnavailable{
 			Code:    http.StatusServiceUnavailable,
 			Message: "cdr database unavailable",
 			Data:    nil,
 		}))
 		return
-	} else if !ok {
-		logForbiddenParticipation(c, uniqueID)
+	}
+	if !ok {
+		logForbiddenParticipation(c, uniqueIDHint)
 		c.JSON(http.StatusForbidden, structs.Map(models.StatusForbidden{
 			Code:    http.StatusForbidden,
 			Message: "forbidden: user not part of call",
@@ -146,30 +152,97 @@ func GetTranscriptionByUniqueID(c *gin.Context) {
 	}))
 }
 
-func ensureUserParticipatedInCall(c *gin.Context, uniqueID string) (bool, error) {
+func getLinkedIDFromQuery(c *gin.Context) string {
+	return strings.TrimSpace(c.Query("linkedid"))
+}
+
+func getUserPhoneNumbersFromContext(c *gin.Context) ([]string, error) {
 	username, err := getUsernameFromContext(c)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 
 	userSession := store.UserSessions[username]
 	if userSession == nil || strings.TrimSpace(userSession.NethCTIToken) == "" {
-		logs.Log("[WARNING][TRANSCRIPTS] Missing user session or token for user " + username + " (uniqueid: " + uniqueID + ")")
-		return false, errUnauthorized
+		logs.Log("[WARNING][TRANSCRIPTS] Missing user session or token for user " + username)
+		return nil, errUnauthorized
 	}
 
 	userInfo, err := getUserInfoFunc(userSession.NethCTIToken)
 	if err != nil {
-		logs.Log("[ERROR][TRANSCRIPTS] Failed to load user info for user " + username + " (uniqueid: " + uniqueID + "): " + err.Error())
-		return false, err
+		logs.Log("[ERROR][TRANSCRIPTS] Failed to load user info for user " + username + ": " + err.Error())
+		return nil, err
 	}
 
-	if len(userInfo.PhoneNumbers) == 0 {
-		logs.Log("[WARNING][TRANSCRIPTS] No phone numbers for user " + username + " (uniqueid: " + uniqueID + ")")
-		return false, nil
+	return userInfo.PhoneNumbers, nil
+}
+
+func resolveAuthorizedUniqueID(uniqueID string, linkedID string, phoneNumbers []string) (string, bool, error) {
+	if len(phoneNumbers) == 0 {
+		return "", false, nil
 	}
 
-	return checkUserParticipationFunc(uniqueID, userInfo.PhoneNumbers)
+	// If linkedID not provided by client, try to discover it from CDR.
+	// This handles older clients and queue/transfer calls where the frontend
+	// only knows the initial leg's uniqueID, not the shared linkedID.
+	if linkedID == "" && uniqueID != "" {
+		discovered, err := discoverLinkedIDFromCDRFunc(uniqueID)
+		if err != nil {
+			return "", false, err
+		}
+		if discovered != "" {
+			linkedID = discovered
+		}
+	}
+
+	if linkedID != "" {
+		ok, err := checkUserParticipationByLinkedIDFunc(linkedID, phoneNumbers)
+		if err != nil {
+			return "", false, err
+		}
+		if ok {
+			resolvedUniqueID, err := resolveLinkedIDToUniqueIDFunc(linkedID, phoneNumbers)
+			if err != nil {
+				return "", false, err
+			}
+			if resolvedUniqueID != "" {
+				return resolvedUniqueID, true, nil
+			}
+			if uniqueID != "" {
+				return uniqueID, true, nil
+			}
+			return "", true, nil
+		}
+	}
+
+	if uniqueID == "" {
+		return "", false, nil
+	}
+
+	ok, err := checkUserParticipationFunc(uniqueID, phoneNumbers)
+	if err != nil {
+		return "", false, err
+	}
+	if !ok {
+		return "", false, nil
+	}
+
+	return uniqueID, true, nil
+}
+
+func ensureUserParticipatedInCall(c *gin.Context, uniqueID string, linkedID string) (string, bool, error) {
+	phoneNumbers, err := getUserPhoneNumbersFromContext(c)
+	if err != nil {
+		return "", false, err
+	}
+
+	if len(phoneNumbers) == 0 {
+		username, _ := getUsernameFromContext(c)
+		logs.Log("[WARNING][TRANSCRIPTS] No phone numbers for user " + username + " (uniqueid: " + uniqueID + ", linkedid: " + linkedID + ")")
+		return "", false, nil
+	}
+
+	return resolveAuthorizedUniqueID(uniqueID, linkedID, phoneNumbers)
 }
 
 func logForbiddenParticipation(c *gin.Context, uniqueID string) {
@@ -215,7 +288,7 @@ func fetchTranscriptionFromDB(uniqueID string) (string, *time.Time, bool, error)
 	var cleaned sql.NullString
 	var raw sql.NullString
 	var createdAt sql.NullTime
-	query := "SELECT cleaned_transcription, raw_transcription, created_at FROM transcripts WHERE uniqueid = $1 LIMIT 1"
+	query := "SELECT cleaned_transcription, raw_transcription, created_at FROM transcripts WHERE uniqueid = $1 AND deleted_at IS NULL ORDER BY updated_at DESC, id DESC LIMIT 1"
 	err := database.QueryRowContext(queryCtx, query, uniqueID).Scan(&cleaned, &raw, &createdAt)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -286,27 +359,23 @@ func checkUserParticipationInCDR(uniqueID string, phoneNumbers []string) (bool, 
 	queryCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	rows, err := database.QueryContext(queryCtx, "SELECT src, dst FROM cdr WHERE uniqueid = ?", uniqueID)
+	rows, err := database.QueryContext(queryCtx, "SELECT src, dst, cnum FROM cdr WHERE uniqueid = ?", uniqueID)
 	if err != nil {
 		return false, err
 	}
 	defer rows.Close()
 
 	for rows.Next() {
-		var src, dst sql.NullString
-		if err := rows.Scan(&src, &dst); err != nil {
+		var src, dst, cnum sql.NullString
+		if err := rows.Scan(&src, &dst, &cnum); err != nil {
 			return false, err
 		}
 
-		if src.Valid {
-			if _, ok := phoneSet[strings.TrimSpace(src.String)]; ok {
-				return true, nil
-			}
-		}
-
-		if dst.Valid {
-			if _, ok := phoneSet[strings.TrimSpace(dst.String)]; ok {
-				return true, nil
+		for _, val := range []sql.NullString{src, dst, cnum} {
+			if val.Valid {
+				if _, ok := phoneSet[strings.TrimSpace(val.String)]; ok {
+					return true, nil
+				}
 			}
 		}
 	}
@@ -316,4 +385,152 @@ func checkUserParticipationInCDR(uniqueID string, phoneNumbers []string) (bool, 
 	}
 
 	return false, nil
+}
+
+// checkUserParticipationByLinkedIDInCDR checks whether any leg of the call chain
+// identified by linkedID has the user's phone number as src, dst, or cnum. This is the
+// correct check for transferred calls and queue calls, where multiple CDR rows
+// share the same linkedid. cnum is also checked to handle outbound calls where src
+// contains the trunk CallerID instead of the originating extension.
+func checkUserParticipationByLinkedIDInCDR(linkedID string, phoneNumbers []string) (bool, error) {
+	if linkedID == "" || len(phoneNumbers) == 0 {
+		return false, nil
+	}
+
+	database := db.GetCDRDB()
+	if database == nil {
+		return false, sql.ErrConnDone
+	}
+
+	phoneSet := make(map[string]struct{}, len(phoneNumbers))
+	for _, number := range phoneNumbers {
+		cleaned := strings.TrimSpace(number)
+		if cleaned != "" {
+			phoneSet[cleaned] = struct{}{}
+		}
+	}
+	if len(phoneSet) == 0 {
+		return false, nil
+	}
+
+	queryCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	rows, err := database.QueryContext(queryCtx, "SELECT src, dst, cnum FROM cdr WHERE linkedid = ?", linkedID)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var src, dst, cnum sql.NullString
+		if err := rows.Scan(&src, &dst, &cnum); err != nil {
+			return false, err
+		}
+
+		for _, val := range []sql.NullString{src, dst, cnum} {
+			if val.Valid {
+				if _, ok := phoneSet[strings.TrimSpace(val.String)]; ok {
+					return true, nil
+				}
+			}
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return false, err
+	}
+
+	return false, nil
+}
+
+func resolveUniqueIDByLinkedIDForUserInCDR(linkedID string, phoneNumbers []string) (string, error) {
+	if linkedID == "" || len(phoneNumbers) == 0 {
+		return "", nil
+	}
+
+	database := db.GetCDRDB()
+	if database == nil {
+		return "", sql.ErrConnDone
+	}
+
+	phoneSet := make(map[string]struct{}, len(phoneNumbers))
+	for _, number := range phoneNumbers {
+		cleaned := strings.TrimSpace(number)
+		if cleaned != "" {
+			phoneSet[cleaned] = struct{}{}
+		}
+	}
+	if len(phoneSet) == 0 {
+		return "", nil
+	}
+
+	queryCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	rows, err := database.QueryContext(
+		queryCtx,
+		`SELECT uniqueid, src, dst, cnum
+		 FROM cdr
+		 WHERE linkedid = ?
+		 ORDER BY CASE WHEN disposition = 'ANSWERED' THEN 0 ELSE 1 END, calldate DESC`,
+		linkedID,
+	)
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var uniqueID string
+		var src, dst, cnum sql.NullString
+		if err := rows.Scan(&uniqueID, &src, &dst, &cnum); err != nil {
+			return "", err
+		}
+
+		for _, val := range []sql.NullString{src, dst, cnum} {
+			if val.Valid {
+				if _, ok := phoneSet[strings.TrimSpace(val.String)]; ok {
+					return uniqueID, nil
+				}
+			}
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return "", err
+	}
+
+	return "", nil
+}
+
+// discoverLinkedIDFromCDR looks up the linkedid for a given uniqueid in the CDR.
+// This is used as a fallback when the client did not provide a linkedid, allowing
+// the middleware to find all legs of a multi-leg call (e.g., queue or transfer calls).
+func discoverLinkedIDFromCDR(uniqueID string) (string, error) {
+	if uniqueID == "" {
+		return "", nil
+	}
+
+	database := db.GetCDRDB()
+	if database == nil {
+		return "", nil
+	}
+
+	queryCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var linkedID sql.NullString
+	err := database.QueryRowContext(queryCtx, "SELECT linkedid FROM cdr WHERE uniqueid = ? LIMIT 1", uniqueID).Scan(&linkedID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", nil
+		}
+		return "", err
+	}
+
+	if linkedID.Valid {
+		return strings.TrimSpace(linkedID.String), nil
+	}
+	return "", nil
 }
