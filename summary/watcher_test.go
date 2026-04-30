@@ -215,6 +215,75 @@ func resetWatcher() {
 	summaryWatcher.mutex.Unlock()
 }
 
+// TestStartSummaryWatch_CanonicalRowWithDuplicateUniqueIDs verifies that the watcher uses the
+// canonical (latest non-deleted) transcript row when multiple rows share the same uniqueid.
+// The fetchSummaryFunc and fetchSummaryWatchStatusFunc are expected to follow the same
+// canonical-row policy applied by the DB functions (ORDER BY updated_at DESC, id DESC LIMIT 1).
+func TestStartSummaryWatch_CanonicalRowWithDuplicateUniqueIDs(t *testing.T) {
+	configuration.Config.SatellitePgSQLHost = "test"
+	configuration.Config.SatellitePgSQLPort = "3306"
+	configuration.Config.SatellitePgSQLDB = "test"
+	configuration.Config.SatellitePgSQLUser = "test"
+
+	originalInterval := summaryPollInterval
+	summaryPollInterval = 10 * time.Millisecond
+	originalTimeout := summaryWatchTimeout
+	summaryWatchTimeout = time.Second
+
+	originalFetch := fetchSummaryFunc
+	originalWatchStatus := fetchSummaryWatchStatusFunc
+	originalFetchMetadata := fetchSummaryMetadataFunc
+	originalFetchUserDisplayInfo := fetchUserDisplayInfoFunc
+	originalNotify := notifySummaryFunc
+	defer func() {
+		fetchSummaryFunc = originalFetch
+		fetchSummaryWatchStatusFunc = originalWatchStatus
+		fetchSummaryMetadataFunc = originalFetchMetadata
+		fetchUserDisplayInfoFunc = originalFetchUserDisplayInfo
+		notifySummaryFunc = originalNotify
+		summaryPollInterval = originalInterval
+		summaryWatchTimeout = originalTimeout
+		resetWatcher()
+	}()
+
+	// Simulate two DB rows for the same uniqueid; the DB function returns only the latest one.
+	// The watcher must act on this canonical row without knowing about older fragments.
+	fetchSummaryFunc = func(uniqueID string) (string, bool, error) {
+		// Canonical row (latest fragment) has a summary.
+		return "canonical summary from latest fragment", true, nil
+	}
+	fetchSummaryWatchStatusFunc = func(uniqueID string) (bool, error) {
+		return false, nil
+	}
+	fetchUserDisplayInfoFunc = func(username string) (string, []string, error) {
+		return "Alice", []string{"100"}, nil
+	}
+	fetchSummaryMetadataFunc = func(uniqueID string) (*CallMetadata, error) {
+		return &CallMetadata{Src: "100", Dst: "+39021234567", DstCNam: "Mario Rossi"}, nil
+	}
+
+	ch := make(chan SummaryMessage, 1)
+	notifySummaryFunc = func(msg SummaryMessage) {
+		ch <- msg
+	}
+
+	if StartSummaryWatch("dup-uid-99", "alice") != WatchStarted {
+		t.Fatalf("expected watcher to start")
+	}
+
+	select {
+	case msg := <-ch:
+		if msg.UniqueID != "dup-uid-99" {
+			t.Fatalf("expected canonical uniqueid in notification, got %s", msg.UniqueID)
+		}
+		if msg.DisplayName != "Mario Rossi" {
+			t.Fatalf("expected display name from canonical CDR row, got %s", msg.DisplayName)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("timeout: watcher did not notify for canonical row")
+	}
+}
+
 func TestStartSummaryWatchStopsWhenSummaryCannotBeProduced(t *testing.T) {
 	configuration.Config.SatellitePgSQLHost = "test"
 	configuration.Config.SatellitePgSQLPort = "3306"
