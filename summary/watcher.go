@@ -195,7 +195,7 @@ func fetchSummaryFromDB(uniqueID string) (string, bool, error) {
 	defer cancel()
 
 	var summary sql.NullString
-	query := "SELECT summary FROM transcripts WHERE uniqueid = $1 LIMIT 1"
+	query := "SELECT summary FROM transcripts WHERE uniqueid = $1 AND deleted_at IS NULL ORDER BY updated_at DESC, id DESC LIMIT 1"
 	err := database.QueryRowContext(queryCtx, query, uniqueID).Scan(&summary)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -227,7 +227,7 @@ func fetchSummaryWatchStatusFromDB(uniqueID string) (bool, error) {
 		raw     sql.NullString
 	)
 
-	query := "SELECT state, summary, cleaned_transcription, raw_transcription FROM transcripts WHERE uniqueid = $1 AND deleted_at IS NULL LIMIT 1"
+	query := "SELECT state, summary, cleaned_transcription, raw_transcription FROM transcripts WHERE uniqueid = $1 AND deleted_at IS NULL ORDER BY updated_at DESC, id DESC LIMIT 1"
 	err := database.QueryRowContext(queryCtx, query, uniqueID).Scan(&state, &summary, &cleaned, &raw)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -295,7 +295,7 @@ func fetchCallMetadataFromCDR(queryCtx context.Context, database *sql.DB, unique
 		dstCNam sql.NullString
 	)
 
-	query := "SELECT src, dst, cnam, dst_cnam FROM cdr WHERE uniqueid = ? LIMIT 1"
+	query := "SELECT src, dst, cnam, dst_cnam FROM cdr WHERE uniqueid = ? ORDER BY calldate DESC LIMIT 1"
 	err := database.QueryRowContext(queryCtx, query, uniqueID).Scan(&src, &dst, &cnam, &dstCNam)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
