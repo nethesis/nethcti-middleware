@@ -72,7 +72,8 @@ func GetFilteredHistory(c *gin.Context) {
 		return
 	}
 
-	filteredRows, err := filterHistoryRowsByArtifact(c, req.Artifact, baseResponse.Rows)
+	enrichedRows := enrichLocalChannelArtifactRows(baseResponse.Rows)
+	filteredRows, err := filterHistoryRowsByArtifact(c, req.Artifact, enrichedRows)
 	if err != nil {
 		statusCode := http.StatusInternalServerError
 		if strings.Contains(err.Error(), "satellite database not configured") {
@@ -387,6 +388,66 @@ func getHistoryRowString(row map[string]interface{}, key string) string {
 	default:
 		return fmt.Sprintf("%v", typed)
 	}
+}
+
+// enrichLocalChannelArtifactRows fixes Local-channel ;1 routing-artifact rows that
+// Asterisk creates for attended transfers. Those rows have src == dst (the extension
+// number) because they carry no real party information.  We replace their caller
+// fields with the cnum/cnam from the paired ;2 row that shares the same linkedid and
+// destination, so the history table shows "201 → You" instead of "You → You".
+func enrichLocalChannelArtifactRows(rows []map[string]interface{}) []map[string]interface{} {
+	// Group row indices by linkedid.
+	byLinkedID := make(map[string][]int, len(rows))
+	for i, row := range rows {
+		linkedID := getHistoryRowString(row, "linkedid")
+		if linkedID == "" {
+			continue
+		}
+		byLinkedID[linkedID] = append(byLinkedID[linkedID], i)
+	}
+
+	for _, indices := range byLinkedID {
+		if len(indices) < 2 {
+			continue
+		}
+		for _, artifactIdx := range indices {
+			artifact := rows[artifactIdx]
+			src := getHistoryRowString(artifact, "src")
+			dst := getHistoryRowString(artifact, "dst")
+			// A ;1 routing artifact always has src == dst (the extension dialled
+			// into the Local channel).
+			if src == "" || src != dst {
+				continue
+			}
+			// Find the paired ;2 row: same linkedid, same dst, src ≠ dst.
+			for _, pairedIdx := range indices {
+				if pairedIdx == artifactIdx {
+					continue
+				}
+				paired := rows[pairedIdx]
+				if getHistoryRowString(paired, "dst") != dst {
+					continue
+				}
+				pairedSrc := getHistoryRowString(paired, "src")
+				if pairedSrc == getHistoryRowString(paired, "dst") {
+					continue // skip another artifact
+				}
+				// Use the paired row's cnum (transfer initiator) as the
+				// artifact row's displayed caller.
+				pairedCnum := getHistoryRowString(paired, "cnum")
+				if pairedCnum == "" {
+					break
+				}
+				artifact["src"] = pairedCnum
+				artifact["cnum"] = pairedCnum
+				artifact["cnam"] = paired["cnam"]
+				artifact["ccompany"] = paired["ccompany"]
+				break
+			}
+		}
+	}
+
+	return rows
 }
 
 func paginateHistoryRows(rows []map[string]interface{}, pageNum int, pageSize int) gin.H {

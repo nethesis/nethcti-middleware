@@ -905,6 +905,9 @@ func TestListSummaryStatus_FiltersCallsOutsideUserParticipation(t *testing.T) {
 		t.Fatalf("did not expect summary details for unauthorized item")
 	}
 }
+
+// TestGetSummaryByUniqueID_CanonicalRowWithDuplicateUniqueIDs verifies that when satellite stores
+// multiple transcript rows for the same uniqueid, the handler returns the canonical (latest) one.
 func TestGetSummaryByUniqueID_CanonicalRowWithDuplicateUniqueIDs(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	store.UserSessionInit()
@@ -931,7 +934,7 @@ func TestGetSummaryByUniqueID_CanonicalRowWithDuplicateUniqueIDs(t *testing.T) {
 		return true, nil
 	}
 	// Simulate DB returning the canonical row (latest fragment) when duplicates exist.
-	fetchSummaryDrawerFunc = func(uniqueID string) (*SummaryDrawer, bool, error) {
+	fetchSummaryDrawerFunc = func(uniqueID string, _ []string, _ []string) (*SummaryDrawer, bool, error) {
 		return &SummaryDrawer{
 			UniqueID:  uniqueID,
 			Summary:   "latest fragment summary",

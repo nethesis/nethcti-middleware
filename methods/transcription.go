@@ -9,7 +9,9 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -25,13 +27,20 @@ import (
 )
 
 var (
-	getUserInfoFunc                      = GetUserInfo
-	fetchTranscriptionFunc               = fetchTranscriptionFromDB
-	fetchTranscriptionMetaFunc           = fetchTranscriptionMetadataFromCDR
-	checkUserParticipationFunc           = checkUserParticipationInCDR
-	checkUserParticipationByLinkedIDFunc = checkUserParticipationByLinkedIDInCDR
-	resolveLinkedIDToUniqueIDFunc        = resolveUniqueIDByLinkedIDForUserInCDR
-	discoverLinkedIDFromCDRFunc          = discoverLinkedIDFromCDR
+	getUserInfoFunc                                                           = GetUserInfo
+	fetchTranscriptionFunc                                                    = fetchTranscriptionFromDB
+	fetchTranscriptionMetaFunc                                                = fetchTranscriptionMetadataFromCDR
+	checkUserParticipationFunc                                                = checkUserParticipationInCDR
+	checkUserParticipationByLinkedIDFunc                                      = checkUserParticipationByLinkedIDInCDR
+	resolveLinkedIDToUniqueIDFunc                                             = resolveUniqueIDByLinkedIDForUserInCDR
+	discoverLinkedIDFromCDRFunc                                               = discoverLinkedIDFromCDR
+	checkSatelliteRecordExistsFunc       func(string) (bool, bool, error)     = checkSatelliteRecordExists
+	checkSatelliteParticipationFunc      func(string, []string) (bool, error) = checkSatelliteParticipation
+	findSatelliteUniqueIDsByLinkedIDFunc                                      = findSatelliteUniqueIDsByLinkedID
+	getExternalPartiesFromCDRFunc                                             = getExternalPartiesFromCDR
+	getExternalSrcNumsFromCDRFunc        func(string, []string) ([]string, error) = getExternalSrcNumsFromCDR
+	isCDRAnsweredFunc                                                         = isCDRAnswered
+	checkSrcEqualsDstFunc                func(string, []string) (bool, error) = checkSrcEqualsDstInCDR
 )
 
 var errUnauthorized = errors.New("unauthorized")
@@ -73,7 +82,7 @@ func GetTranscriptionByUniqueID(c *gin.Context) {
 		return
 	}
 
-	uniqueID, ok, err := ensureUserParticipatedInCall(c, uniqueIDHint, linkedID)
+	uniqueID, phoneNumbers, excludedSrcNums, ok, err := ensureUserParticipatedInCall(c, uniqueIDHint, linkedID)
 	if err != nil {
 		if errors.Is(err, errUnauthorized) {
 			c.JSON(http.StatusUnauthorized, structs.Map(models.StatusUnauthorized{
@@ -101,7 +110,7 @@ func GetTranscriptionByUniqueID(c *gin.Context) {
 		return
 	}
 
-	transcription, createdAt, found, err := fetchTranscriptionFunc(uniqueID)
+	transcription, createdAt, found, err := fetchTranscriptionFunc(uniqueID, phoneNumbers, excludedSrcNums)
 	if err != nil {
 		logs.Log("[ERROR][TRANSCRIPTS] Failed to fetch transcription for uniqueid " + uniqueID + ": " + err.Error())
 		c.JSON(http.StatusInternalServerError, structs.Map(models.StatusInternalServerError{
@@ -178,71 +187,320 @@ func getUserPhoneNumbersFromContext(c *gin.Context) ([]string, error) {
 }
 
 func resolveAuthorizedUniqueID(uniqueID string, linkedID string, phoneNumbers []string) (string, bool, error) {
+	resolvedUniqueID, _, ok, err := resolveAuthorizedUniqueIDFull(uniqueID, linkedID, phoneNumbers)
+	return resolvedUniqueID, ok, err
+}
+
+func resolveAuthorizedUniqueIDFull(uniqueID string, linkedID string, phoneNumbers []string) (string, []string, bool, error) {
 	if len(phoneNumbers) == 0 {
-		return "", false, nil
+		return "", nil, false, nil
 	}
 
-	// If linkedID not provided by client, try to discover it from CDR.
+	// Skip NO ANSWER rows — the user never actually talked on this leg
+	// (e.g., a queue ring that wasn't picked up). No transcription to show.
+	if uniqueID != "" {
+		answered, err := isCDRAnsweredFunc(uniqueID)
+		if err != nil {
+			logs.Log("[WARNING][RESOLVE] CDR disposition check failed for uniqueid " + uniqueID + ": " + err.Error())
+		} else if !answered {
+			return "", nil, false, nil
+		}
+	}
+
+	// Discover linkedID from CDR when not provided by the client.
 	// This handles older clients and queue/transfer calls where the frontend
-	// only knows the initial leg's uniqueID, not the shared linkedID.
+	// only knows the initial leg's uniqueID.
 	if linkedID == "" && uniqueID != "" {
 		discovered, err := discoverLinkedIDFromCDRFunc(uniqueID)
 		if err != nil {
-			return "", false, err
+			return "", nil, false, err
 		}
 		if discovered != "" {
 			linkedID = discovered
 		}
 	}
 
-	if linkedID != "" {
-		ok, err := checkUserParticipationByLinkedIDFunc(linkedID, phoneNumbers)
+	// Step 1: Direct satellite match + CDR/satellite participation.
+	// Fast path for the common case (direct calls with content).
+	var directMatchEmpty bool
+	if uniqueID != "" {
+		exists, hasContent, err := checkSatelliteRecordExistsFunc(uniqueID)
 		if err != nil {
-			return "", false, err
-		}
-		if ok {
-			resolvedUniqueID, err := resolveLinkedIDToUniqueIDFunc(linkedID, phoneNumbers)
+			logs.Log("[WARNING][RESOLVE] satellite check failed for uniqueid " + uniqueID + ": " + err.Error())
+		} else if exists {
+			ok, err := checkUserParticipationFunc(uniqueID, phoneNumbers)
 			if err != nil {
-				return "", false, err
+				return "", nil, false, err
 			}
-			if resolvedUniqueID != "" {
-				return resolvedUniqueID, true, nil
+			if !ok {
+				// CDR doesn't show this user — check satellite src/dst
+				// (handles consultation segments where CDR has dst='s').
+				satOk, satErr := checkSatelliteParticipationFunc(uniqueID, phoneNumbers)
+				if satErr != nil {
+					logs.Log("[WARNING][RESOLVE] satellite participation check failed for uniqueid " + uniqueID + ": " + satErr.Error())
+				}
+				ok = satOk
 			}
-			if uniqueID != "" {
-				return uniqueID, true, nil
+			if ok {
+				if hasContent {
+					return uniqueID, nil, true, nil
+				}
+				directMatchEmpty = true
 			}
-			return "", true, nil
+			// If satellite has content but user is NOT a participant (neither
+			// CDR nor satellite), don't reject yet — fall through to Step 2
+			// which may find a related segment (e.g., consultation) the user
+			// DID participate in.
 		}
 	}
 
-	if uniqueID == "" {
-		return "", false, nil
+	// Lazy computation of the requested CDR row's external parties.
+	// Used in Steps 2 and 3 to prevent cross-segment contamination:
+	// a satellite record is only matched if it shares at least one non-user
+	// party (e.g., the external caller) with the requested CDR row.
+	var requestedExternals map[string]struct{}
+	var externalsComputed bool
+	getRequestedExternals := func() map[string]struct{} {
+		if !externalsComputed {
+			externalsComputed = true
+			if uniqueID != "" {
+				ext, err := getExternalPartiesFromCDRFunc(uniqueID, phoneNumbers)
+				if err == nil {
+					requestedExternals = ext
+				}
+			}
+		}
+		return requestedExternals
 	}
 
-	ok, err := checkUserParticipationFunc(uniqueID, phoneNumbers)
-	if err != nil {
-		return "", false, err
-	}
-	if !ok {
-		return "", false, nil
+	// Lazy detection of Local channel ;1 routing artifacts.
+	// A routing artifact has src == dst == user extension in CDR (e.g., 202→202).
+	// The actual satellite transcript lives on the paired ;2 leg under the same
+	// linkedid, so the external-party cross-check must be bypassed for these rows.
+	var localRoutingComputed bool
+	var localRoutingArtifact bool
+	getIsLocalRoutingArtifact := func() bool {
+		if !localRoutingComputed {
+			localRoutingComputed = true
+			if len(getRequestedExternals()) == 0 && uniqueID != "" {
+				localRoutingArtifact, _ = checkSrcEqualsDstFunc(uniqueID, phoneNumbers)
+			}
+		}
+		return localRoutingArtifact
 	}
 
-	return uniqueID, true, nil
+	// Step 2: Satellite lookup by linkedid + per-record participation check.
+	// For transfers/queues, the satellite record may be stored under a different
+	// uniqueid than the CDR row the user sees in history. We find all satellite
+	// records sharing the same linkedid, then pick the one where the user
+	// actually participated AND that belongs to the same call segment.
+	//
+	// Two passes:
+	// Pass A — consultation segments: the user participates but the segment has
+	//   no external party in CDR (e.g., dst='s'). These are transfer consultation
+	//   calls that the user should see.
+	// Pass B — main call segments: the user participates AND external parties
+	//   match the requested CDR row. This prevents cross-segment contamination.
+	if linkedID != "" {
+		satUIDs, err := findSatelliteUniqueIDsByLinkedIDFunc(linkedID)
+		if err != nil {
+			logs.Log("[WARNING][RESOLVE] satellite linkedid lookup failed for linkedid " + linkedID + ": " + err.Error())
+		} else if len(satUIDs) > 0 {
+			// Pass A: consultation segments (no external parties in CDR).
+			for _, satUID := range satUIDs {
+				if satUID == uniqueID {
+					continue
+				}
+				ok, err := checkUserParticipationFunc(satUID, phoneNumbers)
+				if err != nil {
+					return "", nil, false, err
+				}
+				if !ok {
+					satOk, _ := checkSatelliteParticipationFunc(satUID, phoneNumbers)
+					ok = satOk
+				}
+				if !ok {
+					continue
+				}
+				candidateExternals, _ := getExternalPartiesFromCDRFunc(satUID, phoneNumbers)
+				if len(candidateExternals) == 0 {
+					// No external parties — consultation segment.
+					exists, hasContent, _ := checkSatelliteRecordExistsFunc(satUID)
+					if exists && hasContent {
+						return satUID, nil, true, nil
+					}
+				}
+			}
+
+			// Pass B: main call segments (external parties match).
+			for _, satUID := range satUIDs {
+				if satUID == uniqueID {
+					continue
+				}
+				ok, err := checkUserParticipationFunc(satUID, phoneNumbers)
+				if err != nil {
+					return "", nil, false, err
+				}
+				if ok {
+					if !matchesExternalParties(satUID, getRequestedExternals(), phoneNumbers) {
+						// Local channel ;1 routing artifacts (src==dst==user) carry no
+						// satellite record of their own — the transcript belongs to the
+						// paired ;2 leg. Bypass the external-party check and accept the
+						// candidate if it has satellite content.
+						if !getIsLocalRoutingArtifact() {
+							continue
+						}
+						exists, hasContent, _ := checkSatelliteRecordExistsFunc(satUID)
+						if !exists || !hasContent {
+							continue
+						}
+						// Use only the CDR src column (not cnum) to build excludedSrcNums.
+						// cnum carries the original caller across the whole chain and would
+						// accidentally exclude the consultation segment (src=201) when 201
+						// is the cnum of the ;2 CDR row.
+						excludedSrcNums, err := getExternalSrcNumsFromCDRFunc(satUID, phoneNumbers)
+						if err != nil {
+							logs.Log("[WARNING][RESOLVE] external-src lookup failed for routing artifact uniqueid " + satUID + ": " + err.Error())
+						}
+						return satUID, excludedSrcNums, true, nil
+					}
+					return satUID, nil, true, nil
+				}
+			}
+		}
+	}
+
+	// Step 1 found an empty match and Step 2 found nothing better.
+	// Return the empty match — the call segment existed but had no speech.
+	if directMatchEmpty {
+		return uniqueID, nil, true, nil
+	}
+
+	// Step 3: CDR-only fallback for calls where no satellite record exists yet
+	// (e.g., transcription still in progress). Resolve the user's specific
+	// leg rather than just checking chain-wide participation.
+	if linkedID != "" {
+		resolvedUniqueID, err := resolveLinkedIDToUniqueIDFunc(linkedID, phoneNumbers)
+		if err != nil {
+			return "", nil, false, err
+		}
+		if resolvedUniqueID != "" {
+			if matchesExternalParties(resolvedUniqueID, getRequestedExternals(), phoneNumbers) ||
+				getIsLocalRoutingArtifact() {
+				return resolvedUniqueID, nil, true, nil
+			}
+		}
+	}
+
+	// Step 4: Direct uniqueID participation check (no linkedid available).
+	if uniqueID != "" {
+		ok, err := checkUserParticipationFunc(uniqueID, phoneNumbers)
+		if err != nil {
+			return "", nil, false, err
+		}
+		if !ok {
+			return "", nil, false, nil
+		}
+		return uniqueID, nil, true, nil
+	}
+
+	return "", nil, false, nil
 }
 
-func ensureUserParticipatedInCall(c *gin.Context, uniqueID string, linkedID string) (string, bool, error) {
+func getExternalPartiesSliceFromCDR(uniqueID string, phoneNumbers []string) ([]string, error) {
+	externals, err := getExternalPartiesFromCDRFunc(uniqueID, phoneNumbers)
+	if err != nil {
+		return nil, err
+	}
+	if len(externals) == 0 {
+		return nil, nil
+	}
+
+	values := make([]string, 0, len(externals))
+	for external := range externals {
+		values = append(values, external)
+	}
+	sort.Strings(values)
+
+	return values, nil
+}
+
+// getExternalSrcNumsFromCDR returns only the CDR src values for the given
+// uniqueid that are not in the user's phone number set.
+// Unlike getExternalPartiesFromCDR, it deliberately ignores cnum.
+// cnum carries the original caller across the whole transfer chain, so
+// including it would accidentally mark consultation-leg sources (e.g. 201)
+// as excluded when they appear as cnum in the ;2 CDR row.
+func getExternalSrcNumsFromCDR(uniqueID string, phoneNumbers []string) ([]string, error) {
+	if uniqueID == "" || len(phoneNumbers) == 0 {
+		return nil, nil
+	}
+
+	database := db.GetCDRDB()
+	if database == nil {
+		return nil, sql.ErrConnDone
+	}
+
+	phoneSet := make(map[string]struct{}, len(phoneNumbers))
+	for _, p := range phoneNumbers {
+		if cleaned := strings.TrimSpace(p); cleaned != "" {
+			phoneSet[cleaned] = struct{}{}
+		}
+	}
+
+	queryCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	rows, err := database.QueryContext(queryCtx, "SELECT src FROM cdr WHERE uniqueid = ?", uniqueID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	seen := make(map[string]struct{})
+	var result []string
+	for rows.Next() {
+		var src sql.NullString
+		if err := rows.Scan(&src); err != nil {
+			return nil, err
+		}
+		if !src.Valid {
+			continue
+		}
+		v := strings.TrimSpace(src.String)
+		if v == "" || v == "s" {
+			continue
+		}
+		if _, isUser := phoneSet[v]; isUser {
+			continue
+		}
+		if _, alreadySeen := seen[v]; alreadySeen {
+			continue
+		}
+		seen[v] = struct{}{}
+		result = append(result, v)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	sort.Strings(result)
+	return result, nil
+}
+
+func ensureUserParticipatedInCall(c *gin.Context, uniqueID string, linkedID string) (string, []string, []string, bool, error) {
 	phoneNumbers, err := getUserPhoneNumbersFromContext(c)
 	if err != nil {
-		return "", false, err
+		return "", nil, nil, false, err
 	}
 
 	if len(phoneNumbers) == 0 {
 		username, _ := getUsernameFromContext(c)
 		logs.Log("[WARNING][TRANSCRIPTS] No phone numbers for user " + username + " (uniqueid: " + uniqueID + ", linkedid: " + linkedID + ")")
-		return "", false, nil
+		return "", phoneNumbers, nil, false, nil
 	}
 
-	return resolveAuthorizedUniqueID(uniqueID, linkedID, phoneNumbers)
+	resolvedUniqueID, excludedSrcNums, ok, err := resolveAuthorizedUniqueIDFull(uniqueID, linkedID, phoneNumbers)
+	return resolvedUniqueID, phoneNumbers, excludedSrcNums, ok, err
 }
 
 func logForbiddenParticipation(c *gin.Context, uniqueID string) {
@@ -276,7 +534,7 @@ func getUsernameFromContext(c *gin.Context) (string, error) {
 	return username, nil
 }
 
-func fetchTranscriptionFromDB(uniqueID string) (string, *time.Time, bool, error) {
+func fetchTranscriptionFromDB(uniqueID string, phoneNumbers []string, excludedSrcNums []string) (string, *time.Time, bool, error) {
 	database := db.GetSatelliteDB()
 	if database == nil {
 		return "", nil, false, sql.ErrConnDone
@@ -288,8 +546,34 @@ func fetchTranscriptionFromDB(uniqueID string) (string, *time.Time, bool, error)
 	var cleaned sql.NullString
 	var raw sql.NullString
 	var createdAt sql.NullTime
-	query := "SELECT cleaned_transcription, raw_transcription, created_at FROM transcripts WHERE uniqueid = $1 AND deleted_at IS NULL ORDER BY updated_at DESC, id DESC LIMIT 1"
-	err := database.QueryRowContext(queryCtx, query, uniqueID).Scan(&cleaned, &raw, &createdAt)
+
+	args := []interface{}{uniqueID}
+	phoneStart := 2
+	for _, phoneNumber := range phoneNumbers {
+		args = append(args, phoneNumber)
+	}
+
+	excludeStart := phoneStart + len(phoneNumbers)
+	for _, excludedSrcNum := range excludedSrcNums {
+		args = append(args, excludedSrcNum)
+	}
+
+	orderBy := "updated_at DESC, id DESC"
+	if len(phoneNumbers) > 0 {
+		phonePlaceholders := buildPostgresPlaceholders(len(phoneNumbers), phoneStart)
+		srcClause := fmt.Sprintf("(src_number IN (%s)) DESC", phonePlaceholders)
+		dstClause := fmt.Sprintf("(dst_number IN (%s)) DESC", phonePlaceholders)
+		if len(excludedSrcNums) > 0 {
+			excludePlaceholders := buildPostgresPlaceholders(len(excludedSrcNums), excludeStart)
+			notExcludedClause := fmt.Sprintf("(src_number NOT IN (%s)) DESC", excludePlaceholders)
+			orderBy = srcClause + ", " + notExcludedClause + ", " + dstClause + ", " + orderBy
+		} else {
+			orderBy = srcClause + ", " + dstClause + ", " + orderBy
+		}
+	}
+
+	query := fmt.Sprintf("SELECT cleaned_transcription, raw_transcription, created_at FROM transcripts WHERE uniqueid = $1 AND deleted_at IS NULL ORDER BY %s LIMIT 1", orderBy)
+	err := database.QueryRowContext(queryCtx, query, args...).Scan(&cleaned, &raw, &createdAt)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return "", nil, false, nil
@@ -359,19 +643,22 @@ func checkUserParticipationInCDR(uniqueID string, phoneNumbers []string) (bool, 
 	queryCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	rows, err := database.QueryContext(queryCtx, "SELECT src, dst, cnum FROM cdr WHERE uniqueid = ?", uniqueID)
+	// Only check src and dst — NOT cnum. The cnum field preserves the
+	// originating extension even after a transfer, making the transfer
+	// initiator appear as a participant in post-transfer CDR rows.
+	rows, err := database.QueryContext(queryCtx, "SELECT src, dst FROM cdr WHERE uniqueid = ?", uniqueID)
 	if err != nil {
 		return false, err
 	}
 	defer rows.Close()
 
 	for rows.Next() {
-		var src, dst, cnum sql.NullString
-		if err := rows.Scan(&src, &dst, &cnum); err != nil {
+		var src, dst sql.NullString
+		if err := rows.Scan(&src, &dst); err != nil {
 			return false, err
 		}
 
-		for _, val := range []sql.NullString{src, dst, cnum} {
+		for _, val := range []sql.NullString{src, dst} {
 			if val.Valid {
 				if _, ok := phoneSet[strings.TrimSpace(val.String)]; ok {
 					return true, nil
@@ -385,6 +672,36 @@ func checkUserParticipationInCDR(uniqueID string, phoneNumbers []string) (bool, 
 	}
 
 	return false, nil
+}
+
+// isCDRAnswered checks whether the CDR row for the given uniqueID has
+// disposition 'ANSWERED' with duration > 0. Returns false for unanswered
+// legs (queue rings) and zero-duration routing artifacts (Local channel
+// CDR entries like src=202 dst=202 dur=0).
+func isCDRAnswered(uniqueID string) (bool, error) {
+	if uniqueID == "" {
+		return false, nil
+	}
+
+	database := db.GetCDRDB()
+	if database == nil {
+		return false, sql.ErrConnDone
+	}
+
+	queryCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var disposition string
+	err := database.QueryRowContext(queryCtx,
+		"SELECT disposition FROM cdr WHERE uniqueid = ? AND disposition = 'ANSWERED' AND duration > 0 LIMIT 1",
+		uniqueID).Scan(&disposition)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // checkUserParticipationByLinkedIDInCDR checks whether any leg of the call chain
@@ -533,4 +850,258 @@ func discoverLinkedIDFromCDR(uniqueID string) (string, error) {
 		return strings.TrimSpace(linkedID.String), nil
 	}
 	return "", nil
+}
+
+// checkSatelliteRecordExists checks whether a non-deleted transcript record
+// exists in the satellite database for the given uniqueid. Returns both
+// existence and whether the record has actual transcription content.
+func checkSatelliteRecordExists(uniqueID string) (bool, bool, error) {
+	if uniqueID == "" {
+		return false, false, nil
+	}
+
+	database := db.GetSatelliteDB()
+	if database == nil {
+		return false, false, sql.ErrConnDone
+	}
+
+	queryCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var hasContent bool
+	err := database.QueryRowContext(queryCtx,
+		`SELECT (COALESCE(raw_transcription, '') != '' OR state IN ('progress', 'summarizing'))
+		 FROM transcripts WHERE uniqueid = $1 AND deleted_at IS NULL
+		 ORDER BY updated_at DESC, id DESC
+		 LIMIT 1`,
+		uniqueID).Scan(&hasContent)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return false, false, nil
+		}
+		return false, false, err
+	}
+	return true, hasContent, nil
+}
+
+// checkSatelliteParticipation checks whether the satellite transcript record
+// for the given uniqueid has the user's extension in src_number or dst_number.
+// This is a fallback for consultation/transfer segments whose CDR rows contain
+// technical values (e.g., dst='s') instead of the real participants.
+func checkSatelliteParticipation(uniqueID string, phoneNumbers []string) (bool, error) {
+	if uniqueID == "" || len(phoneNumbers) == 0 {
+		return false, nil
+	}
+
+	database := db.GetSatelliteDB()
+	if database == nil {
+		return false, sql.ErrConnDone
+	}
+
+	phoneSet := make(map[string]struct{}, len(phoneNumbers))
+	for _, number := range phoneNumbers {
+		cleaned := strings.TrimSpace(number)
+		if cleaned != "" {
+			phoneSet[cleaned] = struct{}{}
+		}
+	}
+	if len(phoneSet) == 0 {
+		return false, nil
+	}
+
+	queryCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	rows, err := database.QueryContext(queryCtx,
+		`SELECT src_number, dst_number FROM transcripts
+		 WHERE uniqueid = $1 AND deleted_at IS NULL`, uniqueID)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var srcNum, dstNum sql.NullString
+		if err := rows.Scan(&srcNum, &dstNum); err != nil {
+			return false, err
+		}
+		for _, val := range []sql.NullString{srcNum, dstNum} {
+			if val.Valid {
+				if _, ok := phoneSet[strings.TrimSpace(val.String)]; ok {
+					return true, nil
+				}
+			}
+		}
+	}
+
+	return false, rows.Err()
+}
+
+// findSatelliteUniqueIDsByLinkedID returns the uniqueids of all non-deleted
+// transcript records sharing the given linkedid. Results are ordered so that
+// records with actual content come first, then by creation time (earliest first).
+// This ensures that in transfer scenarios, content-bearing records are preferred
+// over empty ones (e.g., unanswered queue ring legs).
+func findSatelliteUniqueIDsByLinkedID(linkedID string) ([]string, error) {
+	if linkedID == "" {
+		return nil, nil
+	}
+
+	database := db.GetSatelliteDB()
+	if database == nil {
+		return nil, sql.ErrConnDone
+	}
+
+	queryCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	rows, err := database.QueryContext(queryCtx,
+		`SELECT uniqueid FROM transcripts
+		 WHERE linkedid = $1 AND deleted_at IS NULL
+		 ORDER BY (COALESCE(raw_transcription, '') != '' OR state IN ('progress', 'summarizing')) DESC,
+		          created_at ASC`,
+		linkedID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var uids []string
+	for rows.Next() {
+		var uid string
+		if err := rows.Scan(&uid); err != nil {
+			return nil, err
+		}
+		uids = append(uids, uid)
+	}
+	return uids, rows.Err()
+}
+
+// getExternalPartiesFromCDR returns the set of non-user parties (src, dst, cnum)
+// from CDR rows matching the given uniqueid. Used to prevent cross-segment
+// contamination in transfer scenarios: two CDR rows belong to the same call
+// segment if they share at least one external party (e.g., the outside caller).
+func getExternalPartiesFromCDR(uniqueID string, phoneNumbers []string) (map[string]struct{}, error) {
+	if uniqueID == "" {
+		return map[string]struct{}{}, nil
+	}
+
+	database := db.GetCDRDB()
+	if database == nil {
+		return nil, sql.ErrConnDone
+	}
+
+	phoneSet := make(map[string]struct{}, len(phoneNumbers))
+	for _, p := range phoneNumbers {
+		if cleaned := strings.TrimSpace(p); cleaned != "" {
+			phoneSet[cleaned] = struct{}{}
+		}
+	}
+
+	queryCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	rows, err := database.QueryContext(queryCtx, "SELECT src, dst, cnum FROM cdr WHERE uniqueid = ?", uniqueID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	externals := make(map[string]struct{})
+	for rows.Next() {
+		var src, dst, cnum sql.NullString
+		if err := rows.Scan(&src, &dst, &cnum); err != nil {
+			return nil, err
+		}
+		for _, val := range []sql.NullString{src, dst, cnum} {
+			if val.Valid {
+				v := strings.TrimSpace(val.String)
+				if v == "" || v == "s" {
+					continue
+				}
+				if _, isUser := phoneSet[v]; !isUser {
+					externals[v] = struct{}{}
+				}
+			}
+		}
+	}
+
+	return externals, rows.Err()
+}
+
+// matchesExternalParties checks whether a candidate CDR row shares at least one
+// non-user party with the requested CDR row. This prevents cross-segment
+// contamination: e.g., a transfer consultation row (201→s) should not match
+// a satellite record from the main call (3400069069→201) because they don't
+// share an external party.
+func matchesExternalParties(candidateUID string, requestedExternals map[string]struct{}, userPhones []string) bool {
+	if requestedExternals == nil {
+		return true // couldn't determine requested externals, allow
+	}
+	if len(requestedExternals) == 0 {
+		return false // requested CDR has no external parties (technical row)
+	}
+
+	candidateExternals, err := getExternalPartiesFromCDRFunc(candidateUID, userPhones)
+	if err != nil || candidateExternals == nil {
+		return true // error fetching candidate, allow
+	}
+	if len(candidateExternals) == 0 {
+		return false // candidate has no external parties
+	}
+
+	for ext := range candidateExternals {
+		if _, ok := requestedExternals[ext]; ok {
+			return true
+		}
+	}
+
+	return false
+}
+
+// checkSrcEqualsDstInCDR checks whether the CDR row for uniqueID has src == dst
+// and both values match a user phone number. This identifies Local channel ;1
+// routing legs (e.g., src=202, dst=202) where the user extension appears as
+// both caller and destination, but the actual media is tracked by satellite
+// under the paired ;2 leg uniqueid.
+func checkSrcEqualsDstInCDR(uniqueID string, phoneNumbers []string) (bool, error) {
+	if uniqueID == "" || len(phoneNumbers) == 0 {
+		return false, nil
+	}
+
+	database := db.GetCDRDB()
+	if database == nil {
+		return false, sql.ErrConnDone
+	}
+
+	phoneSet := make(map[string]struct{}, len(phoneNumbers))
+	for _, p := range phoneNumbers {
+		if cleaned := strings.TrimSpace(p); cleaned != "" {
+			phoneSet[cleaned] = struct{}{}
+		}
+	}
+
+	queryCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var src, dst sql.NullString
+	err := database.QueryRowContext(queryCtx,
+		"SELECT src, dst FROM cdr WHERE uniqueid = ? LIMIT 1",
+		uniqueID).Scan(&src, &dst)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+
+	srcVal := strings.TrimSpace(src.String)
+	dstVal := strings.TrimSpace(dst.String)
+
+	if srcVal == "" || dstVal == "" || srcVal != dstVal {
+		return false, nil
+	}
+
+	_, srcIsUser := phoneSet[srcVal]
+	return srcIsUser, nil
 }

@@ -68,13 +68,13 @@ type SummaryListItem struct {
 }
 
 var (
-	fetchSummaryDrawerFunc = fetchSummaryDrawerFromDB
-	fetchSummaryListFunc   = fetchSummaryListFromDB
-	fetchSummaryStateFunc  = fetchSummaryStateFromDB
-	fetchSummaryFunc       = fetchSummaryFromDB
-	updateSummaryFunc      = updateSummaryInDB
-	deleteSummaryFunc      = deleteSummaryInDB
-	startSummaryWatchFunc  = summary.StartSummaryWatchWithLinkedID
+	fetchSummaryDrawerFunc                     = fetchSummaryDrawerFromDB
+	fetchSummaryListFunc                       = fetchSummaryListFromDB
+	fetchSummaryStateFunc                      = fetchSummaryStateFromDB
+	fetchSummaryFunc                           = fetchSummaryFromDB
+	updateSummaryFunc                          = updateSummaryInDB
+	deleteSummaryFunc                          = deleteSummaryInDB
+	startSummaryWatchFunc = summary.StartSummaryWatchWithLinkedID
 )
 
 func getUniqueIDFromPath(c *gin.Context) string {
@@ -134,7 +134,7 @@ func WatchCallSummary(c *gin.Context) {
 		return
 	}
 
-	uniqueID, ok, err := ensureUserParticipatedInCall(c, uniqueIDHint, linkedID)
+	uniqueID, _, _, ok, err := ensureUserParticipatedInCall(c, uniqueIDHint, linkedID)
 	if err != nil {
 		if errors.Is(err, errUnauthorized) {
 			c.JSON(http.StatusUnauthorized, structs.Map(models.StatusUnauthorized{
@@ -207,7 +207,7 @@ func CheckSummaryByUniqueID(c *gin.Context) {
 		return
 	}
 
-	uniqueID, ok, err := ensureUserParticipatedInCall(c, uniqueIDHint, linkedID)
+	uniqueID, _, _, ok, err := ensureUserParticipatedInCall(c, uniqueIDHint, linkedID)
 	if err != nil {
 		if errors.Is(err, errUnauthorized) {
 			c.Status(http.StatusUnauthorized)
@@ -286,7 +286,7 @@ func GetSummaryByUniqueID(c *gin.Context) {
 		return
 	}
 
-	uniqueID, ok, err := ensureUserParticipatedInCall(c, uniqueIDHint, linkedID)
+	uniqueID, phoneNumbers, excludedSrcNums, ok, err := ensureUserParticipatedInCall(c, uniqueIDHint, linkedID)
 	if err != nil {
 		if errors.Is(err, errUnauthorized) {
 			c.JSON(http.StatusUnauthorized, structs.Map(models.StatusUnauthorized{
@@ -314,7 +314,7 @@ func GetSummaryByUniqueID(c *gin.Context) {
 		return
 	}
 
-	details, found, err := fetchSummaryDrawerFunc(uniqueID)
+	details, found, err := fetchSummaryDrawerFunc(uniqueID, phoneNumbers, excludedSrcNums)
 	if err != nil {
 		logs.Log("[ERROR][SUMMARY] Failed to fetch summary for uniqueid " + uniqueID + ": " + err.Error())
 		c.JSON(http.StatusInternalServerError, structs.Map(models.StatusInternalServerError{
@@ -363,7 +363,7 @@ func DeleteSummaryByUniqueID(c *gin.Context) {
 		return
 	}
 
-	uniqueID, ok, err := ensureUserParticipatedInCall(c, uniqueIDHint, linkedID)
+	uniqueID, _, _, ok, err := ensureUserParticipatedInCall(c, uniqueIDHint, linkedID)
 	if err != nil {
 		if errors.Is(err, errUnauthorized) {
 			c.JSON(http.StatusUnauthorized, structs.Map(models.StatusUnauthorized{
@@ -462,7 +462,7 @@ func UpdateSummaryByUniqueID(c *gin.Context) {
 		return
 	}
 
-	uniqueID, ok, err := ensureUserParticipatedInCall(c, uniqueIDHint, linkedID)
+	uniqueID, _, _, ok, err := ensureUserParticipatedInCall(c, uniqueIDHint, linkedID)
 	if err != nil {
 		if errors.Is(err, errUnauthorized) {
 			c.JSON(http.StatusUnauthorized, structs.Map(models.StatusUnauthorized{
@@ -587,16 +587,25 @@ func ListSummaryStatus(c *gin.Context) {
 		itemByUniqueID[item.UniqueID] = item
 	}
 
+	// Track which uniqueids are already included in the result
+	includedUIDs := make(map[string]struct{})
+
 	result := make([]interface{}, 0, len(resolvedLookups))
 	for _, lookup := range resolvedLookups {
 		if item, ok := itemByUniqueID[lookup.ResolvedUniqueID]; ok {
 			item.LinkedID = lookup.LinkedID
+			// Use the requested uniqueid so the frontend can match
+			// the response entry to the correct history row.
+			if lookup.UniqueID != "" {
+				item.UniqueID = lookup.UniqueID
+			}
 			result = append(result, item)
+			includedUIDs[lookup.ResolvedUniqueID] = struct{}{}
 			continue
 		}
-		reportedUniqueID := lookup.ResolvedUniqueID
+		reportedUniqueID := lookup.UniqueID
 		if reportedUniqueID == "" {
-			reportedUniqueID = lookup.UniqueID
+			reportedUniqueID = lookup.ResolvedUniqueID
 		}
 		result = append(result, gin.H{
 			"uniqueid": reportedUniqueID,
@@ -604,6 +613,11 @@ func ListSummaryStatus(c *gin.Context) {
 			"error":    "not_found",
 		})
 	}
+
+	// NOTE: Satellite extra discovery (consultation segments without CDR rows)
+	// is intentionally disabled. The frontend currently cannot display items
+	// that don't correspond to a history row. Consultation transcriptions
+	// remain accessible via GET /summary/:uniqueid when explicitly requested.
 
 	c.JSON(http.StatusOK, structs.Map(models.StatusOK{
 		Code:    http.StatusOK,
@@ -650,9 +664,9 @@ func normalizeSummaryStatusLookups(lookups []SummaryStatusLookup) []SummaryStatu
 			continue
 		}
 
-		key := normalized.LinkedID
+		key := normalized.UniqueID
 		if key == "" {
-			key = normalized.UniqueID
+			key = normalized.LinkedID
 		}
 		if _, exists := seen[key]; exists {
 			continue
@@ -734,7 +748,7 @@ func normalizeLookupIDs(lookupIDs []string) []string {
 	return cleaned
 }
 
-func fetchSummaryDrawerFromDB(uniqueID string) (*SummaryDrawer, bool, error) {
+func fetchSummaryDrawerFromDB(uniqueID string, phoneNumbers []string, excludedSrcNums []string) (*SummaryDrawer, bool, error) {
 	database := db.GetSatelliteDB()
 	if database == nil {
 		return nil, false, sql.ErrConnDone
@@ -743,12 +757,37 @@ func fetchSummaryDrawerFromDB(uniqueID string) (*SummaryDrawer, bool, error) {
 	queryCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	query := `
+	args := []interface{}{uniqueID}
+	phoneStart := 2
+	for _, phoneNumber := range phoneNumbers {
+		args = append(args, phoneNumber)
+	}
+
+	excludeStart := phoneStart + len(phoneNumbers)
+	for _, excludedSrcNum := range excludedSrcNums {
+		args = append(args, excludedSrcNum)
+	}
+
+	orderBy := "updated_at DESC, id DESC"
+	if len(phoneNumbers) > 0 {
+		phonePlaceholders := buildPostgresPlaceholders(len(phoneNumbers), phoneStart)
+		srcClause := fmt.Sprintf("(src_number IN (%s)) DESC", phonePlaceholders)
+		dstClause := fmt.Sprintf("(dst_number IN (%s)) DESC", phonePlaceholders)
+		if len(excludedSrcNums) > 0 {
+			excludePlaceholders := buildPostgresPlaceholders(len(excludedSrcNums), excludeStart)
+			notExcludedClause := fmt.Sprintf("(src_number NOT IN (%s)) DESC", excludePlaceholders)
+			orderBy = srcClause + ", " + notExcludedClause + ", " + dstClause + ", " + orderBy
+		} else {
+			orderBy = srcClause + ", " + dstClause + ", " + orderBy
+		}
+	}
+
+	query := fmt.Sprintf(`
 		SELECT uniqueid, summary, sentiment, state, cleaned_transcription, raw_transcription, created_at, updated_at, deleted_at
 		FROM transcripts
 		WHERE uniqueid = $1 AND deleted_at IS NULL
-		ORDER BY updated_at DESC, id DESC
-		LIMIT 1`
+		ORDER BY %s
+		LIMIT 1`, orderBy)
 
 	var (
 		dbUniqueID  string
@@ -762,7 +801,7 @@ func fetchSummaryDrawerFromDB(uniqueID string) (*SummaryDrawer, bool, error) {
 		dbDeletedAt sql.NullTime
 	)
 
-	if err := database.QueryRowContext(queryCtx, query, uniqueID).Scan(
+	if err := database.QueryRowContext(queryCtx, query, args...).Scan(
 		&dbUniqueID,
 		&dbSummary,
 		&dbSentiment,
