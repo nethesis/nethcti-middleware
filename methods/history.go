@@ -72,7 +72,8 @@ func GetFilteredHistory(c *gin.Context) {
 		return
 	}
 
-	filteredRows, err := filterHistoryRowsByArtifact(c, req.Artifact, baseResponse.Rows)
+	enrichedRows := enrichLocalChannelArtifactRows(baseResponse.Rows)
+	filteredRows, err := filterHistoryRowsByArtifact(c, req.Artifact, enrichedRows)
 	if err != nil {
 		statusCode := http.StatusInternalServerError
 		if strings.Contains(err.Error(), "satellite database not configured") {
@@ -271,34 +272,49 @@ func filterHistoryRowsByArtifact(c *gin.Context, artifact string, rows []map[str
 			return nil, fmt.Errorf("satellite database not configured")
 		}
 
-		linkedIDs := collectHistoryLinkedIDs(rows)
-		if len(linkedIDs) == 0 {
+		lookups := collectHistorySummaryLookups(rows)
+		if len(lookups) == 0 {
 			return []map[string]interface{}{}, nil
 		}
 
-		authorizedIDs, err := filterSummaryStatusUniqueIDsByParticipation(c, linkedIDs)
+		resolvedLookups, err := resolveSummaryStatusLookups(c, lookups)
 		if err != nil {
 			return nil, err
 		}
 
-		statusItems, err := fetchSummaryListFunc(authorizedIDs)
+		statusItems, err := fetchSummaryListFunc(collectResolvedUniqueIDs(resolvedLookups))
 		if err != nil {
 			return nil, err
 		}
 
-		statusMap := make(map[string]SummaryListItem, len(statusItems))
+		itemByUniqueID := make(map[string]SummaryListItem, len(statusItems))
 		for _, item := range statusItems {
-			statusMap[item.UniqueID] = item
+			itemByUniqueID[item.UniqueID] = item
+		}
+
+		statusMap := make(map[string]SummaryListItem, len(resolvedLookups))
+		for _, lookup := range resolvedLookups {
+			if lookup.ResolvedUniqueID == "" {
+				continue
+			}
+			item, ok := itemByUniqueID[lookup.ResolvedUniqueID]
+			if !ok {
+				continue
+			}
+			statusMap[historySummaryLookupKey(lookup.LinkedID, lookup.UniqueID)] = item
 		}
 
 		filtered := make([]map[string]interface{}, 0, len(rows))
 		for _, row := range rows {
-			linkedID := strings.TrimSpace(getHistoryRowString(row, "linkedid"))
-			if linkedID == "" {
+			lookupKey := historySummaryLookupKey(
+				strings.TrimSpace(getHistoryRowString(row, "linkedid")),
+				strings.TrimSpace(getHistoryRowString(row, "uniqueid")),
+			)
+			if lookupKey == "" {
 				continue
 			}
 
-			item, ok := statusMap[linkedID]
+			item, ok := statusMap[lookupKey]
 			if !ok || strings.TrimSpace(item.State) != "done" {
 				continue
 			}
@@ -319,20 +335,32 @@ func filterHistoryRowsByArtifact(c *gin.Context, artifact string, rows []map[str
 	}
 }
 
-func collectHistoryLinkedIDs(rows []map[string]interface{}) []string {
-	collected := make([]string, 0, len(rows))
+func historySummaryLookupKey(linkedID string, uniqueID string) string {
+	if linkedID != "" {
+		return linkedID
+	}
+	return uniqueID
+}
+
+func collectHistorySummaryLookups(rows []map[string]interface{}) []SummaryStatusLookup {
+	collected := make([]SummaryStatusLookup, 0, len(rows))
 	seen := make(map[string]struct{})
 
 	for _, row := range rows {
 		linkedID := strings.TrimSpace(getHistoryRowString(row, "linkedid"))
-		if linkedID == "" {
+		uniqueID := strings.TrimSpace(getHistoryRowString(row, "uniqueid"))
+		lookupKey := historySummaryLookupKey(linkedID, uniqueID)
+		if lookupKey == "" {
 			continue
 		}
-		if _, ok := seen[linkedID]; ok {
+		if _, ok := seen[lookupKey]; ok {
 			continue
 		}
-		seen[linkedID] = struct{}{}
-		collected = append(collected, linkedID)
+		seen[lookupKey] = struct{}{}
+		collected = append(collected, SummaryStatusLookup{
+			UniqueID: uniqueID,
+			LinkedID: linkedID,
+		})
 	}
 
 	return collected
@@ -360,6 +388,66 @@ func getHistoryRowString(row map[string]interface{}, key string) string {
 	default:
 		return fmt.Sprintf("%v", typed)
 	}
+}
+
+// enrichLocalChannelArtifactRows fixes Local-channel ;1 routing-artifact rows that
+// Asterisk creates for attended transfers. Those rows have src == dst (the extension
+// number) because they carry no real party information.  We replace their caller
+// fields with the cnum/cnam from the paired ;2 row that shares the same linkedid and
+// destination, so the history table shows "201 → You" instead of "You → You".
+func enrichLocalChannelArtifactRows(rows []map[string]interface{}) []map[string]interface{} {
+	// Group row indices by linkedid.
+	byLinkedID := make(map[string][]int, len(rows))
+	for i, row := range rows {
+		linkedID := getHistoryRowString(row, "linkedid")
+		if linkedID == "" {
+			continue
+		}
+		byLinkedID[linkedID] = append(byLinkedID[linkedID], i)
+	}
+
+	for _, indices := range byLinkedID {
+		if len(indices) < 2 {
+			continue
+		}
+		for _, artifactIdx := range indices {
+			artifact := rows[artifactIdx]
+			src := getHistoryRowString(artifact, "src")
+			dst := getHistoryRowString(artifact, "dst")
+			// A ;1 routing artifact always has src == dst (the extension dialled
+			// into the Local channel).
+			if src == "" || src != dst {
+				continue
+			}
+			// Find the paired ;2 row: same linkedid, same dst, src ≠ dst.
+			for _, pairedIdx := range indices {
+				if pairedIdx == artifactIdx {
+					continue
+				}
+				paired := rows[pairedIdx]
+				if getHistoryRowString(paired, "dst") != dst {
+					continue
+				}
+				pairedSrc := getHistoryRowString(paired, "src")
+				if pairedSrc == getHistoryRowString(paired, "dst") {
+					continue // skip another artifact
+				}
+				// Use the paired row's cnum (transfer initiator) as the
+				// artifact row's displayed caller.
+				pairedCnum := getHistoryRowString(paired, "cnum")
+				if pairedCnum == "" {
+					break
+				}
+				artifact["src"] = pairedCnum
+				artifact["cnum"] = pairedCnum
+				artifact["cnam"] = paired["cnam"]
+				artifact["ccompany"] = paired["ccompany"]
+				break
+			}
+		}
+	}
+
+	return rows
 }
 
 func paginateHistoryRows(rows []map[string]interface{}, pageNum int, pageSize int) gin.H {
