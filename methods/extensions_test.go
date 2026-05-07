@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -87,5 +88,87 @@ func TestGetExtensionByMainExtensionAndType(t *testing.T) {
 	}
 	if body["type"] != "nethlink" {
 		t.Fatalf("unexpected type: got %q want %q", body["type"], "nethlink")
+	}
+}
+
+func TestGetExtensionByMainExtensionAndTypeReloadsBeforeNotFound(t *testing.T) {
+	logs.Init("nethcti-test")
+	gin.SetMode(gin.TestMode)
+
+	profilesJSON := `{
+		"3": {"id":"3","name":"Advanced","macro_permissions": {"phonebook": {"value": true, "permissions": [{"id":"12","name":"ad_phonebook","value":true}]}}}
+	}`
+	staleUsersJSON := `{
+		"antonio": {
+			"name": "Antonio Colapietro",
+			"endpoints": {
+				"mainextension": {
+					"202": {}
+				},
+				"extension": {},
+				"voicemail": {
+					"202": {}
+				},
+				"email": {},
+				"cellphone": {}
+			},
+			"profile_id": "3"
+		}
+	}`
+	freshUsersJSON := `{
+		"antonio": {
+			"name": "Antonio Colapietro",
+			"endpoints": {
+				"mainextension": {
+					"202": {}
+				},
+				"extension": {
+					"202": {
+						"type": "webrtc",
+						"user": "202",
+						"password": "f81d9c237cb4a8ba0379e683be5c5b78"
+					}
+				},
+				"voicemail": {
+					"202": {}
+				},
+				"email": {},
+				"cellphone": {}
+			},
+			"profile_id": "3"
+		}
+	}`
+
+	profilesFile := writeTempFile(t, "profiles.json", profilesJSON)
+	usersFile := writeTempFile(t, "users.json", staleUsersJSON)
+
+	if err := store.InitProfiles(profilesFile, usersFile); err != nil {
+		t.Fatalf("InitProfiles failed: %v", err)
+	}
+	if err := os.WriteFile(usersFile, []byte(freshUsersJSON), 0o644); err != nil {
+		t.Fatalf("failed to update users file: %v", err)
+	}
+
+	router := gin.New()
+	router.GET("/extensions/:mainextension/:type", GetExtensionByMainExtensionAndType)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/extensions/202/webrtc", nil)
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 after reload, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var body map[string]string
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("failed to decode response body: %v", err)
+	}
+
+	if body["username"] != "antonio" {
+		t.Fatalf("unexpected username: got %q want %q", body["username"], "antonio")
+	}
+	if body["extension"] != "202" {
+		t.Fatalf("unexpected extension: got %q want %q", body["extension"], "202")
 	}
 }
