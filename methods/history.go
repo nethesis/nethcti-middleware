@@ -74,6 +74,17 @@ func GetFilteredHistory(c *gin.Context) {
 
 	filteredRows, err := filterHistoryRowsByArtifact(c, req.Artifact, baseResponse.Rows)
 	if err != nil {
+		if isSatelliteSchemaMissingError(err) {
+			logs.Log("[WARNING][HISTORY] Satellite schema is not initialized while filtering history rows: " + err.Error())
+			writeSatelliteSchemaMissingResponse(c)
+			return
+		}
+		if isSatelliteDBUnavailableError(err) {
+			logs.Log("[WARNING][HISTORY] Satellite database is unavailable while filtering history rows: " + err.Error())
+			writeSatelliteDBUnavailableResponse(c)
+			return
+		}
+
 		statusCode := http.StatusInternalServerError
 		if strings.Contains(err.Error(), "satellite database not configured") {
 			statusCode = http.StatusServiceUnavailable

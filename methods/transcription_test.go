@@ -7,6 +7,7 @@ package methods
 
 import (
 	"bytes"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	jwtv5 "github.com/golang-jwt/jwt/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/nethesis/nethcti-middleware/configuration"
 	"github.com/nethesis/nethcti-middleware/models"
@@ -148,6 +150,124 @@ func TestGetTranscriptionByUniqueID_ReturnsExtendedData(t *testing.T) {
 	}
 }
 
+func TestGetTranscriptionByUniqueID_ReturnsServiceUnavailableWhenTranscriptsTableIsMissing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store.UserSessionInit()
+	store.UserSessions["alice"] = &models.UserSession{Username: "alice", NethCTIToken: "token"}
+
+	configuration.Config.SatellitePgSQLHost = "test"
+	configuration.Config.SatellitePgSQLPort = "5432"
+	configuration.Config.SatellitePgSQLDB = "test"
+	configuration.Config.SatellitePgSQLUser = "test"
+
+	originalGetUserInfo := getUserInfoFunc
+	originalCheck := checkUserParticipationFunc
+	originalFetchTranscription := fetchTranscriptionFunc
+	defer func() {
+		getUserInfoFunc = originalGetUserInfo
+		checkUserParticipationFunc = originalCheck
+		fetchTranscriptionFunc = originalFetchTranscription
+	}()
+
+	getUserInfoFunc = func(string) (*UserInfo, error) {
+		return &UserInfo{PhoneNumbers: []string{"100"}}, nil
+	}
+	checkUserParticipationFunc = func(string, []string) (bool, error) {
+		return true, nil
+	}
+	fetchTranscriptionFunc = func(string) (string, *time.Time, bool, error) {
+		return "", nil, false, &pgconn.PgError{Code: "42P01", Message: `relation "transcripts" does not exist`}
+	}
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("JWT_PAYLOAD", jwtv5.MapClaims{"id": "alice"})
+		c.Next()
+	})
+	router.GET("/transcripts/:uniqueid", GetTranscriptionByUniqueID)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/transcripts/abc123", nil)
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 service unavailable, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var response struct {
+		Message string                 `json:"message"`
+		Data    map[string]interface{} `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if response.Message != "satellite database schema not initialized" {
+		t.Fatalf("unexpected message: %s", response.Message)
+	}
+	if response.Data["missing_table"] != "transcripts" {
+		t.Fatalf("unexpected missing_table: %v", response.Data["missing_table"])
+	}
+}
+
+func TestGetTranscriptionByUniqueID_ReturnsServiceUnavailableWhenSatelliteDBIsUnavailable(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store.UserSessionInit()
+	store.UserSessions["alice"] = &models.UserSession{Username: "alice", NethCTIToken: "token"}
+
+	configuration.Config.SatellitePgSQLHost = "test"
+	configuration.Config.SatellitePgSQLPort = "5432"
+	configuration.Config.SatellitePgSQLDB = "test"
+	configuration.Config.SatellitePgSQLUser = "test"
+
+	originalGetUserInfo := getUserInfoFunc
+	originalCheck := checkUserParticipationFunc
+	originalFetchTranscription := fetchTranscriptionFunc
+	defer func() {
+		getUserInfoFunc = originalGetUserInfo
+		checkUserParticipationFunc = originalCheck
+		fetchTranscriptionFunc = originalFetchTranscription
+	}()
+
+	getUserInfoFunc = func(string) (*UserInfo, error) {
+		return &UserInfo{PhoneNumbers: []string{"100"}}, nil
+	}
+	checkUserParticipationFunc = func(string, []string) (bool, error) {
+		return true, nil
+	}
+	fetchTranscriptionFunc = func(string) (string, *time.Time, bool, error) {
+		return "", nil, false, sql.ErrConnDone
+	}
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("JWT_PAYLOAD", jwtv5.MapClaims{"id": "alice"})
+		c.Next()
+	})
+	router.GET("/transcripts/:uniqueid", GetTranscriptionByUniqueID)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/transcripts/abc123", nil)
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 service unavailable, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var response struct {
+		Message string                 `json:"message"`
+		Data    map[string]interface{} `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if response.Message != "satellite database unavailable" {
+		t.Fatalf("unexpected message: %s", response.Message)
+	}
+	if response.Data["reason"] != "connection_unavailable" {
+		t.Fatalf("unexpected reason: %v", response.Data["reason"])
+	}
+}
+
 func TestUpdateSummary_SucceedsWhenAuthorized(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	store.UserSessionInit()
@@ -276,5 +396,64 @@ func TestGetSummaryByUniqueID_ReturnsExtendedData(t *testing.T) {
 	}
 	if response.Data.CallTimestamp == nil {
 		t.Fatalf("expected call_timestamp to be populated: %+v", response.Data)
+	}
+}
+
+func TestGetSummaryByUniqueID_ReturnsServiceUnavailableWhenTranscriptsTableIsMissing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store.UserSessionInit()
+	store.UserSessions["alice"] = &models.UserSession{Username: "alice", NethCTIToken: "token"}
+
+	configuration.Config.SatellitePgSQLHost = "test"
+	configuration.Config.SatellitePgSQLPort = "5432"
+	configuration.Config.SatellitePgSQLDB = "test"
+	configuration.Config.SatellitePgSQLUser = "test"
+
+	originalGetUserInfo := getUserInfoFunc
+	originalCheck := checkUserParticipationFunc
+	originalFetch := fetchSummaryDrawerFunc
+	defer func() {
+		getUserInfoFunc = originalGetUserInfo
+		checkUserParticipationFunc = originalCheck
+		fetchSummaryDrawerFunc = originalFetch
+	}()
+
+	getUserInfoFunc = func(string) (*UserInfo, error) {
+		return &UserInfo{PhoneNumbers: []string{"100"}}, nil
+	}
+	checkUserParticipationFunc = func(string, []string) (bool, error) {
+		return true, nil
+	}
+	fetchSummaryDrawerFunc = func(string) (*SummaryDrawer, bool, error) {
+		return nil, false, &pgconn.PgError{Code: "42P01", Message: `relation "transcripts" does not exist`}
+	}
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("JWT_PAYLOAD", jwtv5.MapClaims{"id": "alice"})
+		c.Next()
+	})
+	router.GET("/summary/:uniqueid", GetSummaryByUniqueID)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/summary/abc123", nil)
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 service unavailable, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var response struct {
+		Message string                 `json:"message"`
+		Data    map[string]interface{} `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if response.Message != "satellite database schema not initialized" {
+		t.Fatalf("unexpected message: %s", response.Message)
+	}
+	if response.Data["missing_table"] != "transcripts" {
+		t.Fatalf("unexpected missing_table: %v", response.Data["missing_table"])
 	}
 }

@@ -7,6 +7,7 @@ package methods
 
 import (
 	"bytes"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	jwtv5 "github.com/golang-jwt/jwt/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/nethesis/nethcti-middleware/configuration"
 	"github.com/nethesis/nethcti-middleware/models"
@@ -667,6 +669,128 @@ func TestListSummaryStatus_MixedResults(t *testing.T) {
 	}
 	if _, ok := second["state"]; ok {
 		t.Fatalf("did not expect state for missing item")
+	}
+}
+
+func TestListSummaryStatus_ReturnsServiceUnavailableWhenTranscriptsTableIsMissing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store.UserSessionInit()
+	store.UserSessions["alice"] = &models.UserSession{Username: "alice", NethCTIToken: "token"}
+
+	configuration.Config.SatellitePgSQLHost = "test"
+	configuration.Config.SatellitePgSQLPort = "5432"
+	configuration.Config.SatellitePgSQLDB = "test"
+	configuration.Config.SatellitePgSQLUser = "test"
+
+	originalGetUserInfo := getUserInfoFunc
+	originalCheck := checkUserParticipationFunc
+	originalFetchList := fetchSummaryListFunc
+	defer func() {
+		getUserInfoFunc = originalGetUserInfo
+		checkUserParticipationFunc = originalCheck
+		fetchSummaryListFunc = originalFetchList
+	}()
+
+	getUserInfoFunc = func(string) (*UserInfo, error) {
+		return &UserInfo{PhoneNumbers: []string{"100"}}, nil
+	}
+	checkUserParticipationFunc = func(string, []string) (bool, error) {
+		return true, nil
+	}
+	fetchSummaryListFunc = func([]string) ([]SummaryListItem, error) {
+		return nil, &pgconn.PgError{Code: "42P01", Message: `relation "transcripts" does not exist`}
+	}
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("JWT_PAYLOAD", jwtv5.MapClaims{"id": "alice"})
+		c.Next()
+	})
+	router.POST("/summary/statuses", ListSummaryStatus)
+
+	w := httptest.NewRecorder()
+	body, _ := json.Marshal(map[string][]string{"uniqueids": {"abc123"}})
+	req, _ := http.NewRequest("POST", "/summary/statuses", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 service unavailable, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var response struct {
+		Message string                 `json:"message"`
+		Data    map[string]interface{} `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if response.Message != "satellite database schema not initialized" {
+		t.Fatalf("unexpected message: %s", response.Message)
+	}
+	if response.Data["missing_table"] != "transcripts" {
+		t.Fatalf("unexpected missing_table: %v", response.Data["missing_table"])
+	}
+}
+
+func TestListSummaryStatus_ReturnsServiceUnavailableWhenSatelliteDBIsUnavailable(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store.UserSessionInit()
+	store.UserSessions["alice"] = &models.UserSession{Username: "alice", NethCTIToken: "token"}
+
+	configuration.Config.SatellitePgSQLHost = "test"
+	configuration.Config.SatellitePgSQLPort = "5432"
+	configuration.Config.SatellitePgSQLDB = "test"
+	configuration.Config.SatellitePgSQLUser = "test"
+
+	originalGetUserInfo := getUserInfoFunc
+	originalCheck := checkUserParticipationFunc
+	originalFetchList := fetchSummaryListFunc
+	defer func() {
+		getUserInfoFunc = originalGetUserInfo
+		checkUserParticipationFunc = originalCheck
+		fetchSummaryListFunc = originalFetchList
+	}()
+
+	getUserInfoFunc = func(string) (*UserInfo, error) {
+		return &UserInfo{PhoneNumbers: []string{"100"}}, nil
+	}
+	checkUserParticipationFunc = func(string, []string) (bool, error) {
+		return true, nil
+	}
+	fetchSummaryListFunc = func([]string) ([]SummaryListItem, error) {
+		return nil, sql.ErrConnDone
+	}
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("JWT_PAYLOAD", jwtv5.MapClaims{"id": "alice"})
+		c.Next()
+	})
+	router.POST("/summary/statuses", ListSummaryStatus)
+
+	w := httptest.NewRecorder()
+	body, _ := json.Marshal(map[string][]string{"uniqueids": {"abc123"}})
+	req, _ := http.NewRequest("POST", "/summary/statuses", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 service unavailable, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var response struct {
+		Message string                 `json:"message"`
+		Data    map[string]interface{} `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if response.Message != "satellite database unavailable" {
+		t.Fatalf("unexpected message: %s", response.Message)
+	}
+	if response.Data["reason"] != "connection_unavailable" {
+		t.Fatalf("unexpected reason: %v", response.Data["reason"])
 	}
 }
 
