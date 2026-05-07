@@ -97,6 +97,17 @@ func GetTranscriptionByUniqueID(c *gin.Context) {
 
 	transcription, createdAt, found, err := fetchTranscriptionFunc(uniqueID)
 	if err != nil {
+		if isSatelliteSchemaMissingError(err) {
+			logs.Log("[WARNING][TRANSCRIPTS] Satellite schema is not initialized while fetching transcription for uniqueid " + uniqueID + ": " + err.Error())
+			writeSatelliteSchemaMissingResponse(c)
+			return
+		}
+		if isSatelliteDBUnavailableError(err) {
+			logs.Log("[WARNING][TRANSCRIPTS] Satellite database is unavailable while fetching transcription for uniqueid " + uniqueID + ": " + err.Error())
+			writeSatelliteDBUnavailableResponse(c)
+			return
+		}
+
 		logs.Log("[ERROR][TRANSCRIPTS] Failed to fetch transcription for uniqueid " + uniqueID + ": " + err.Error())
 		c.JSON(http.StatusInternalServerError, structs.Map(models.StatusInternalServerError{
 			Code:    http.StatusInternalServerError,

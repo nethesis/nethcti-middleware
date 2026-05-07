@@ -16,6 +16,7 @@ import (
 
 	"github.com/fatih/structs"
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/nethesis/nethcti-middleware/db"
 	"github.com/nethesis/nethcti-middleware/logs"
 	"github.com/nethesis/nethcti-middleware/models"
@@ -203,6 +204,17 @@ func CheckSummaryByUniqueID(c *gin.Context) {
 
 	state, hasSummary, _, exists, err := fetchSummaryStateFunc(uniqueID)
 	if err != nil {
+		if isSatelliteSchemaMissingError(err) {
+			logs.Log("[WARNING][SUMMARY] Satellite schema is not initialized while checking summary for uniqueid " + uniqueID + ": " + err.Error())
+			c.Status(http.StatusServiceUnavailable)
+			return
+		}
+		if isSatelliteDBUnavailableError(err) {
+			logs.Log("[WARNING][SUMMARY] Satellite database is unavailable while checking summary for uniqueid " + uniqueID + ": " + err.Error())
+			c.Status(http.StatusServiceUnavailable)
+			return
+		}
+
 		logs.Log("[ERROR][SUMMARY] Failed to fetch summary for uniqueid " + uniqueID + ": " + err.Error())
 		c.Status(http.StatusInternalServerError)
 		return
@@ -284,6 +296,17 @@ func GetSummaryByUniqueID(c *gin.Context) {
 
 	details, found, err := fetchSummaryDrawerFunc(uniqueID)
 	if err != nil {
+		if isSatelliteSchemaMissingError(err) {
+			logs.Log("[WARNING][SUMMARY] Satellite schema is not initialized while fetching summary for uniqueid " + uniqueID + ": " + err.Error())
+			writeSatelliteSchemaMissingResponse(c)
+			return
+		}
+		if isSatelliteDBUnavailableError(err) {
+			logs.Log("[WARNING][SUMMARY] Satellite database is unavailable while fetching summary for uniqueid " + uniqueID + ": " + err.Error())
+			writeSatelliteDBUnavailableResponse(c)
+			return
+		}
+
 		logs.Log("[ERROR][SUMMARY] Failed to fetch summary for uniqueid " + uniqueID + ": " + err.Error())
 		c.JSON(http.StatusInternalServerError, structs.Map(models.StatusInternalServerError{
 			Code:    http.StatusInternalServerError,
@@ -358,6 +381,17 @@ func DeleteSummaryByUniqueID(c *gin.Context) {
 
 	deleted, err := deleteSummaryFunc(uniqueID)
 	if err != nil {
+		if isSatelliteSchemaMissingError(err) {
+			logs.Log("[WARNING][SUMMARY] Satellite schema is not initialized while deleting summary for uniqueid " + uniqueID + ": " + err.Error())
+			writeSatelliteSchemaMissingResponse(c)
+			return
+		}
+		if isSatelliteDBUnavailableError(err) {
+			logs.Log("[WARNING][SUMMARY] Satellite database is unavailable while deleting summary for uniqueid " + uniqueID + ": " + err.Error())
+			writeSatelliteDBUnavailableResponse(c)
+			return
+		}
+
 		logs.Log("[ERROR][SUMMARY] Failed to delete summary for uniqueid " + uniqueID + ": " + err.Error())
 		c.JSON(http.StatusInternalServerError, structs.Map(models.StatusInternalServerError{
 			Code:    http.StatusInternalServerError,
@@ -454,6 +488,17 @@ func UpdateSummaryByUniqueID(c *gin.Context) {
 
 	updated, err := updateSummaryFunc(uniqueID, summaryText)
 	if err != nil {
+		if isSatelliteSchemaMissingError(err) {
+			logs.Log("[WARNING][SUMMARY] Satellite schema is not initialized while updating summary for uniqueid " + uniqueID + ": " + err.Error())
+			writeSatelliteSchemaMissingResponse(c)
+			return
+		}
+		if isSatelliteDBUnavailableError(err) {
+			logs.Log("[WARNING][SUMMARY] Satellite database is unavailable while updating summary for uniqueid " + uniqueID + ": " + err.Error())
+			writeSatelliteDBUnavailableResponse(c)
+			return
+		}
+
 		logs.Log("[ERROR][SUMMARY] Failed to update summary for uniqueid " + uniqueID + ": " + err.Error())
 		c.JSON(http.StatusInternalServerError, structs.Map(models.StatusInternalServerError{
 			Code:    http.StatusInternalServerError,
@@ -534,6 +579,17 @@ func ListSummaryStatus(c *gin.Context) {
 
 	items, err := fetchSummaryListFunc(authorizedUniqueIDs)
 	if err != nil {
+		if isSatelliteSchemaMissingError(err) {
+			logs.Log("[WARNING][SUMMARY] Satellite schema is not initialized while listing summary statuses: " + err.Error())
+			writeSatelliteSchemaMissingResponse(c)
+			return
+		}
+		if isSatelliteDBUnavailableError(err) {
+			logs.Log("[WARNING][SUMMARY] Satellite database is unavailable while listing summary statuses: " + err.Error())
+			writeSatelliteDBUnavailableResponse(c)
+			return
+		}
+
 		logs.Log("[ERROR][SUMMARY] Failed to list summaries: " + err.Error())
 		c.JSON(http.StatusInternalServerError, structs.Map(models.StatusInternalServerError{
 			Code:    http.StatusInternalServerError,
@@ -613,6 +669,54 @@ func extractSummaryStatusUniqueIDs(c *gin.Context) ([]string, error) {
 	}
 
 	return normalizeUniqueIDs(req.UniqueIDs), nil
+}
+
+func writeSatelliteSchemaMissingResponse(c *gin.Context) {
+	c.JSON(http.StatusServiceUnavailable, structs.Map(models.StatusServiceUnavailable{
+		Code:    http.StatusServiceUnavailable,
+		Message: "satellite database schema not initialized",
+		Data: gin.H{
+			"missing_table": "transcripts",
+		},
+	}))
+}
+
+func writeSatelliteDBUnavailableResponse(c *gin.Context) {
+	c.JSON(http.StatusServiceUnavailable, structs.Map(models.StatusServiceUnavailable{
+		Code:    http.StatusServiceUnavailable,
+		Message: "satellite database unavailable",
+		Data: gin.H{
+			"reason": "connection_unavailable",
+		},
+	}))
+}
+
+func isSatelliteSchemaMissingError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.Code == "42P01"
+	}
+
+	return strings.Contains(err.Error(), "SQLSTATE 42P01")
+}
+
+func isSatelliteDBUnavailableError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	if errors.Is(err, sql.ErrConnDone) {
+		return true
+	}
+
+	errText := err.Error()
+	return strings.Contains(errText, "connection refused") ||
+		strings.Contains(errText, "connect: connection refused") ||
+		strings.Contains(errText, "failed to connect")
 }
 
 func normalizeUniqueIDs(uniqueIDs []string) []string {

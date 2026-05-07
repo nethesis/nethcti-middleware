@@ -1,11 +1,13 @@
 package methods
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/nethesis/nethcti-middleware/logs"
 	"github.com/nethesis/nethcti-middleware/store"
 )
 
@@ -16,6 +18,16 @@ func GetExtensionByMainExtensionAndType(c *gin.Context) {
 	extensionType := strings.TrimSpace(c.Param("type"))
 
 	username, extension, err := store.GetExtensionByMainExtensionAndType(mainExtension, extensionType)
+	if err != nil && mainExtension != "" && extensionType != "" {
+		stats, reloadErr := store.ReloadProfiles()
+		if reloadErr != nil {
+			logs.Log("[WARNING][AUTH] failed to reload profiles before retrying extension lookup: " + reloadErr.Error())
+		} else {
+			logs.Log(fmt.Sprintf("[INFO][AUTH] reloaded profiles before retrying extension lookup: users=%d profiles=%d", stats.UsersLoaded, stats.ProfilesLoaded))
+			username, extension, err = store.GetExtensionByMainExtensionAndType(mainExtension, extensionType)
+		}
+	}
+
 	if err != nil {
 		status := http.StatusNotFound
 		if mainExtension == "" || extensionType == "" {
