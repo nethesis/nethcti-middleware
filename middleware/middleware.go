@@ -89,7 +89,10 @@ func InitJWT() *jwt.GinJWTMiddleware {
 			}
 			req.Header.Set("Content-Type", "application/json")
 
-			client := &http.Client{}
+			// Timeout avoids the client hanging indefinitely if the backend
+			// leaves the response unfinished (e.g. an unhandled exception
+			// that never calls resp.end() on the restify side).
+			client := &http.Client{Timeout: 30 * time.Second}
 			resp, err := client.Do(req)
 			if err != nil {
 				logs.Log("[AUTH] Failed to send request to NetCTI")
