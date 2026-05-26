@@ -221,6 +221,28 @@ func TestLogout(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 }
 
+func TestCreateRouter_IncludesLegacyPhonebookTrailingSlashRoutes(t *testing.T) {
+	router := createRouter()
+	routes := router.Routes()
+	expectedRoutes := map[string]bool{
+		"GET /phonebook/search/":      false,
+		"GET /phonebook/search/:term/": false,
+		"GET /phonebook/getall/":      false,
+		"GET /phonebook/getall/:term/": false,
+	}
+
+	for _, route := range routes {
+		key := route.Method + " " + route.Path
+		if _, ok := expectedRoutes[key]; ok {
+			expectedRoutes[key] = true
+		}
+	}
+
+	for routeKey, found := range expectedRoutes {
+		assert.True(t, found, "expected route %s to be registered", routeKey)
+	}
+}
+
 // Test 2FA QR code generation
 func TestQRCode(t *testing.T) {
 	resetTestState()

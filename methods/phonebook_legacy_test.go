@@ -168,6 +168,38 @@ func TestCreateLegacyCTIPhonebookContact_PrivateLevelOne(t *testing.T) {
 	assert.Equal(t, "private", capturedEntry.Type)
 }
 
+func TestCreateLegacyCTIPhonebookContact_GroupForbiddenForLevelOne(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	loadPhonebookTestProfiles(t, `{"p":{"id":"p","name":"P","macro_permissions":{"phonebook":{"value":true,"permissions":[{"id":"p1","name":"phonebook_level_1","value":true}]},"presence_panel":{"value":true,"permissions":[{"id":"grp_sales","name":"grp_sales","value":true}]}}}}`, `{"alice":{"profile_id":"p"}}`)
+
+	originalCreate := createPhonebookEntryFunc
+	originalFetchGroups := fetchPhonebookOperatorGroupsFunc
+	defer func() {
+		createPhonebookEntryFunc = originalCreate
+		fetchPhonebookOperatorGroupsFunc = originalFetchGroups
+	}()
+
+	var capturedEntry *store.PhonebookEntry
+	createPhonebookEntryFunc = func(_ context.Context, entry *store.PhonebookEntry) error {
+		t.Fatalf("create should not be called for group contacts at level 1")
+		return nil
+	}
+	fetchPhonebookOperatorGroupsFunc = func(string) (map[string]legacyPhonebookOperatorGroup, error) {
+		return map[string]legacyPhonebookOperatorGroup{"Sales": {Users: []string{"alice"}}}, nil
+	}
+
+	payload := map[string]any{
+		"name": "Alice",
+		"type": "group:Sales",
+	}
+	ctx, recorder := newLegacyPhonebookTestContext(http.MethodPost, "/phonebook/create", payload, "alice")
+
+	CreateLegacyCTIPhonebookContact(ctx)
+
+	require.Equal(t, http.StatusForbidden, recorder.Code)
+	require.Nil(t, capturedEntry)
+}
+
 func TestCreateLegacyCTIPhonebookContact_PrivateMacroOnlyForbidden(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	loadPhonebookTestProfiles(t, `{"p":{"id":"p","name":"P","macro_permissions":{"phonebook":{"value":true,"permissions":[]}}}}`, `{"alice":{"profile_id":"p"}}`)
@@ -289,9 +321,10 @@ func TestSearchLegacyPhonebook_UsesMiddlewareQuery(t *testing.T) {
 	}()
 
 	var capturedQuery store.LegacyPhonebookQuery
+	lastSyncAt := "2026-05-25T10:11:12Z"
 	searchLegacyPhonebookFunc = func(_ context.Context, query store.LegacyPhonebookQuery) (*store.LegacyPhonebookResult, error) {
 		capturedQuery = query
-		return &store.LegacyPhonebookResult{Count: 1, Rows: []store.LegacyPhonebookContact{{Name: "Alice", Source: "cti"}}}, nil
+		return &store.LegacyPhonebookResult{Count: 1, Rows: []store.LegacyPhonebookContact{{Name: "Alice", Source: "cti"}}, LastSyncAt: &lastSyncAt}, nil
 	}
 	fetchPhonebookOperatorGroupsFunc = func(string) (map[string]legacyPhonebookOperatorGroup, error) {
 		return map[string]legacyPhonebookOperatorGroup{"Sales": {Users: []string{"alice"}}}, nil
@@ -300,7 +333,7 @@ func TestSearchLegacyPhonebook_UsesMiddlewareQuery(t *testing.T) {
 		return map[string]bool{"phonebook": true}, nil
 	}
 
-	ctx, recorder := newLegacyPhonebookTestContext(http.MethodGet, "/phonebook/search?view=company&offset=0&limit=10", nil, "alice")
+	ctx, recorder := newLegacyPhonebookTestContext(http.MethodGet, "/phonebook/search?view=company&visibility=group&offset=0&limit=10", nil, "alice")
 	ctx.Params = gin.Params{{Key: "term", Value: ""}}
 
 	SearchLegacyPhonebook(ctx)
@@ -308,12 +341,14 @@ func TestSearchLegacyPhonebook_UsesMiddlewareQuery(t *testing.T) {
 	require.Equal(t, http.StatusOK, recorder.Code)
 	assert.Equal(t, "alice", capturedQuery.Username)
 	assert.Equal(t, "company", capturedQuery.View)
+	assert.Equal(t, "group", capturedQuery.Visibility)
 	assert.Equal(t, 0, capturedQuery.Offset)
 	assert.Equal(t, 10, capturedQuery.Limit)
 	assert.True(t, capturedQuery.ApplyPagination)
-	assert.True(t, capturedQuery.IncludePrivateContacts)
+	assert.False(t, capturedQuery.IncludePrivateContacts)
 	assert.Equal(t, []string{"Sales"}, capturedQuery.UserGroups)
 	assert.Contains(t, recorder.Body.String(), `"count":1`)
+	assert.Contains(t, recorder.Body.String(), `"last_sync_at":"2026-05-25T10:11:12Z"`)
 }
 
 func TestListLegacyPhonebook_UsesMiddlewareQuery(t *testing.T) {
@@ -329,9 +364,10 @@ func TestListLegacyPhonebook_UsesMiddlewareQuery(t *testing.T) {
 	}()
 
 	var capturedQuery store.LegacyPhonebookQuery
+	lastSyncAt := "2026-05-25T12:13:14Z"
 	listLegacyPhonebookFunc = func(_ context.Context, query store.LegacyPhonebookQuery) (*store.LegacyPhonebookResult, error) {
 		capturedQuery = query
-		return &store.LegacyPhonebookResult{Count: 0, Rows: []store.LegacyPhonebookContact{}}, nil
+		return &store.LegacyPhonebookResult{Count: 0, Rows: []store.LegacyPhonebookContact{}, LastSyncAt: &lastSyncAt}, nil
 	}
 	fetchPhonebookOperatorGroupsFunc = func(string) (map[string]legacyPhonebookOperatorGroup, error) {
 		return map[string]legacyPhonebookOperatorGroup{}, nil
@@ -340,18 +376,20 @@ func TestListLegacyPhonebook_UsesMiddlewareQuery(t *testing.T) {
 		return map[string]bool{"phonebook": true}, nil
 	}
 
-	ctx, recorder := newLegacyPhonebookTestContext(http.MethodGet, "/phonebook/getall?offset=5&limit=20", nil, "alice")
+	ctx, recorder := newLegacyPhonebookTestContext(http.MethodGet, "/phonebook/getall?visibility=private&offset=5&limit=20", nil, "alice")
 
 	ListLegacyPhonebook(ctx)
 
 	require.Equal(t, http.StatusOK, recorder.Code)
 	assert.Equal(t, "alice", capturedQuery.Username)
+	assert.Equal(t, "private", capturedQuery.Visibility)
 	assert.Equal(t, 5, capturedQuery.Offset)
 	assert.Equal(t, 20, capturedQuery.Limit)
 	assert.True(t, capturedQuery.ApplyPagination)
-	assert.True(t, capturedQuery.IncludePrivateContacts)
+	assert.False(t, capturedQuery.IncludePrivateContacts)
 	assert.Empty(t, capturedQuery.Term)
 	assert.Contains(t, recorder.Body.String(), `"count":0`)
+	assert.Contains(t, recorder.Body.String(), `"last_sync_at":"2026-05-25T12:13:14Z"`)
 }
 
 func newLegacyPhonebookTestContext(method, target string, payload map[string]any, username string) (*gin.Context, *httptest.ResponseRecorder) {

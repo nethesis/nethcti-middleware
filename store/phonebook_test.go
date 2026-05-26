@@ -95,6 +95,17 @@ func ensureCentralizedPhonebookTable() error {
 	}
 
 	_, err = db.GetDB().Exec(`
+		CREATE TABLE IF NOT EXISTS phonebook.sync_metadata (
+			scope varchar(255) NOT NULL,
+			last_sync_at datetime DEFAULT NULL,
+			PRIMARY KEY (scope)
+		) ENGINE=MyISAM DEFAULT CHARSET=utf8mb3;
+	`)
+	if err != nil {
+		return err
+	}
+
+	_, err = db.GetDB().Exec(`
 		CREATE TABLE IF NOT EXISTS phonebook.phonebook (
 			id int(11) NOT NULL AUTO_INCREMENT,
 			owner_id varchar(255) NOT NULL DEFAULT '',
@@ -143,6 +154,9 @@ func clearCentralizedPhonebookTable(t *testing.T) {
 
 	_, err := db.GetDB().ExecContext(ctx, "DELETE FROM phonebook.phonebook")
 	require.NoError(t, err, "Failed to clear centralized phonebook table")
+
+	_, err = db.GetDB().ExecContext(ctx, "DELETE FROM phonebook.sync_metadata")
+	require.NoError(t, err, "Failed to clear centralized phonebook sync metadata table")
 }
 
 // Helper function to count phonebook entries in database
@@ -185,6 +199,19 @@ func insertCentralizedPhonebookRow(t *testing.T, entry store.PhonebookEntry) {
 		entry.WorkStreet, entry.WorkPOB, entry.WorkCity, entry.WorkProvince, entry.WorkPostalCode,
 		entry.WorkCountry, entry.URL,
 	)
+	require.NoError(t, err)
+}
+
+func setCentralizedPhonebookLastSyncAt(t *testing.T, value time.Time) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, err := db.GetDB().ExecContext(ctx, `
+		INSERT INTO phonebook.sync_metadata (scope, last_sync_at)
+		VALUES (?, ?)
+		ON DUPLICATE KEY UPDATE last_sync_at = VALUES(last_sync_at)
+	`, "centralized_phonebook", value.UTC())
 	require.NoError(t, err)
 }
 
@@ -289,6 +316,8 @@ func TestSearchLegacyPhonebook_ReturnsUnionWithVisibilityFiltering(t *testing.T)
 		Name:    "Central Contact",
 		Company: "Acme",
 	})
+	lastSyncAt := time.Date(2026, time.May, 25, 10, 11, 12, 0, time.UTC)
+	setCentralizedPhonebookLastSyncAt(t, lastSyncAt)
 
 	result, err := store.SearchLegacyPhonebook(ctx, store.LegacyPhonebookQuery{
 		Username:               "alice",
@@ -309,6 +338,8 @@ func TestSearchLegacyPhonebook_ReturnsUnionWithVisibilityFiltering(t *testing.T)
 	assert.Contains(t, names, "Central Contact")
 	assert.NotContains(t, names, "Bob Hidden")
 	assert.NotContains(t, names, "Ignored Speeddial")
+	require.NotNil(t, result.LastSyncAt)
+	assert.Equal(t, lastSyncAt.Format(time.RFC3339), *result.LastSyncAt)
 }
 
 func TestSearchLegacyPhonebook_CompanyViewBuildsContactsPayload(t *testing.T) {
@@ -364,6 +395,102 @@ func TestSearchLegacyPhonebook_CompanyViewBuildsContactsPayload(t *testing.T) {
 	assert.Equal(t, "Central Contact", contacts[2]["name"])
 }
 
+func TestSearchLegacyPhonebook_FiltersByVisibility(t *testing.T) {
+	clearPhonebookTable(t)
+	clearCentralizedPhonebookTable(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	require.NoError(t, store.CreatePhonebookEntry(ctx, &store.PhonebookEntry{
+		OwnerID: "alice",
+		Type:    "private",
+		Name:    "Alice Private",
+		Company: "Personal",
+	}))
+	require.NoError(t, store.CreatePhonebookEntry(ctx, &store.PhonebookEntry{
+		OwnerID: "bob",
+		Type:    "public",
+		Name:    "Bob Public",
+		Company: "Acme",
+	}))
+	require.NoError(t, store.CreatePhonebookEntry(ctx, &store.PhonebookEntry{
+		OwnerID: "bob",
+		Type:    "group:Sales",
+		Name:    "Bob Shared",
+		Company: "Acme",
+	}))
+	insertCentralizedPhonebookRow(t, store.PhonebookEntry{
+		OwnerID: "central",
+		Type:    "public",
+		Name:    "Central Contact",
+		Company: "Acme",
+	})
+
+	result, err := store.SearchLegacyPhonebook(ctx, store.LegacyPhonebookQuery{
+		Username:               "alice",
+		UserGroups:             []string{"Sales"},
+		Visibility:             "group",
+		IncludePrivateContacts: true,
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1, result.Count)
+	require.Len(t, result.Rows, 1)
+	assert.Equal(t, "Bob Shared", result.Rows[0].Name)
+}
+
+func TestSearchLegacyPhonebook_CompanyViewFiltersByVisibility(t *testing.T) {
+	clearPhonebookTable(t)
+	clearCentralizedPhonebookTable(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	require.NoError(t, store.CreatePhonebookEntry(ctx, &store.PhonebookEntry{
+		OwnerID: "bob",
+		Type:    "public",
+		Name:    "",
+		Company: "Acme",
+		Notes:   "Headquarters",
+	}))
+	require.NoError(t, store.CreatePhonebookEntry(ctx, &store.PhonebookEntry{
+		OwnerID: "bob",
+		Type:    "public",
+		Name:    "Bob Public",
+		Company: "Acme",
+	}))
+	require.NoError(t, store.CreatePhonebookEntry(ctx, &store.PhonebookEntry{
+		OwnerID: "bob",
+		Type:    "group:Sales",
+		Name:    "Bob Shared",
+		Company: "Acme",
+	}))
+	insertCentralizedPhonebookRow(t, store.PhonebookEntry{
+		OwnerID: "central",
+		Type:    "public",
+		Name:    "Central Contact",
+		Company: "Acme",
+	})
+
+	result, err := store.SearchLegacyPhonebook(ctx, store.LegacyPhonebookQuery{
+		Username:               "alice",
+		UserGroups:             []string{"Sales"},
+		Term:                   "Acme",
+		View:                   "company",
+		Visibility:             "public",
+		IncludePrivateContacts: true,
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1, result.Count)
+	require.Len(t, result.Rows, 1)
+
+	var contacts []map[string]any
+	require.NoError(t, json.Unmarshal([]byte(result.Rows[0].Contacts), &contacts))
+	require.Len(t, contacts, 2)
+	assert.Equal(t, "Bob Public", contacts[0]["name"])
+	assert.Equal(t, "Central Contact", contacts[1]["name"])
+}
+
 func TestListLegacyPhonebook_ReturnsAlphabeticalUnion(t *testing.T) {
 	clearPhonebookTable(t)
 	clearCentralizedPhonebookTable(t)
@@ -389,6 +516,8 @@ func TestListLegacyPhonebook_ReturnsAlphabeticalUnion(t *testing.T) {
 		Name:    "Gamma Contact",
 		Company: "Gamma Inc",
 	})
+	lastSyncAt := time.Date(2026, time.May, 25, 12, 13, 14, 0, time.UTC)
+	setCentralizedPhonebookLastSyncAt(t, lastSyncAt)
 
 	result, err := store.ListLegacyPhonebook(ctx, store.LegacyPhonebookQuery{
 		Username:               "alice",
@@ -400,6 +529,68 @@ func TestListLegacyPhonebook_ReturnsAlphabeticalUnion(t *testing.T) {
 	assert.Equal(t, "Alpha Corp", result.Rows[0].Company)
 	assert.Equal(t, "Beta User", result.Rows[1].Name)
 	assert.Equal(t, "Gamma Contact", result.Rows[2].Name)
+	require.NotNil(t, result.LastSyncAt)
+	assert.Equal(t, lastSyncAt.Format(time.RFC3339), *result.LastSyncAt)
+}
+
+func TestListLegacyPhonebook_FiltersByVisibility(t *testing.T) {
+	clearPhonebookTable(t)
+	clearCentralizedPhonebookTable(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	require.NoError(t, store.CreatePhonebookEntry(ctx, &store.PhonebookEntry{
+		OwnerID: "alice",
+		Type:    "private",
+		Name:    "Alice Private",
+		Company: "Personal",
+	}))
+	require.NoError(t, store.CreatePhonebookEntry(ctx, &store.PhonebookEntry{
+		OwnerID: "bob",
+		Type:    "group:Sales",
+		Name:    "Bob Shared",
+		Company: "Acme",
+	}))
+	insertCentralizedPhonebookRow(t, store.PhonebookEntry{
+		OwnerID: "central",
+		Type:    "public",
+		Name:    "Central Contact",
+		Company: "Acme",
+	})
+
+	result, err := store.ListLegacyPhonebook(ctx, store.LegacyPhonebookQuery{
+		Username:               "alice",
+		UserGroups:             []string{"Sales"},
+		Visibility:             "private",
+		IncludePrivateContacts: true,
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1, result.Count)
+	require.Len(t, result.Rows, 1)
+	assert.Equal(t, "Alice Private", result.Rows[0].Name)
+}
+
+func TestSearchLegacyPhonebook_LastSyncAtIsNilWhenMetadataMissing(t *testing.T) {
+	clearPhonebookTable(t)
+	clearCentralizedPhonebookTable(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	insertCentralizedPhonebookRow(t, store.PhonebookEntry{
+		OwnerID: "central",
+		Type:    "public",
+		Name:    "Central Contact",
+		Company: "Acme",
+	})
+
+	result, err := store.SearchLegacyPhonebook(ctx, store.LegacyPhonebookQuery{
+		Username:               "alice",
+		IncludePrivateContacts: true,
+	})
+	require.NoError(t, err)
+	assert.Nil(t, result.LastSyncAt)
 }
 
 // Test: Successful batch insert of phonebook entries

@@ -653,6 +653,7 @@ func buildLegacyPhonebookQuery(c *gin.Context, username string, userGroups []str
 		Username:               username,
 		UserGroups:             userGroups,
 		View:                   strings.TrimSpace(c.Query("view")),
+		Visibility:             firstNonEmpty(strings.TrimSpace(c.Query("visibility")), strings.TrimSpace(c.Query("sharing"))),
 		IncludePrivateContacts: canReadPrivateContacts(username),
 	}
 
@@ -683,6 +684,16 @@ func buildLegacyPhonebookQuery(c *gin.Context, username string, userGroups []str
 	query.Offset = offset
 	query.ApplyPagination = true
 	return query, nil
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+
+	return ""
 }
 
 func parseLegacyPhonebookID(rawValue any) (int64, error) {
