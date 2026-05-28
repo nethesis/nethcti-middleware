@@ -597,7 +597,7 @@ func getSharedGroupPatterns(groupName string) []string {
 }
 
 func escapeLikeValue(value string) string {
-	replacer := strings.NewReplacer(`\`, `\\`, `%`, `\\%`, `_`, `\\_`)
+	replacer := strings.NewReplacer("\\", "\\\\", "%", "\\%", "_", "\\_")
 	return replacer.Replace(value)
 }
 
