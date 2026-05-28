@@ -7,7 +7,7 @@ import (
 )
 
 func TestEscapeLikeValue_SpecialCharacters(t *testing.T) {
-	assert.Equal(t, `Sales\\%\\_\\\\West`, escapeLikeValue(`Sales%_\West`))
+	assert.Equal(t, `Sales\%\_\\West`, escapeLikeValue(`Sales%_\West`))
 }
 
 func TestGetSharedGroupPatterns_EscapesLikeWildcards(t *testing.T) {
@@ -15,9 +15,9 @@ func TestGetSharedGroupPatterns_EscapesLikeWildcards(t *testing.T) {
 
 	assert.Equal(t, []string{
 		`group:Sales%_\West`,
-		`group:Sales\\%\\_\\\\West,%`,
-		`group:%,Sales\\%\\_\\\\West,%`,
-		`group:%,Sales\\%\\_\\\\West`,
+		`group:Sales\%\_\\West,%`,
+		`group:%,Sales\%\_\\West,%`,
+		`group:%,Sales\%\_\\West`,
 	}, patterns)
 }
 
@@ -29,8 +29,8 @@ func TestBuildVisibleCTIWhere_MacroOnlyStillEscapesGroupPatterns(t *testing.T) {
 	assert.Equal(t, []any{
 		"alice",
 		`group:Sales%_\West`,
-		`group:Sales\\%\\_\\\\West,%`,
-		`group:%,Sales\\%\\_\\\\West,%`,
-		`group:%,Sales\\%\\_\\\\West`,
+		`group:Sales\%\_\\West,%`,
+		`group:%,Sales\%\_\\West,%`,
+		`group:%,Sales\%\_\\West`,
 	}, args)
 }
