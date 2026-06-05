@@ -186,7 +186,7 @@ func TestGetTranscriptionByUniqueID_ReturnsServiceUnavailableWhenTranscriptsTabl
 	checkUserParticipationFunc = func(string, []string) (bool, error) {
 		return true, nil
 	}
-	fetchTranscriptionFunc = func(string) (string, *time.Time, bool, error) {
+	fetchTranscriptionFunc = func(string, []string, []string) (string, *time.Time, bool, error) {
 		return "", nil, false, &pgconn.PgError{Code: "42P01", Message: `relation "transcripts" does not exist`}
 	}
 
@@ -245,7 +245,7 @@ func TestGetTranscriptionByUniqueID_ReturnsServiceUnavailableWhenSatelliteDBIsUn
 	checkUserParticipationFunc = func(string, []string) (bool, error) {
 		return true, nil
 	}
-	fetchTranscriptionFunc = func(string) (string, *time.Time, bool, error) {
+	fetchTranscriptionFunc = func(string, []string, []string) (string, *time.Time, bool, error) {
 		return "", nil, false, sql.ErrConnDone
 	}
 
@@ -495,7 +495,7 @@ func TestGetSummaryByUniqueID_ReturnsServiceUnavailableWhenTranscriptsTableIsMis
 	checkUserParticipationFunc = func(string, []string) (bool, error) {
 		return true, nil
 	}
-	fetchSummaryDrawerFunc = func(string) (*SummaryDrawer, bool, error) {
+	fetchSummaryDrawerFunc = func(string, []string, []string) (*SummaryDrawer, bool, error) {
 		return nil, false, &pgconn.PgError{Code: "42P01", Message: `relation "transcripts" does not exist`}
 	}
 
