@@ -242,7 +242,7 @@ func TestPhonebookPermissionLevelFromCapabilities(t *testing.T) {
 
 	t.Run("preserves explicit legacy precedence", func(t *testing.T) {
 		caps := map[string]bool{
-			"phonebook":                    true,
+			"phonebook":                   true,
 			"phonebook.phonebook_level_0": true,
 			"phonebook.phonebook_level_2": true,
 			"phonebook.ad_phonebook":      true,
@@ -258,7 +258,7 @@ func TestPhonebookPermissionLevelFromCapabilities(t *testing.T) {
 
 	t.Run("maps explicit level 1 capability", func(t *testing.T) {
 		assert.Equal(t, 1, store.GetPhonebookPermissionLevelFromCapabilities(map[string]bool{
-			"phonebook":                    true,
+			"phonebook":                   true,
 			"phonebook.phonebook_level_1": true,
 		}))
 	})
@@ -312,7 +312,7 @@ func TestSearchLegacyPhonebook_ReturnsUnionWithVisibilityFiltering(t *testing.T)
 	}))
 	insertCentralizedPhonebookRow(t, store.PhonebookEntry{
 		OwnerID: "central",
-		Type:    "public",
+		Type:    "extension",
 		Name:    "Central Contact",
 		Company: "Acme",
 	})
@@ -370,7 +370,7 @@ func TestSearchLegacyPhonebook_CompanyViewBuildsContactsPayload(t *testing.T) {
 	}))
 	insertCentralizedPhonebookRow(t, store.PhonebookEntry{
 		OwnerID: "central",
-		Type:    "public",
+		Type:    "custom",
 		Name:    "Central Contact",
 		Company: "Acme",
 	})
@@ -422,7 +422,7 @@ func TestSearchLegacyPhonebook_FiltersByVisibility(t *testing.T) {
 	}))
 	insertCentralizedPhonebookRow(t, store.PhonebookEntry{
 		OwnerID: "central",
-		Type:    "public",
+		Type:    "rapidcode",
 		Name:    "Central Contact",
 		Company: "Acme",
 	})
@@ -467,7 +467,7 @@ func TestSearchLegacyPhonebook_CompanyViewFiltersByVisibility(t *testing.T) {
 	}))
 	insertCentralizedPhonebookRow(t, store.PhonebookEntry{
 		OwnerID: "central",
-		Type:    "public",
+		Type:    "extension",
 		Name:    "Central Contact",
 		Company: "Acme",
 	})
@@ -512,7 +512,7 @@ func TestListLegacyPhonebook_ReturnsAlphabeticalUnion(t *testing.T) {
 	}))
 	insertCentralizedPhonebookRow(t, store.PhonebookEntry{
 		OwnerID: "central",
-		Type:    "public",
+		Type:    "custom",
 		Name:    "Gamma Contact",
 		Company: "Gamma Inc",
 	})
@@ -554,7 +554,7 @@ func TestListLegacyPhonebook_FiltersByVisibility(t *testing.T) {
 	}))
 	insertCentralizedPhonebookRow(t, store.PhonebookEntry{
 		OwnerID: "central",
-		Type:    "public",
+		Type:    "extension",
 		Name:    "Central Contact",
 		Company: "Acme",
 	})
@@ -580,7 +580,7 @@ func TestSearchLegacyPhonebook_LastSyncAtIsNilWhenMetadataMissing(t *testing.T) 
 
 	insertCentralizedPhonebookRow(t, store.PhonebookEntry{
 		OwnerID: "central",
-		Type:    "public",
+		Type:    "rapidcode",
 		Name:    "Central Contact",
 		Company: "Acme",
 	})

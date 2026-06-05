@@ -99,8 +99,8 @@ type LegacyPhonebookContact struct {
 
 // LegacyPhonebookResult mirrors the legacy phonebook search/list envelope.
 type LegacyPhonebookResult struct {
-	Count int                      `json:"count"`
-	Rows  []LegacyPhonebookContact `json:"rows"`
+	Count      int                      `json:"count"`
+	Rows       []LegacyPhonebookContact `json:"rows"`
 	LastSyncAt *string                  `json:"last_sync_at"`
 }
 
@@ -514,36 +514,36 @@ func queryLegacyPhonebookCount(ctx context.Context, database *sql.DB, query stri
 }
 
 func buildLegacySearchClauses(view, rawTerm string) ([]any, []any, string, string) {
-	term := "%" + rawTerm + "%"
-	baseClause := "(name LIKE ? OR company LIKE ?)"
+	term := "%" + escapeLikeValue(rawTerm) + "%"
+	baseClause := "(name LIKE ? ESCAPE '\\\\' OR company LIKE ? ESCAPE '\\\\')"
 	ctiArgs := []any{term, term}
 	centralizedArgs := []any{term, term}
 
 	switch strings.ToLower(strings.TrimSpace(view)) {
 	case "person":
-		baseClause = "name LIKE ?"
+		baseClause = "name LIKE ? ESCAPE '\\\\'"
 		ctiArgs = []any{term}
 		centralizedArgs = []any{term}
 	case "company":
-		baseClause = "company LIKE ?"
+		baseClause = "company LIKE ? ESCAPE '\\\\'"
 		ctiArgs = []any{term}
 		centralizedArgs = []any{term}
 	}
 
 	ctiClause := strings.Join([]string{
 		baseClause,
-		"OR workphone LIKE ?",
-		"OR homephone LIKE ?",
-		"OR cellphone LIKE ?",
-		"OR extension LIKE ?",
-		"OR notes LIKE ?",
+		"OR workphone LIKE ? ESCAPE '\\\\'",
+		"OR homephone LIKE ? ESCAPE '\\\\'",
+		"OR cellphone LIKE ? ESCAPE '\\\\'",
+		"OR extension LIKE ? ESCAPE '\\\\'",
+		"OR notes LIKE ? ESCAPE '\\\\'",
 	}, " ")
 	centralizedClause := strings.Join([]string{
 		baseClause,
-		"OR workphone LIKE ?",
-		"OR homephone LIKE ?",
-		"OR cellphone LIKE ?",
-		"OR notes LIKE ?",
+		"OR workphone LIKE ? ESCAPE '\\\\'",
+		"OR homephone LIKE ? ESCAPE '\\\\'",
+		"OR cellphone LIKE ? ESCAPE '\\\\'",
+		"OR notes LIKE ? ESCAPE '\\\\'",
 	}, " ")
 
 	ctiArgs = append(ctiArgs, term, term, term, term, term)
@@ -557,12 +557,12 @@ func buildLegacyVisibilityClauses(rawVisibility string) (string, []any, string, 
 	case "", "all":
 		return "1 = 1", nil, "1 = 1", nil
 	case "public":
-		return "type = ?", []any{"public"}, "type = ?", []any{"public"}
+		return "type = ?", []any{"public"}, "1 = 1", nil
 	case "private":
-		return "type = ?", []any{"private"}, "type = ?", []any{"private"}
+		return "type = ?", []any{"private"}, "1 = 0", nil
 	case "group":
 		groupPattern := GroupTypePrefix + "%"
-		return "type LIKE ?", []any{groupPattern}, "type LIKE ?", []any{groupPattern}
+		return "type LIKE ?", []any{groupPattern}, "1 = 0", nil
 	default:
 		return "1 = 1", nil, "1 = 1", nil
 	}
@@ -603,35 +603,35 @@ func escapeLikeValue(value string) string {
 
 func scanLegacyPhonebookContact(scanner interface{ Scan(dest ...any) error }) (LegacyPhonebookContact, error) {
 	var (
-		contact          LegacyPhonebookContact
-		ownerID          sql.NullString
-		contactType      sql.NullString
-		homeEmail        sql.NullString
-		workEmail        sql.NullString
-		homePhone        sql.NullString
-		workPhone        sql.NullString
-		cellPhone        sql.NullString
-		fax              sql.NullString
-		title            sql.NullString
-		company          sql.NullString
-		notes            sql.NullString
-		name             sql.NullString
-		homeStreet       sql.NullString
-		homePOB          sql.NullString
-		homeCity         sql.NullString
-		homeProvince     sql.NullString
-		homePostalCode   sql.NullString
-		homeCountry      sql.NullString
-		workStreet       sql.NullString
-		workPOB          sql.NullString
-		workCity         sql.NullString
-		workProvince     sql.NullString
-		workPostalCode   sql.NullString
-		workCountry      sql.NullString
-		url              sql.NullString
-		extension        sql.NullString
-		speedDialNum     sql.NullString
-		source           sql.NullString
+		contact        LegacyPhonebookContact
+		ownerID        sql.NullString
+		contactType    sql.NullString
+		homeEmail      sql.NullString
+		workEmail      sql.NullString
+		homePhone      sql.NullString
+		workPhone      sql.NullString
+		cellPhone      sql.NullString
+		fax            sql.NullString
+		title          sql.NullString
+		company        sql.NullString
+		notes          sql.NullString
+		name           sql.NullString
+		homeStreet     sql.NullString
+		homePOB        sql.NullString
+		homeCity       sql.NullString
+		homeProvince   sql.NullString
+		homePostalCode sql.NullString
+		homeCountry    sql.NullString
+		workStreet     sql.NullString
+		workPOB        sql.NullString
+		workCity       sql.NullString
+		workProvince   sql.NullString
+		workPostalCode sql.NullString
+		workCountry    sql.NullString
+		url            sql.NullString
+		extension      sql.NullString
+		speedDialNum   sql.NullString
+		source         sql.NullString
 	)
 
 	err := scanner.Scan(
@@ -703,36 +703,36 @@ func scanLegacyPhonebookContact(scanner interface{ Scan(dest ...any) error }) (L
 
 func scanLegacyPhonebookContactWithSortKey(scanner interface{ Scan(dest ...any) error }) (LegacyPhonebookContact, error) {
 	var (
-		contact          LegacyPhonebookContact
-		ownerID          sql.NullString
-		contactType      sql.NullString
-		homeEmail        sql.NullString
-		workEmail        sql.NullString
-		homePhone        sql.NullString
-		workPhone        sql.NullString
-		cellPhone        sql.NullString
-		fax              sql.NullString
-		title            sql.NullString
-		company          sql.NullString
-		notes            sql.NullString
-		name             sql.NullString
-		homeStreet       sql.NullString
-		homePOB          sql.NullString
-		homeCity         sql.NullString
-		homeProvince     sql.NullString
-		homePostalCode   sql.NullString
-		homeCountry      sql.NullString
-		workStreet       sql.NullString
-		workPOB          sql.NullString
-		workCity         sql.NullString
-		workProvince     sql.NullString
-		workPostalCode   sql.NullString
-		workCountry      sql.NullString
-		url              sql.NullString
-		extension        sql.NullString
-		speedDialNum     sql.NullString
-		source           sql.NullString
-		sortKey          sql.NullString
+		contact        LegacyPhonebookContact
+		ownerID        sql.NullString
+		contactType    sql.NullString
+		homeEmail      sql.NullString
+		workEmail      sql.NullString
+		homePhone      sql.NullString
+		workPhone      sql.NullString
+		cellPhone      sql.NullString
+		fax            sql.NullString
+		title          sql.NullString
+		company        sql.NullString
+		notes          sql.NullString
+		name           sql.NullString
+		homeStreet     sql.NullString
+		homePOB        sql.NullString
+		homeCity       sql.NullString
+		homeProvince   sql.NullString
+		homePostalCode sql.NullString
+		homeCountry    sql.NullString
+		workStreet     sql.NullString
+		workPOB        sql.NullString
+		workCity       sql.NullString
+		workProvince   sql.NullString
+		workPostalCode sql.NullString
+		workCountry    sql.NullString
+		url            sql.NullString
+		extension      sql.NullString
+		speedDialNum   sql.NullString
+		source         sql.NullString
+		sortKey        sql.NullString
 	)
 
 	err := scanner.Scan(

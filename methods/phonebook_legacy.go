@@ -29,8 +29,8 @@ type legacyPhonebookOperatorGroup struct {
 }
 
 var (
-	errInvalidSharedGroups     = errors.New("invalid shared groups")
-	errForbiddenSharedGroups   = errors.New("forbidden shared groups")
+	errInvalidSharedGroups      = errors.New("invalid shared groups")
+	errForbiddenSharedGroups    = errors.New("forbidden shared groups")
 	errLegacySessionUnavailable = errors.New("legacy session unavailable")
 
 	fetchPhonebookOperatorGroupsFunc = fetchPhonebookOperatorGroupsFromV1
@@ -79,7 +79,7 @@ func SearchLegacyPhonebook(c *gin.Context) {
 		return
 	}
 
-	userGroups, err := getUserGroupNames(username)
+	userGroups, err := getUserGroupNamesForRead(username)
 	if err != nil {
 		writePhonebookGroupLookupError(c, err)
 		return
@@ -113,7 +113,7 @@ func ListLegacyPhonebook(c *gin.Context) {
 		return
 	}
 
-	userGroups, err := getUserGroupNames(username)
+	userGroups, err := getUserGroupNamesForRead(username)
 	if err != nil {
 		writePhonebookGroupLookupError(c, err)
 		return
@@ -169,7 +169,7 @@ func GetLegacyCTIPhonebookContact(c *gin.Context) {
 
 	userGroups := []string{}
 	if contact.OwnerID != username && store.HasGroupTypePrefix(contact.Type) {
-		userGroups, err = getUserGroupNames(username)
+		userGroups, err = getUserGroupNamesForRead(username)
 		if err != nil {
 			writePhonebookGroupLookupError(c, err)
 			return
@@ -427,6 +427,21 @@ func getUserGroupNames(username string) ([]string, error) {
 	allGroups, err := fetchPhonebookOperatorGroupsFunc(username)
 	if err != nil {
 		return nil, err
+	}
+
+	return computeVisibleGroupNames(username, capabilities, allGroups), nil
+}
+
+func getUserGroupNamesForRead(username string) ([]string, error) {
+	capabilities, err := getUserCapabilitiesFunc(username)
+	if err != nil {
+		return nil, err
+	}
+
+	allGroups, err := fetchPhonebookOperatorGroupsFunc(username)
+	if err != nil {
+		logs.Log("[WARNING][PHONEBOOK] Failed to load operator groups for read path, using empty group set: " + err.Error())
+		allGroups = map[string]legacyPhonebookOperatorGroup{}
 	}
 
 	return computeVisibleGroupNames(username, capabilities, allGroups), nil

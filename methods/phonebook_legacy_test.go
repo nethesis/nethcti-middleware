@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -39,6 +40,29 @@ func TestComputeVisibleGroupNames(t *testing.T) {
 	assert.Equal(t, []string{"Sales", "Support"}, visibleGroups)
 }
 
+func TestGetUserGroupNamesForRead_FallsBackWhenGroupsUnavailable(t *testing.T) {
+	originalFetchGroups := fetchPhonebookOperatorGroupsFunc
+	originalCaps := getUserCapabilitiesFunc
+	defer func() {
+		fetchPhonebookOperatorGroupsFunc = originalFetchGroups
+		getUserCapabilitiesFunc = originalCaps
+	}()
+
+	fetchPhonebookOperatorGroupsFunc = func(string) (map[string]legacyPhonebookOperatorGroup, error) {
+		return nil, errors.New("opgroups unavailable")
+	}
+	getUserCapabilitiesFunc = func(string) (map[string]bool, error) {
+		return map[string]bool{
+			"phonebook": true,
+		}, nil
+	}
+
+	groups, err := getUserGroupNamesForRead("alice")
+
+	require.NoError(t, err)
+	assert.Empty(t, groups)
+}
+
 func TestGetLegacyCTIPhonebookContact_GroupVisibility(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	loadPhonebookTestProfiles(t, `{"p":{"id":"p","name":"P","macro_permissions":{"phonebook":{"value":true,"permissions":[{"id":"p2","name":"phonebook_level_2","value":true}]},"presence_panel":{"value":true,"permissions":[{"id":"grp_sales","name":"grp_sales","value":true}]}}}}`, `{"alice":{"profile_id":"p"}}`)
@@ -60,9 +84,9 @@ func TestGetLegacyCTIPhonebookContact_GroupVisibility(t *testing.T) {
 	}
 	getUserCapabilitiesFunc = func(string) (map[string]bool, error) {
 		return map[string]bool{
-			"phonebook":                true,
+			"phonebook":                   true,
 			"phonebook.phonebook_level_2": true,
-			"presence_panel.grp_sales": true,
+			"presence_panel.grp_sales":    true,
 		}, nil
 	}
 
@@ -96,7 +120,7 @@ func TestGetLegacyCTIPhonebookContact_ForbiddenWhenGroupHidden(t *testing.T) {
 	}
 	getUserCapabilitiesFunc = func(string) (map[string]bool, error) {
 		return map[string]bool{
-			"phonebook":                true,
+			"phonebook":                   true,
 			"phonebook.phonebook_level_2": true,
 		}, nil
 	}
