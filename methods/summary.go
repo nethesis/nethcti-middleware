@@ -643,9 +643,6 @@ func ListSummaryStatus(c *gin.Context) {
 		itemByUniqueID[item.UniqueID] = item
 	}
 
-	// Track which uniqueids are already included in the result
-	includedUIDs := make(map[string]struct{})
-
 	result := make([]interface{}, 0, len(resolvedLookups))
 	for _, lookup := range resolvedLookups {
 		if item, ok := itemByUniqueID[lookup.ResolvedUniqueID]; ok {
@@ -656,7 +653,6 @@ func ListSummaryStatus(c *gin.Context) {
 				item.UniqueID = lookup.UniqueID
 			}
 			result = append(result, item)
-			includedUIDs[lookup.ResolvedUniqueID] = struct{}{}
 			continue
 		}
 		reportedUniqueID := lookup.UniqueID
