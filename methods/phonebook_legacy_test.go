@@ -433,6 +433,115 @@ func newLegacyPhonebookTestContext(method, target string, payload map[string]any
 	return ctx, recorder
 }
 
+func TestGetLegacyCTIPhonebookContact_ForbiddenWhenOtherUserPrivate(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	originalGet := getPhonebookEntryByIDFunc
+	originalCaps := getUserCapabilitiesFunc
+	defer func() {
+		getPhonebookEntryByIDFunc = originalGet
+		getUserCapabilitiesFunc = originalCaps
+	}()
+
+	// A private contact owned by bob must never be readable by alice.
+	getPhonebookEntryByIDFunc = func(context.Context, int64) (*store.PhonebookEntry, error) {
+		return &store.PhonebookEntry{ID: 9, OwnerID: "bob", Type: "private", Name: "Bob Private"}, nil
+	}
+	getUserCapabilitiesFunc = func(string) (map[string]bool, error) {
+		return map[string]bool{
+			"phonebook":                   true,
+			"phonebook.phonebook_level_2": true,
+		}, nil
+	}
+
+	ctx, recorder := newLegacyPhonebookTestContext(http.MethodGet, "/phonebook/cticontact/9", nil, "alice")
+	ctx.Params = gin.Params{{Key: "id", Value: "9"}}
+
+	GetLegacyCTIPhonebookContact(ctx)
+
+	require.Equal(t, http.StatusForbidden, recorder.Code)
+}
+
+func TestGetLegacyCTIPhonebookContact_GroupVisibilityCaseInsensitive(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	originalGet := getPhonebookEntryByIDFunc
+	originalFetchGroups := fetchPhonebookOperatorGroupsFunc
+	originalCaps := getUserCapabilitiesFunc
+	defer func() {
+		getPhonebookEntryByIDFunc = originalGet
+		fetchPhonebookOperatorGroupsFunc = originalFetchGroups
+		getUserCapabilitiesFunc = originalCaps
+	}()
+
+	// Contact is shared with "sales" (lowercase) while the operator group is
+	// "Sales"; the listing matches case-insensitively, so the detail endpoint
+	// must too (see containsStringFold).
+	getPhonebookEntryByIDFunc = func(context.Context, int64) (*store.PhonebookEntry, error) {
+		return &store.PhonebookEntry{ID: 10, OwnerID: "bob", Type: "group:sales", Name: "Shared Lower"}, nil
+	}
+	fetchPhonebookOperatorGroupsFunc = func(string) (map[string]legacyPhonebookOperatorGroup, error) {
+		return map[string]legacyPhonebookOperatorGroup{"Sales": {Users: []string{"bob"}}}, nil
+	}
+	getUserCapabilitiesFunc = func(string) (map[string]bool, error) {
+		return map[string]bool{
+			"phonebook":                true,
+			"presence_panel.grp_sales": true,
+		}, nil
+	}
+
+	ctx, recorder := newLegacyPhonebookTestContext(http.MethodGet, "/phonebook/cticontact/10", nil, "alice")
+	ctx.Params = gin.Params{{Key: "id", Value: "10"}}
+
+	GetLegacyCTIPhonebookContact(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), `"type":"group:sales"`)
+}
+
+func TestGetCentralizedPhonebookContact_ReturnsCentralizedSource(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	originalGet := getCentralizedPhonebookEntryByIDFunc
+	defer func() {
+		getCentralizedPhonebookEntryByIDFunc = originalGet
+	}()
+
+	getCentralizedPhonebookEntryByIDFunc = func(context.Context, int64) (*store.PhonebookEntry, error) {
+		return &store.PhonebookEntry{ID: 42, Type: "extension", Name: "Front Desk", Company: "Acme"}, nil
+	}
+
+	ctx, recorder := newLegacyPhonebookTestContext(http.MethodGet, "/phonebook/contact/42", nil, "alice")
+	ctx.Params = gin.Params{{Key: "id", Value: "42"}}
+
+	GetCentralizedPhonebookContact(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), `"source":"centralized"`)
+	assert.Contains(t, recorder.Body.String(), `"name":"Front Desk"`)
+}
+
+func TestGetCentralizedPhonebookContact_NotFoundReturnsEmpty(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	originalGet := getCentralizedPhonebookEntryByIDFunc
+	defer func() {
+		getCentralizedPhonebookEntryByIDFunc = originalGet
+	}()
+
+	getCentralizedPhonebookEntryByIDFunc = func(context.Context, int64) (*store.PhonebookEntry, error) {
+		return nil, nil
+	}
+
+	ctx, recorder := newLegacyPhonebookTestContext(http.MethodGet, "/phonebook/contact/404", nil, "alice")
+	ctx.Params = gin.Params{{Key: "id", Value: "404"}}
+
+	GetCentralizedPhonebookContact(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	assert.Equal(t, "{}", recorder.Body.String())
+}
+
 func loadPhonebookTestProfiles(t *testing.T, profilesJSON, usersJSON string) {
 	t.Helper()
 	tempDir := t.TempDir()

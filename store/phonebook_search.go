@@ -316,7 +316,7 @@ func searchLegacyPhonebookByCompany(ctx context.Context, database *sql.DB, query
 	}
 
 	countQuery := strings.Join([]string{
-		"SELECT COUNT(company) FROM (",
+		"SELECT COUNT(*) FROM (",
 		"SELECT company FROM cti_phonebook WHERE", visibleCTIWhere, "AND type != 'speeddial' AND", ctiVisibilityWhere, "AND (", ctiSearchClause, ")",
 		"UNION",
 		"SELECT company FROM", centralizedPhonebookTable, "WHERE type != 'nethcti' AND", centralizedVisibilityWhere, "AND (", centralizedSearchClause, ")",

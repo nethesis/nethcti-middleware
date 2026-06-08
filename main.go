@@ -180,7 +180,7 @@ func createRouter() *gin.Engine {
 		api.GET("/phonebook/getall/", middleware.RequireCapabilities("phonebook"), methods.ListLegacyPhonebook)
 		api.GET("/phonebook/getall/:term", middleware.RequireCapabilities("phonebook"), methods.ListLegacyPhonebook)
 		api.GET("/phonebook/getall/:term/", middleware.RequireCapabilities("phonebook"), methods.ListLegacyPhonebook)
-		api.GET("/phonebook/contact/:id", middleware.RequireCapabilities("phonebook"), methods.GetLegacyCTIPhonebookContact)
+		api.GET("/phonebook/contact/:id", middleware.RequireCapabilities("phonebook"), methods.GetCentralizedPhonebookContact)
 		api.GET("/phonebook/cticontact/:id", middleware.RequireCapabilities("phonebook"), methods.GetLegacyCTIPhonebookContact)
 		api.POST("/phonebook/create", middleware.RequireCapabilities("phonebook"), methods.CreateLegacyCTIPhonebookContact)
 		api.POST("/phonebook/delete_cticontact", middleware.RequireCapabilities("phonebook"), methods.DeleteLegacyCTIPhonebookContact)

@@ -33,14 +33,15 @@ var (
 	errForbiddenSharedGroups    = errors.New("forbidden shared groups")
 	errLegacySessionUnavailable = errors.New("legacy session unavailable")
 
-	fetchPhonebookOperatorGroupsFunc = fetchPhonebookOperatorGroupsFromV1
-	getPhonebookEntryByIDFunc        = store.GetPhonebookEntryByID
-	createPhonebookEntryFunc         = store.CreatePhonebookEntry
-	updatePhonebookEntryFieldsFunc   = store.UpdatePhonebookEntryFields
-	deletePhonebookEntryByIDFunc     = store.DeletePhonebookEntryByID
-	searchLegacyPhonebookFunc        = store.SearchLegacyPhonebook
-	listLegacyPhonebookFunc          = store.ListLegacyPhonebook
-	getUserCapabilitiesFunc          = store.GetUserCapabilities
+	fetchPhonebookOperatorGroupsFunc     = fetchPhonebookOperatorGroupsFromV1
+	getPhonebookEntryByIDFunc            = store.GetPhonebookEntryByID
+	getCentralizedPhonebookEntryByIDFunc = store.GetCentralizedPhonebookEntryByID
+	createPhonebookEntryFunc             = store.CreatePhonebookEntry
+	updatePhonebookEntryFieldsFunc       = store.UpdatePhonebookEntryFields
+	deletePhonebookEntryByIDFunc         = store.DeletePhonebookEntryByID
+	searchLegacyPhonebookFunc            = store.SearchLegacyPhonebook
+	listLegacyPhonebookFunc              = store.ListLegacyPhonebook
+	getUserCapabilitiesFunc              = store.GetUserCapabilities
 )
 
 var legacyPhonebookWritableFields = []string{
@@ -182,6 +183,40 @@ func GetLegacyCTIPhonebookContact(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, legacyPhonebookEntryResponse(contact))
+}
+
+// GetCentralizedPhonebookContact returns a single contact from the centralized
+// (company-wide) phonebook by id. These contacts are published for all users and
+// carry no owner/group scoping, so any caller with the phonebook capability can
+// read them. The frontend calls this route for contacts whose source is not "cti".
+func GetCentralizedPhonebookContact(c *gin.Context) {
+	if _, err := getUsernameFromContext(c); err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"message": "unauthorized"})
+		return
+	}
+
+	contactID, err := strconv.ParseInt(strings.TrimSpace(c.Param("id")), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "invalid contact id"})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	contact, err := getCentralizedPhonebookEntryByIDFunc(ctx, contactID)
+	if err != nil {
+		logs.Log("[ERROR][PHONEBOOK] Failed to load centralized phonebook contact: " + err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "failed to retrieve phonebook contact"})
+		return
+	}
+
+	if contact == nil {
+		c.JSON(http.StatusOK, gin.H{})
+		return
+	}
+
+	c.JSON(http.StatusOK, legacyPhonebookEntryResponseWithSource(contact, "centralized"))
 }
 
 // CreateLegacyCTIPhonebookContact creates a legacy CTI phonebook contact from middleware.
@@ -631,8 +666,12 @@ func isGroupContactVisible(contact *store.PhonebookEntry, username string, userG
 		return false
 	}
 
+	// Match case-insensitively to stay consistent with the SQL list/search path,
+	// whose LIKE comparisons use the table's case-insensitive collation
+	// (utf8mb3_general_ci). A case-sensitive check here would otherwise 403 a
+	// contact that the listing already showed to the user.
 	for _, groupName := range userGroups {
-		if containsString(sharedGroups, groupName) {
+		if containsStringFold(sharedGroups, groupName) {
 			return true
 		}
 	}
@@ -812,6 +851,10 @@ func assignPhonebookEntryField(entry *store.PhonebookEntry, fieldName, value str
 }
 
 func legacyPhonebookEntryResponse(entry *store.PhonebookEntry) gin.H {
+	return legacyPhonebookEntryResponseWithSource(entry, "cti")
+}
+
+func legacyPhonebookEntryResponseWithSource(entry *store.PhonebookEntry, source string) gin.H {
 	if entry == nil {
 		return gin.H{}
 	}
@@ -845,7 +888,7 @@ func legacyPhonebookEntryResponse(entry *store.PhonebookEntry) gin.H {
 		"url":            entry.URL,
 		"extension":      entry.Extension,
 		"speeddial_num":  entry.SpeedDialNum,
-		"source":         "cti",
+		"source":         source,
 	}
 }
 
@@ -876,6 +919,16 @@ func writePhonebookGroupLookupError(c *gin.Context, err error) {
 func containsString(values []string, expected string) bool {
 	for _, value := range values {
 		if value == expected {
+			return true
+		}
+	}
+
+	return false
+}
+
+func containsStringFold(values []string, expected string) bool {
+	for _, value := range values {
+		if strings.EqualFold(value, expected) {
 			return true
 		}
 	}

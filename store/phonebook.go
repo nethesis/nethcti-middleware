@@ -347,6 +347,34 @@ func GetPhonebookEntryByID(ctx context.Context, id int64) (*PhonebookEntry, erro
 	return entry, err
 }
 
+// GetCentralizedPhonebookEntryByID returns a single contact from the centralized
+// phonebook table (the company-wide phonebook published for physical phones) by id.
+// The nethcti-exported rows are excluded: those are CTI contacts and must be fetched
+// from cti_phonebook instead, to avoid returning the duplicated copy.
+func GetCentralizedPhonebookEntryByID(ctx context.Context, id int64) (*PhonebookEntry, error) {
+	database := db.GetDB()
+	if database == nil {
+		return nil, errors.New("database not initialized")
+	}
+
+	query := `
+		SELECT id, owner_id, type, homeemail, workemail, homephone, workphone, cellphone, fax,
+			title, company, notes, name, homestreet, homepob, homecity, homeprovince,
+			homepostalcode, homecountry, workstreet, workpob, workcity, workprovince,
+			workpostalcode, workcountry, url, '' AS extension, '' AS speeddial_num
+		FROM ` + centralizedPhonebookTable + `
+		WHERE id = ? AND type != 'nethcti'
+		LIMIT 1
+	`
+
+	entry, err := scanPhonebookEntry(database.QueryRowContext(ctx, query, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+
+	return entry, err
+}
+
 // UpdatePhonebookEntryFields updates the provided columns on a CTI phonebook contact.
 func UpdatePhonebookEntryFields(ctx context.Context, id int64, fields map[string]any) error {
 	database := db.GetDB()
@@ -398,34 +426,34 @@ func DeletePhonebookEntryByID(ctx context.Context, id int64) error {
 
 func scanPhonebookEntry(scanner interface{ Scan(dest ...any) error }) (*PhonebookEntry, error) {
 	var (
-		entry            PhonebookEntry
-		ownerID          sql.NullString
-		contactType      sql.NullString
-		homeEmail        sql.NullString
-		workEmail        sql.NullString
-		homePhone        sql.NullString
-		workPhone        sql.NullString
-		cellPhone        sql.NullString
-		fax              sql.NullString
-		title            sql.NullString
-		company          sql.NullString
-		notes            sql.NullString
-		name             sql.NullString
-		homeStreet       sql.NullString
-		homePOB          sql.NullString
-		homeCity         sql.NullString
-		homeProvince     sql.NullString
-		homePostalCode   sql.NullString
-		homeCountry      sql.NullString
-		workStreet       sql.NullString
-		workPOB          sql.NullString
-		workCity         sql.NullString
-		workProvince     sql.NullString
-		workPostalCode   sql.NullString
-		workCountry      sql.NullString
-		url              sql.NullString
-		extension        sql.NullString
-		speedDialNumber  sql.NullString
+		entry           PhonebookEntry
+		ownerID         sql.NullString
+		contactType     sql.NullString
+		homeEmail       sql.NullString
+		workEmail       sql.NullString
+		homePhone       sql.NullString
+		workPhone       sql.NullString
+		cellPhone       sql.NullString
+		fax             sql.NullString
+		title           sql.NullString
+		company         sql.NullString
+		notes           sql.NullString
+		name            sql.NullString
+		homeStreet      sql.NullString
+		homePOB         sql.NullString
+		homeCity        sql.NullString
+		homeProvince    sql.NullString
+		homePostalCode  sql.NullString
+		homeCountry     sql.NullString
+		workStreet      sql.NullString
+		workPOB         sql.NullString
+		workCity        sql.NullString
+		workProvince    sql.NullString
+		workPostalCode  sql.NullString
+		workCountry     sql.NullString
+		url             sql.NullString
+		extension       sql.NullString
+		speedDialNumber sql.NullString
 	)
 
 	err := scanner.Scan(
