@@ -693,11 +693,11 @@ func TestResolve_Transfer_User201DoesNotSee202Segment(t *testing.T) {
 	getExternalPartiesFromCDRFunc = func(uid string, phones []string) (map[string]struct{}, error) {
 		switch uid {
 		case "uid-201-leg":
-			return map[string]struct{}{"3400069069": {}}, nil // main call has external
+			return map[string]struct{}{"3401234567": {}}, nil // main call has external
 		case "uid-consult":
 			return map[string]struct{}{}, nil // consultation has no external
 		case "uid-202-leg":
-			return map[string]struct{}{"3400069069": {}}, nil
+			return map[string]struct{}{"3401234567": {}}, nil
 		}
 		return map[string]struct{}{}, nil
 	}
@@ -739,7 +739,7 @@ func TestResolve_Transfer_NoConsultation_ReturnsNotAuthorized(t *testing.T) {
 	}
 	getExternalPartiesFromCDRFunc = func(uid string, phones []string) (map[string]struct{}, error) {
 		// Both legs have external parties (not consultations)
-		return map[string]struct{}{"3400069069": {}}, nil
+		return map[string]struct{}{"3401234567": {}}, nil
 	}
 	discoverLinkedIDFromCDRFunc = func(string) (string, error) { return "", nil }
 	resolveLinkedIDToUniqueIDFunc = func(string, []string) (string, error) { return "", nil }
@@ -945,11 +945,11 @@ func TestResolve_EmptyDirectMatch_NoBetterRecord_ReturnsFallback(t *testing.T) {
 }
 
 // Transfer consultation row (201→s) must NOT show transcription from the main call
-// (3400069069→201). They share linkedid but not the external party.
+// (3401234567→201). They share linkedid but not the external party.
 func TestResolve_TransferConsultation_NoExternalPartyMatch(t *testing.T) {
 	defer saveAndRestoreResolveFuncs(t)()
 
-	// CDR data: uid-consult has src=201, dst=s; uid-main has src=3400069069, dst=201
+	// CDR data: uid-consult has src=201, dst=s; uid-main has src=3401234567, dst=201
 	getExternalPartiesFromCDRFunc = func(uid string, phones []string) (map[string]struct{}, error) {
 		phoneSet := make(map[string]struct{})
 		for _, p := range phones {
@@ -960,8 +960,8 @@ func TestResolve_TransferConsultation_NoExternalPartyMatch(t *testing.T) {
 			// src=201 (user, filtered), dst=s (filtered as "s")
 			return map[string]struct{}{}, nil
 		case "uid-main":
-			// src=3400069069 (external), dst=201 (user, filtered)
-			return map[string]struct{}{"3400069069": {}}, nil
+			// src=3401234567 (external), dst=201 (user, filtered)
+			return map[string]struct{}{"3401234567": {}}, nil
 		}
 		return map[string]struct{}{}, nil
 	}
@@ -1000,19 +1000,19 @@ func TestResolve_TransferConsultation_NoExternalPartyMatch(t *testing.T) {
 	}
 }
 
-// Queue row (3400069069→401) should match the answered segment (3400069069→201)
-// because they share the external caller 3400069069.
+// Queue row (3401234567→401) should match the answered segment (3401234567→201)
+// because they share the external caller 3401234567.
 func TestResolve_QueueRow_MatchesAnsweredSegmentViaExternalParty(t *testing.T) {
 	defer saveAndRestoreResolveFuncs(t)()
 
 	getExternalPartiesFromCDRFunc = func(uid string, phones []string) (map[string]struct{}, error) {
 		switch uid {
 		case "uid-queue":
-			// src=3400069069, dst=401 — both are external for user 201
-			return map[string]struct{}{"3400069069": {}, "401": {}}, nil
+			// src=3401234567, dst=401 — both are external for user 201
+			return map[string]struct{}{"3401234567": {}, "401": {}}, nil
 		case "uid-201-leg":
-			// src=3400069069, dst=201 (user)
-			return map[string]struct{}{"3400069069": {}}, nil
+			// src=3401234567, dst=201 (user)
+			return map[string]struct{}{"3401234567": {}}, nil
 		}
 		return map[string]struct{}{}, nil
 	}
@@ -1042,13 +1042,13 @@ func TestResolve_QueueRow_MatchesAnsweredSegmentViaExternalParty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// Queue row shares external party 3400069069 with uid-201-leg → match allowed
+	// Queue row shares external party 3401234567 with uid-201-leg → match allowed
 	if !ok || resolved != "uid-201-leg" {
 		t.Fatalf("expected uid-201-leg (queue → answered segment), got %q (ok=%v)", resolved, ok)
 	}
 }
 
-// Transfer CDR row (201→202) must not steal transcription from main call (3400069069→201)
+// Transfer CDR row (201→202) must not steal transcription from main call (3401234567→201)
 // even though user 201 participated in both and they share linkedid.
 func TestResolve_TransferRow_DoesNotStealMainCallTranscription(t *testing.T) {
 	defer saveAndRestoreResolveFuncs(t)()
@@ -1059,10 +1059,10 @@ func TestResolve_TransferRow_DoesNotStealMainCallTranscription(t *testing.T) {
 			// src=201 (user), dst=202 (external for user 201)
 			return map[string]struct{}{"202": {}}, nil
 		case "uid-main":
-			// src=3400069069, dst=201 (user)
-			return map[string]struct{}{"3400069069": {}}, nil
+			// src=3401234567, dst=201 (user)
+			return map[string]struct{}{"3401234567": {}}, nil
 		case "uid-cdr-main":
-			return map[string]struct{}{"3400069069": {}}, nil
+			return map[string]struct{}{"3401234567": {}}, nil
 		}
 		return map[string]struct{}{}, nil
 	}
@@ -1097,8 +1097,8 @@ func TestResolve_TransferRow_DoesNotStealMainCallTranscription(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// uid-transfer externals={202}, uid-main externals={3400069069} → no overlap → blocked
-	// Step 3: uid-cdr-main externals={3400069069} vs uid-transfer externals={202} → blocked
+	// uid-transfer externals={202}, uid-main externals={3401234567} → no overlap → blocked
+	// Step 3: uid-cdr-main externals={3401234567} vs uid-transfer externals={202} → blocked
 	// Step 4: direct participation for uid-transfer → ok → return uid-transfer
 	if !ok || resolved != "uid-transfer" {
 		t.Fatalf("expected uid-transfer (no cross-contamination), got %q (ok=%v)", resolved, ok)
@@ -1181,7 +1181,7 @@ func TestGetTranscriptionByUniqueID_CanonicalRowWithDuplicateUniqueIDs(t *testin
 // paired ;2 leg satellite record that the user participated in.
 // Real-world case: user 202 answered a transferred call. CDR shows two rows for
 // the Local/202@from-internal channel: the ;1 leg (1777910241.1144, src=202,
-// dst=202) and the ;2 leg (1777910241.1145, src=3400069069, dst=202). Satellite
+// dst=202) and the ;2 leg (1777910241.1145, src=3401234567, dst=202). Satellite
 // only has a record for the ;2 leg. The frontend asks for the ;1 leg's status
 // and should receive the ;2 leg's transcript status.
 func TestResolve_LocalRoutingArtifact_ResolvesToPairedLeg(t *testing.T) {
@@ -1209,13 +1209,13 @@ func TestResolve_LocalRoutingArtifact_ResolvesToPairedLeg(t *testing.T) {
 	}
 
 	// ;1 leg CDR: src=202, dst=202 → no external parties.
-	// ;2 leg CDR: src=3400069069, dst=202 → external party 3400069069.
+	// ;2 leg CDR: src=3401234567, dst=202 → external party 3401234567.
 	getExternalPartiesFromCDRFunc = func(uid string, phones []string) (map[string]struct{}, error) {
 		switch uid {
 		case "uid-local-1":
 			return map[string]struct{}{}, nil // src==dst==user, no externals
 		case "uid-local-2":
-			return map[string]struct{}{"3400069069": {}}, nil
+			return map[string]struct{}{"3401234567": {}}, nil
 		}
 		return map[string]struct{}{}, nil
 	}
@@ -1268,14 +1268,14 @@ func TestResolveFulll_RoutingArtifact_ExcludesExternalSrc(t *testing.T) {
 			return map[string]struct{}{}, nil
 		case "uid-local-2":
 			// cnum=201 appears here but must NOT end up in excludedSrcNums
-			return map[string]struct{}{"3400069069": {}, "201": {}}, nil
+			return map[string]struct{}{"3401234567": {}, "201": {}}, nil
 		}
 		return map[string]struct{}{}, nil
 	}
 	// getExternalSrcNumsFromCDRFunc only returns the CDR src column — "201" (cnum) excluded.
 	getExternalSrcNumsFromCDRFunc = func(uid string, phones []string) ([]string, error) {
 		if uid == "uid-local-2" {
-			return []string{"3400069069"}, nil
+			return []string{"3401234567"}, nil
 		}
 		return nil, nil
 	}
@@ -1291,9 +1291,9 @@ func TestResolveFulll_RoutingArtifact_ExcludesExternalSrc(t *testing.T) {
 	if !ok || resolved != "uid-local-2" {
 		t.Fatalf("expected uid-local-2 (paired ;2 leg), got %q (ok=%v)", resolved, ok)
 	}
-	// Only the external src (3400069069) should be excluded; cnum "201" must not appear.
-	if len(excludedSrcNums) != 1 || excludedSrcNums[0] != "3400069069" {
-		t.Fatalf("expected excluded srcs [3400069069], got %v", excludedSrcNums)
+	// Only the external src (3401234567) should be excluded; cnum "201" must not appear.
+	if len(excludedSrcNums) != 1 || excludedSrcNums[0] != "3401234567" {
+		t.Fatalf("expected excluded srcs [3401234567], got %v", excludedSrcNums)
 	}
 }
 
@@ -1324,7 +1324,7 @@ func TestResolve_LocalRoutingArtifact_NoContent_FallsThrough(t *testing.T) {
 		if uid == "uid-local-1" {
 			return map[string]struct{}{}, nil
 		}
-		return map[string]struct{}{"3400069069": {}}, nil
+		return map[string]struct{}{"3401234567": {}}, nil
 	}
 
 	checkSrcEqualsDstFunc = func(uid string, phones []string) (bool, error) {

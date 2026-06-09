@@ -29,6 +29,7 @@ import (
 var (
 	getUserInfoFunc                                                           = GetUserInfo
 	fetchTranscriptionFunc                                                    = fetchTranscriptionFromDB
+	fetchTranscriptionByIDFunc                                                = fetchTranscriptionByID
 	fetchTranscriptionMetaFunc                                                = fetchTranscriptionMetadataFromCDR
 	checkUserParticipationFunc                                                = checkUserParticipationInCDR
 	checkUserParticipationByLinkedIDFunc                                      = checkUserParticipationByLinkedIDInCDR
@@ -100,7 +101,10 @@ func GetTranscriptionByUniqueID(c *gin.Context) {
 		}))
 		return
 	}
-	if !ok {
+	// Switchboard supervisors (cdr.ad_cdr) may read any call's transcript via ?id,
+	// so they are not blocked by the per-call participation gate.
+	sbAllowed := switchboardDrawerAllowed(c)
+	if !ok && !sbAllowed {
 		logForbiddenParticipation(c, uniqueIDHint)
 		c.JSON(http.StatusForbidden, structs.Map(models.StatusForbidden{
 			Code:    http.StatusForbidden,
@@ -110,7 +114,17 @@ func GetTranscriptionByUniqueID(c *gin.Context) {
 		return
 	}
 
-	transcription, createdAt, found, err := fetchTranscriptionFunc(uniqueID, phoneNumbers, excludedSrcNums)
+	// A specific transcript id fetches that exact conversation (disambiguates the
+	// legs of an attended transfer that share a uniqueid); otherwise pick the best
+	// transcript for the uniqueid as before.
+	var transcription string
+	var createdAt *time.Time
+	var found bool
+	if transcriptID := getTranscriptIDFromQuery(c); transcriptID > 0 {
+		transcription, createdAt, found, err = fetchTranscriptionByIDFunc(transcriptID, phoneNumbers, sbAllowed)
+	} else {
+		transcription, createdAt, found, err = fetchTranscriptionFunc(uniqueID, phoneNumbers, excludedSrcNums)
+	}
 	if err != nil {
 		if isSatelliteSchemaMissingError(err) {
 			logs.Log("[WARNING][TRANSCRIPTS] Satellite schema is not initialized while fetching transcription for uniqueid " + uniqueID + ": " + err.Error())
@@ -543,6 +557,58 @@ func getUsernameFromContext(c *gin.Context) (string, error) {
 		return "", errUnauthorized
 	}
 	return username, nil
+}
+
+// fetchTranscriptionByID returns the transcription of one specific transcript
+// row, identified by its database id. Disambiguates conversations that share an
+// Asterisk uniqueid (attended-transfer legs). The caller must be a party of the
+// conversation (IDOR guard).
+func fetchTranscriptionByID(id int64, phoneNumbers []string, bypassParty bool) (string, *time.Time, bool, error) {
+	database := db.GetSatelliteDB()
+	if database == nil {
+		return "", nil, false, sql.ErrConnDone
+	}
+
+	queryCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var (
+		cleaned   sql.NullString
+		raw       sql.NullString
+		createdAt sql.NullTime
+		src       sql.NullString
+		dst       sql.NullString
+	)
+
+	query := "SELECT cleaned_transcription, raw_transcription, created_at, src_number, dst_number FROM transcripts WHERE id = $1 AND deleted_at IS NULL LIMIT 1"
+	if err := database.QueryRowContext(queryCtx, query, id).Scan(&cleaned, &raw, &createdAt, &src, &dst); err != nil {
+		if err == sql.ErrNoRows {
+			return "", nil, false, nil
+		}
+		return "", nil, false, err
+	}
+
+	// IDOR guard: only a participant may read it, unless authorized for the
+	// switchboard (all-calls) view.
+	if !bypassParty && !phoneNumberMatches(src.String, phoneNumbers) && !phoneNumberMatches(dst.String, phoneNumbers) {
+		return "", nil, false, nil
+	}
+
+	var createdAtPtr *time.Time
+	if createdAt.Valid {
+		createdAtPtr = &createdAt.Time
+	}
+	if cleaned.Valid {
+		if t := strings.TrimSpace(cleaned.String); t != "" {
+			return t, createdAtPtr, true, nil
+		}
+	}
+	if raw.Valid {
+		if t := strings.TrimSpace(raw.String); t != "" {
+			return t, createdAtPtr, true, nil
+		}
+	}
+	return "", createdAtPtr, false, nil
 }
 
 func fetchTranscriptionFromDB(uniqueID string, phoneNumbers []string, excludedSrcNums []string) (string, *time.Time, bool, error) {
@@ -1043,7 +1109,7 @@ func getExternalPartiesFromCDR(uniqueID string, phoneNumbers []string) (map[stri
 // matchesExternalParties checks whether a candidate CDR row shares at least one
 // non-user party with the requested CDR row. This prevents cross-segment
 // contamination: e.g., a transfer consultation row (201→s) should not match
-// a satellite record from the main call (3400069069→201) because they don't
+// a satellite record from the main call (3401234567→201) because they don't
 // share an external party.
 func matchesExternalParties(candidateUID string, requestedExternals map[string]struct{}, userPhones []string) bool {
 	if requestedExternals == nil {
