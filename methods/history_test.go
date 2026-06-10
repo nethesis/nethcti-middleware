@@ -104,12 +104,22 @@ func setupHistoryArtifactTest(t *testing.T, fetchList func([]string) ([]SummaryL
 	originalGetUserInfo := getUserInfoFunc
 	originalCheck := checkUserParticipationFunc
 	originalFetchList := fetchSummaryListFunc
+	originalResolveLinkedID := resolveLinkedIDToUniqueIDFunc
+	originalFindSatelliteUIDs := findSatelliteUniqueIDsByLinkedIDFunc
 
 	getUserInfoFunc = func(string) (*UserInfo, error) {
 		return &UserInfo{PhoneNumbers: []string{"100"}}, nil
 	}
 	checkUserParticipationFunc = func(string, []string) (bool, error) {
 		return true, nil
+	}
+	// Resolve the requested leg to a known uniqueid without touching the DB so
+	// the artifact lookup reaches fetchSummaryListFunc (the seam under test).
+	resolveLinkedIDToUniqueIDFunc = func(string, []string) (string, error) {
+		return "uid-1", nil
+	}
+	findSatelliteUniqueIDsByLinkedIDFunc = func(string) ([]string, error) {
+		return nil, nil
 	}
 	fetchSummaryListFunc = fetchList
 
@@ -126,6 +136,8 @@ func setupHistoryArtifactTest(t *testing.T, fetchList func([]string) ([]SummaryL
 		getUserInfoFunc = originalGetUserInfo
 		checkUserParticipationFunc = originalCheck
 		fetchSummaryListFunc = originalFetchList
+		resolveLinkedIDToUniqueIDFunc = originalResolveLinkedID
+		findSatelliteUniqueIDsByLinkedIDFunc = originalFindSatelliteUIDs
 	}
 
 	return router, cleanup
