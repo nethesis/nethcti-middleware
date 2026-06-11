@@ -22,6 +22,28 @@ import (
 	"github.com/nethesis/nethcti-middleware/store"
 )
 
+func TestHistorySummaryLookupKey_PrefersUniqueID(t *testing.T) {
+	cases := []struct {
+		name     string
+		linkedID string
+		uniqueID string
+		want     string
+	}{
+		{name: "both present prefers uniqueid (per-leg)", linkedID: "L-1", uniqueID: "U-2", want: "U-2"},
+		{name: "uniqueid only", linkedID: "", uniqueID: "U-2", want: "U-2"},
+		{name: "linkedid fallback when uniqueid missing", linkedID: "L-1", uniqueID: "", want: "L-1"},
+		{name: "both empty", linkedID: "", uniqueID: "", want: ""},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := historySummaryLookupKey(tc.linkedID, tc.uniqueID); got != tc.want {
+				t.Fatalf("historySummaryLookupKey(%q, %q) = %q, want %q", tc.linkedID, tc.uniqueID, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestGetFilteredHistory_ReturnsServiceUnavailableWhenTranscriptsTableIsMissing(t *testing.T) {
 	router, cleanup := setupHistoryArtifactTest(t, func([]string) ([]SummaryListItem, error) {
 		return nil, &pgconn.PgError{Code: "42P01", Message: `relation "transcripts" does not exist`}

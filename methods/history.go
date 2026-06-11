@@ -346,11 +346,16 @@ func filterHistoryRowsByArtifact(c *gin.Context, artifact string, rows []map[str
 	}
 }
 
+// historySummaryLookupKey identifies a history row for transcript/summary
+// status correlation. It prefers the per-leg uniqueid so that each leg of a
+// transfer (several rows share one linkedid, one row per uniqueid) is correlated
+// to its own transcript, instead of collapsing the whole call onto a single
+// linkedid-keyed status. Falls back to linkedid when the uniqueid is absent.
 func historySummaryLookupKey(linkedID string, uniqueID string) string {
-	if linkedID != "" {
-		return linkedID
+	if uniqueID != "" {
+		return uniqueID
 	}
-	return uniqueID
+	return linkedID
 }
 
 func collectHistorySummaryLookups(rows []map[string]interface{}) []SummaryStatusLookup {
