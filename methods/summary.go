@@ -70,6 +70,11 @@ type SummaryListItem struct {
 	HasSummary       bool       `json:"has_summary"`
 	SrcNumber        string     `json:"src_number,omitempty"`
 	DstNumber        string     `json:"dst_number,omitempty"`
+	// DurationSeconds is the wall-clock length of this conversation segment, set by
+	// the satellite for transfer sub-legs (consultation / post-transfer) that have
+	// no CDR row of their own for every participant. Lets the UI render a real
+	// duration instead of 00:00:00. Nil when unknown.
+	DurationSeconds  *int       `json:"duration_seconds,omitempty"`
 	// Extra marks a conversation surfaced in addition to the requested history
 	// row (e.g. the consultation leg of a transfer). The frontend renders these
 	// as their own conversation rows, keyed by id (not uniqueid, which they may
@@ -1199,7 +1204,7 @@ func fetchParticipatedConversationsFromDB(linkedIDs []string, phoneNumbers []str
 
 	query := fmt.Sprintf(`
 		SELECT DISTINCT ON (uniqueid, src_number, dst_number)
-			id, uniqueid, linkedid, cleaned_transcription, raw_transcription, summary, state, src_number, dst_number, updated_at
+			id, uniqueid, linkedid, cleaned_transcription, raw_transcription, summary, state, src_number, dst_number, duration_seconds, updated_at
 		FROM transcripts
 		WHERE deleted_at IS NULL
 			AND linkedid IN (%s)
@@ -1236,10 +1241,11 @@ func fetchParticipatedConversationsFromDB(linkedIDs []string, phoneNumbers []str
 			dbState     string
 			dbSrc       sql.NullString
 			dbDst       sql.NullString
+			dbDuration  sql.NullInt64
 			dbUpdatedAt time.Time
 		)
 
-		if err := rows.Scan(&dbID, &dbUniqueID, &dbLinkedID, &dbCleaned, &dbRaw, &dbSummary, &dbState, &dbSrc, &dbDst, &dbUpdatedAt); err != nil {
+		if err := rows.Scan(&dbID, &dbUniqueID, &dbLinkedID, &dbCleaned, &dbRaw, &dbSummary, &dbState, &dbSrc, &dbDst, &dbDuration, &dbUpdatedAt); err != nil {
 			return nil, err
 		}
 
@@ -1248,7 +1254,7 @@ func fetchParticipatedConversationsFromDB(linkedIDs []string, phoneNumbers []str
 		hasSummary := dbSummary.Valid && strings.TrimSpace(dbSummary.String) != ""
 
 		updatedAt := dbUpdatedAt
-		items = append(items, SummaryListItem{
+		item := SummaryListItem{
 			ID:               dbID,
 			LinkedID:         strings.TrimSpace(dbLinkedID.String),
 			UniqueID:         dbUniqueID,
@@ -1258,7 +1264,12 @@ func fetchParticipatedConversationsFromDB(linkedIDs []string, phoneNumbers []str
 			SrcNumber:        strings.TrimSpace(dbSrc.String),
 			DstNumber:        strings.TrimSpace(dbDst.String),
 			UpdatedAt:        &updatedAt,
-		})
+		}
+		if dbDuration.Valid {
+			d := int(dbDuration.Int64)
+			item.DurationSeconds = &d
+		}
+		items = append(items, item)
 	}
 
 	if err := rows.Err(); err != nil {
@@ -1314,7 +1325,7 @@ func fetchAllConversationsByLinkedIDsFromDB(linkedIDs []string) ([]SummaryListIt
 	placeholders := buildPostgresPlaceholders(len(linkedIDs), 1)
 	query := fmt.Sprintf(`
 		SELECT DISTINCT ON (uniqueid, src_number, dst_number)
-			id, uniqueid, linkedid, cleaned_transcription, raw_transcription, summary, state, src_number, dst_number, updated_at
+			id, uniqueid, linkedid, cleaned_transcription, raw_transcription, summary, state, src_number, dst_number, duration_seconds, updated_at
 		FROM transcripts
 		WHERE deleted_at IS NULL AND linkedid IN (%s)
 		ORDER BY uniqueid, src_number, dst_number, updated_at DESC, id DESC`, placeholders)
@@ -1342,16 +1353,17 @@ func fetchAllConversationsByLinkedIDsFromDB(linkedIDs []string) ([]SummaryListIt
 			dbState     string
 			dbSrc       sql.NullString
 			dbDst       sql.NullString
+			dbDuration  sql.NullInt64
 			dbUpdatedAt time.Time
 		)
-		if err := rows.Scan(&dbID, &dbUniqueID, &dbLinkedID, &dbCleaned, &dbRaw, &dbSummary, &dbState, &dbSrc, &dbDst, &dbUpdatedAt); err != nil {
+		if err := rows.Scan(&dbID, &dbUniqueID, &dbLinkedID, &dbCleaned, &dbRaw, &dbSummary, &dbState, &dbSrc, &dbDst, &dbDuration, &dbUpdatedAt); err != nil {
 			return nil, err
 		}
 		hasTranscription := (dbCleaned.Valid && strings.TrimSpace(dbCleaned.String) != "") ||
 			(dbRaw.Valid && strings.TrimSpace(dbRaw.String) != "")
 		hasSummary := dbSummary.Valid && strings.TrimSpace(dbSummary.String) != ""
 		updatedAt := dbUpdatedAt
-		items = append(items, SummaryListItem{
+		item := SummaryListItem{
 			ID:               dbID,
 			LinkedID:         strings.TrimSpace(dbLinkedID.String),
 			UniqueID:         dbUniqueID,
@@ -1361,7 +1373,12 @@ func fetchAllConversationsByLinkedIDsFromDB(linkedIDs []string) ([]SummaryListIt
 			SrcNumber:        strings.TrimSpace(dbSrc.String),
 			DstNumber:        strings.TrimSpace(dbDst.String),
 			UpdatedAt:        &updatedAt,
-		})
+		}
+		if dbDuration.Valid {
+			d := int(dbDuration.Int64)
+			item.DurationSeconds = &d
+		}
+		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
