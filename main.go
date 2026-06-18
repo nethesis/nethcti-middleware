@@ -159,7 +159,7 @@ func createRouter() *gin.Engine {
 		api.HEAD("/summary/:uniqueid", middleware.RequireCapabilities("nethvoice_cti.satellite_stt"), methods.CheckSummaryByUniqueID)
 		api.PUT("/summary/:uniqueid", middleware.RequireCapabilities("nethvoice_cti.satellite_stt"), methods.UpdateSummaryByUniqueID)
 		api.DELETE("/summary/:uniqueid", middleware.RequireCapabilities("nethvoice_cti.satellite_stt"), methods.DeleteSummaryByUniqueID)
-		api.POST("/summary/statuses", middleware.RequireCapabilities("nethvoice_cti.satellite_stt"), methods.ListSummaryStatus)
+		api.POST("/history/statuses", middleware.RequireCapabilities("nethvoice_cti.satellite_stt"), methods.ListSummaryStatus)
 		api.POST("/summary/watch", middleware.RequireCapabilities("nethvoice_cti.satellite_stt"), methods.WatchCallSummary)
 
 		// 2FA

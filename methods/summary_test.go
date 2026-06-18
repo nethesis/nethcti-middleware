@@ -687,11 +687,11 @@ func TestListSummaryStatus_Succeeds(t *testing.T) {
 		c.Set("JWT_PAYLOAD", jwtv5.MapClaims{"id": "alice"})
 		c.Next()
 	})
-	router.POST("/summary/statuses", ListSummaryStatus)
+	router.POST("/history/statuses", ListSummaryStatus)
 
 	w := httptest.NewRecorder()
 	body, _ := json.Marshal(map[string][]string{"uniqueids": {"abc123"}})
-	req, _ := http.NewRequest("POST", "/summary/statuses", bytes.NewReader(body))
+	req, _ := http.NewRequest("POST", "/history/statuses", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	router.ServeHTTP(w, req)
 
@@ -764,11 +764,11 @@ func TestListSummaryStatus_MixedResults(t *testing.T) {
 		c.Set("JWT_PAYLOAD", jwtv5.MapClaims{"id": "alice"})
 		c.Next()
 	})
-	router.POST("/summary/statuses", ListSummaryStatus)
+	router.POST("/history/statuses", ListSummaryStatus)
 
 	w := httptest.NewRecorder()
 	body, _ := json.Marshal(map[string][]string{"uniqueids": {"abc123", "missing-1"}})
-	req, _ := http.NewRequest("POST", "/summary/statuses", bytes.NewReader(body))
+	req, _ := http.NewRequest("POST", "/history/statuses", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	router.ServeHTTP(w, req)
 
@@ -840,11 +840,11 @@ func TestListSummaryStatus_ReturnsServiceUnavailableWhenTranscriptsTableIsMissin
 		c.Set("JWT_PAYLOAD", jwtv5.MapClaims{"id": "alice"})
 		c.Next()
 	})
-	router.POST("/summary/statuses", ListSummaryStatus)
+	router.POST("/history/statuses", ListSummaryStatus)
 
 	w := httptest.NewRecorder()
 	body, _ := json.Marshal(map[string][]string{"uniqueids": {"abc123"}})
-	req, _ := http.NewRequest("POST", "/summary/statuses", bytes.NewReader(body))
+	req, _ := http.NewRequest("POST", "/history/statuses", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	router.ServeHTTP(w, req)
 
@@ -901,11 +901,11 @@ func TestListSummaryStatus_ReturnsServiceUnavailableWhenSatelliteDBIsUnavailable
 		c.Set("JWT_PAYLOAD", jwtv5.MapClaims{"id": "alice"})
 		c.Next()
 	})
-	router.POST("/summary/statuses", ListSummaryStatus)
+	router.POST("/history/statuses", ListSummaryStatus)
 
 	w := httptest.NewRecorder()
 	body, _ := json.Marshal(map[string][]string{"uniqueids": {"abc123"}})
-	req, _ := http.NewRequest("POST", "/summary/statuses", bytes.NewReader(body))
+	req, _ := http.NewRequest("POST", "/history/statuses", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	router.ServeHTTP(w, req)
 
@@ -985,11 +985,11 @@ func TestListSummaryStatus_FiltersCallsOutsideUserParticipation(t *testing.T) {
 		c.Set("JWT_PAYLOAD", jwtv5.MapClaims{"id": "alice"})
 		c.Next()
 	})
-	router.POST("/summary/statuses", ListSummaryStatus)
+	router.POST("/history/statuses", ListSummaryStatus)
 
 	w := httptest.NewRecorder()
 	body, _ := json.Marshal(map[string][]string{"uniqueids": {"abc123", "switchboard-1"}})
-	req, _ := http.NewRequest("POST", "/summary/statuses", bytes.NewReader(body))
+	req, _ := http.NewRequest("POST", "/history/statuses", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	router.ServeHTTP(w, req)
 
