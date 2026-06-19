@@ -164,3 +164,57 @@ func setupHistoryArtifactTest(t *testing.T, fetchList func([]string) ([]SummaryL
 
 	return router, cleanup
 }
+
+func TestHistoryArtifactRowMatches(t *testing.T) {
+	cases := []struct {
+		name     string
+		artifact string
+		item     SummaryListItem
+		want     bool
+	}{
+		{
+			name:     "transcription filter keeps transcription-only call",
+			artifact: historyArtifactTranscription,
+			item:     SummaryListItem{State: "done", HasTranscription: true},
+			want:     true,
+		},
+		{
+			name:     "transcription filter keeps call that also has a summary",
+			artifact: historyArtifactTranscription,
+			item:     SummaryListItem{State: "done", HasTranscription: true, HasSummary: true},
+			want:     true,
+		},
+		{
+			name:     "transcription filter drops call without transcription",
+			artifact: historyArtifactTranscription,
+			item:     SummaryListItem{State: "done", HasSummary: true},
+			want:     false,
+		},
+		{
+			name:     "summary filter keeps call with summary and transcription",
+			artifact: historyArtifactSummary,
+			item:     SummaryListItem{State: "done", HasTranscription: true, HasSummary: true},
+			want:     true,
+		},
+		{
+			name:     "summary filter drops transcription-only call",
+			artifact: historyArtifactSummary,
+			item:     SummaryListItem{State: "done", HasTranscription: true},
+			want:     false,
+		},
+		{
+			name:     "non-done state is never matched",
+			artifact: historyArtifactTranscription,
+			item:     SummaryListItem{State: "processing", HasTranscription: true},
+			want:     false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := historyArtifactRowMatches(tc.artifact, tc.item); got != tc.want {
+				t.Fatalf("historyArtifactRowMatches(%q, %+v) = %v, want %v", tc.artifact, tc.item, got, tc.want)
+			}
+		})
+	}
+}

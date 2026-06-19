@@ -326,16 +326,11 @@ func filterHistoryRowsByArtifact(c *gin.Context, artifact string, rows []map[str
 			}
 
 			item, ok := statusMap[lookupKey]
-			if !ok || strings.TrimSpace(item.State) != "done" {
+			if !ok {
 				continue
 			}
 
-			if artifact == historyArtifactSummary && item.HasSummary {
-				filtered = append(filtered, row)
-				continue
-			}
-
-			if artifact == historyArtifactTranscription && item.HasTranscription && !item.HasSummary {
+			if historyArtifactRowMatches(artifact, item) {
 				filtered = append(filtered, row)
 			}
 		}
@@ -343,6 +338,27 @@ func filterHistoryRowsByArtifact(c *gin.Context, artifact string, rows []map[str
 		return filtered, nil
 	default:
 		return rows, nil
+	}
+}
+
+// historyArtifactRowMatches reports whether a history row carrying the given
+// summary/transcription status should be kept for the requested artifact filter.
+// The Summary and Transcription filters are allowed to overlap: a call that has
+// both a summary and a transcription matches both filters, consistent with the
+// UI where the "View transcription" action is available whenever the call has a
+// transcription regardless of an accompanying summary.
+func historyArtifactRowMatches(artifact string, item SummaryListItem) bool {
+	if strings.TrimSpace(item.State) != "done" {
+		return false
+	}
+
+	switch artifact {
+	case historyArtifactSummary:
+		return item.HasSummary
+	case historyArtifactTranscription:
+		return item.HasTranscription
+	default:
+		return false
 	}
 }
 
