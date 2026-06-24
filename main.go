@@ -158,7 +158,6 @@ func createRouter() *gin.Engine {
 		api.GET("/summary/:uniqueid", middleware.RequireCapabilities("nethvoice_cti.satellite_stt"), methods.GetSummaryByUniqueID)
 		api.HEAD("/summary/:uniqueid", middleware.RequireCapabilities("nethvoice_cti.satellite_stt"), methods.CheckSummaryByUniqueID)
 		api.PUT("/summary/:uniqueid", middleware.RequireCapabilities("nethvoice_cti.satellite_stt"), methods.UpdateSummaryByUniqueID)
-		api.POST("/summary/statuses", middleware.RequireCapabilities("nethvoice_cti.satellite_stt"), methods.ListSummaryStatus)
 		api.POST("/summary/watch", middleware.RequireCapabilities("nethvoice_cti.satellite_stt"), methods.WatchCallSummary)
 
 		// 2FA
@@ -190,6 +189,7 @@ func createRouter() *gin.Engine {
 
 		// History
 		api.GET("/history/calls", methods.GetFilteredHistory)
+		api.POST("/history/statuses", middleware.RequireCapabilities("nethvoice_cti.satellite_stt"), methods.ListSummaryStatus)
 
 		// Voicemail
 		api.GET("/voicemail/list/:id", methods.ListVoicemailByID)
