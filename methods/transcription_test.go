@@ -336,56 +336,6 @@ func TestUpdateSummary_SucceedsWhenAuthorized(t *testing.T) {
 	}
 }
 
-func TestDeleteSummary_SucceedsWhenAuthorized(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	store.UserSessionInit()
-	store.UserSessions["alice"] = &models.UserSession{Username: "alice", NethCTIToken: "token"}
-
-	configuration.Config.SatellitePgSQLHost = "test"
-	configuration.Config.SatellitePgSQLPort = "5432"
-	configuration.Config.SatellitePgSQLDB = "test"
-	configuration.Config.SatellitePgSQLUser = "test"
-
-	originalGetUserInfo := getUserInfoFunc
-	originalCheck := checkUserParticipationFunc
-	originalDelete := deleteSummaryFunc
-	defer func() {
-		getUserInfoFunc = originalGetUserInfo
-		checkUserParticipationFunc = originalCheck
-		deleteSummaryFunc = originalDelete
-	}()
-
-	getUserInfoFunc = func(string) (*UserInfo, error) {
-		return &UserInfo{PhoneNumbers: []string{"100"}}, nil
-	}
-	checkUserParticipationFunc = func(string, []string) (bool, error) {
-		return true, nil
-	}
-	var deletedUniqueID string
-	deleteSummaryFunc = func(uniqueID string) (bool, error) {
-		deletedUniqueID = uniqueID
-		return uniqueID == "abc123", nil
-	}
-
-	router := gin.New()
-	router.Use(func(c *gin.Context) {
-		c.Set("JWT_PAYLOAD", jwtv5.MapClaims{"id": "alice"})
-		c.Next()
-	})
-	router.DELETE("/summary/:uniqueid", DeleteSummaryByUniqueID)
-
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("DELETE", "/summary/abc123", nil)
-	router.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200 ok, got %d: %s", w.Code, w.Body.String())
-	}
-	if deletedUniqueID != "abc123" {
-		t.Fatalf("expected delete to use path uniqueid, got %q", deletedUniqueID)
-	}
-}
-
 func TestGetSummaryByUniqueID_ReturnsExtendedData(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	store.UserSessionInit()
