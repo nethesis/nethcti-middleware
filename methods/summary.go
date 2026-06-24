@@ -93,7 +93,6 @@ var (
 	fetchSummaryFunc                           = fetchSummaryFromDB
 	updateSummaryFunc                          = updateSummaryInDB
 	updateSummaryByIDFunc                      = updateSummaryByID
-	deleteSummaryFunc                          = deleteSummaryInDB
 	startSummaryWatchFunc = summary.StartSummaryWatchWithLinkedID
 )
 
@@ -407,96 +406,6 @@ func GetSummaryByUniqueID(c *gin.Context) {
 		Message: "success",
 		Data:    details,
 	})
-}
-
-// DeleteSummaryByUniqueID removes the summary for the given uniqueid.
-func DeleteSummaryByUniqueID(c *gin.Context) {
-	uniqueIDHint := getUniqueIDFromPath(c)
-	linkedID := getLinkedIDFromQuery(c)
-	if uniqueIDHint == "" {
-		c.JSON(http.StatusBadRequest, structs.Map(models.StatusBadRequest{
-			Code:    http.StatusBadRequest,
-			Message: "uniqueid is required",
-			Data:    nil,
-		}))
-		return
-	}
-
-	if !summary.IsSatelliteDBConfigured() {
-		c.JSON(http.StatusServiceUnavailable, structs.Map(models.StatusServiceUnavailable{
-			Code:    http.StatusServiceUnavailable,
-			Message: "satellite database not configured",
-			Data:    nil,
-		}))
-		return
-	}
-
-	uniqueID, _, _, ok, err := ensureUserParticipatedInCall(c, uniqueIDHint, linkedID)
-	if err != nil {
-		if errors.Is(err, errUnauthorized) {
-			c.JSON(http.StatusUnauthorized, structs.Map(models.StatusUnauthorized{
-				Code:    http.StatusUnauthorized,
-				Message: "unauthorized",
-				Data:    nil,
-			}))
-			return
-		}
-		logs.Log("[ERROR][SUMMARY] Failed to validate CDR participation for uniqueid " + uniqueIDHint + ": " + err.Error())
-		c.JSON(http.StatusServiceUnavailable, structs.Map(models.StatusServiceUnavailable{
-			Code:    http.StatusServiceUnavailable,
-			Message: "cdr database unavailable",
-			Data:    nil,
-		}))
-		return
-	}
-	if !ok {
-		logForbiddenParticipation(c, uniqueIDHint)
-		c.JSON(http.StatusForbidden, structs.Map(models.StatusForbidden{
-			Code:    http.StatusForbidden,
-			Message: "forbidden: user not part of call",
-			Data:    nil,
-		}))
-		return
-	}
-
-	deleted, err := deleteSummaryFunc(uniqueID)
-	if err != nil {
-		if isSatelliteSchemaMissingError(err) {
-			logs.Log("[WARNING][SUMMARY] Satellite schema is not initialized while deleting summary for uniqueid " + uniqueID + ": " + err.Error())
-			writeSatelliteSchemaMissingResponse(c)
-			return
-		}
-		if isSatelliteDBUnavailableError(err) {
-			logs.Log("[WARNING][SUMMARY] Satellite database is unavailable while deleting summary for uniqueid " + uniqueID + ": " + err.Error())
-			writeSatelliteDBUnavailableResponse(c)
-			return
-		}
-
-		logs.Log("[ERROR][SUMMARY] Failed to delete summary for uniqueid " + uniqueID + ": " + err.Error())
-		c.JSON(http.StatusInternalServerError, structs.Map(models.StatusInternalServerError{
-			Code:    http.StatusInternalServerError,
-			Message: "failed to delete summary",
-			Data:    nil,
-		}))
-		return
-	}
-
-	if !deleted {
-		c.JSON(http.StatusNotFound, structs.Map(models.StatusNotFound{
-			Code:    http.StatusNotFound,
-			Message: "summary not found",
-			Data:    nil,
-		}))
-		return
-	}
-
-	c.JSON(http.StatusOK, structs.Map(models.StatusOK{
-		Code:    http.StatusOK,
-		Message: "summary deleted",
-		Data: gin.H{
-			"uniqueid": uniqueID,
-		},
-	}))
 }
 
 // UpdateSummaryByUniqueID updates the summary for the given uniqueid.
@@ -1604,29 +1513,6 @@ func updateSummaryInDB(uniqueID, summaryText string) (bool, error) {
 		)
 		UPDATE transcripts SET summary = $1 WHERE id IN (SELECT id FROM canonical)`
 	result, err := database.ExecContext(queryCtx, query, summaryText, uniqueID)
-	if err != nil {
-		return false, err
-	}
-
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return false, err
-	}
-
-	return affected > 0, nil
-}
-
-func deleteSummaryInDB(uniqueID string) (bool, error) {
-	database := db.GetSatelliteDB()
-	if database == nil {
-		return false, sql.ErrConnDone
-	}
-
-	queryCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	query := "UPDATE transcripts SET deleted_at = NOW() WHERE uniqueid = $1 AND deleted_at IS NULL"
-	result, err := database.ExecContext(queryCtx, query, uniqueID)
 	if err != nil {
 		return false, err
 	}
