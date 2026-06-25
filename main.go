@@ -185,6 +185,19 @@ func createRouter() *gin.Engine {
 		api.GET("/authentication/phone_island_token_check/:subtype", methods.PhoneIslandTokenCheck)
 
 		// Phonebook
+		api.GET("/phonebook/search", middleware.RequireCapabilities("phonebook"), methods.SearchLegacyPhonebook)
+		api.GET("/phonebook/search/", middleware.RequireCapabilities("phonebook"), methods.SearchLegacyPhonebook)
+		api.GET("/phonebook/search/:term", middleware.RequireCapabilities("phonebook"), methods.SearchLegacyPhonebook)
+		api.GET("/phonebook/search/:term/", middleware.RequireCapabilities("phonebook"), methods.SearchLegacyPhonebook)
+		api.GET("/phonebook/getall", middleware.RequireCapabilities("phonebook"), methods.ListLegacyPhonebook)
+		api.GET("/phonebook/getall/", middleware.RequireCapabilities("phonebook"), methods.ListLegacyPhonebook)
+		api.GET("/phonebook/getall/:term", middleware.RequireCapabilities("phonebook"), methods.ListLegacyPhonebook)
+		api.GET("/phonebook/getall/:term/", middleware.RequireCapabilities("phonebook"), methods.ListLegacyPhonebook)
+		api.GET("/phonebook/contact/:id", middleware.RequireCapabilities("phonebook"), methods.GetCentralizedPhonebookContact)
+		api.GET("/phonebook/cticontact/:id", middleware.RequireCapabilities("phonebook"), methods.GetLegacyCTIPhonebookContact)
+		api.POST("/phonebook/create", middleware.RequireCapabilities("phonebook"), methods.CreateLegacyCTIPhonebookContact)
+		api.POST("/phonebook/delete_cticontact", middleware.RequireCapabilities("phonebook"), methods.DeleteLegacyCTIPhonebookContact)
+		api.POST("/phonebook/modify_cticontact", middleware.RequireCapabilities("phonebook"), methods.UpdateLegacyCTIPhonebookContact)
 		api.POST("/phonebook/import", middleware.RequireCapabilities("phonebook.ad_phonebook"), methods.ImportPhonebookCSV)
 
 		// History
