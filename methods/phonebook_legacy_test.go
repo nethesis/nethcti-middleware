@@ -25,11 +25,10 @@ import (
 )
 
 func TestComputeVisibleGroupNames(t *testing.T) {
+	// Visibility depends only on direct membership: "Sales" is enabled via the
+	// presence-panel permission but alice is not a member, so it must not show.
 	visibleGroups := computeVisibleGroupNames(
 		"alice",
-		map[string]bool{
-			"presence_panel.grp_sales": true,
-		},
 		map[string]legacyPhonebookOperatorGroup{
 			"Sales":   {Users: []string{"bob"}},
 			"Support": {Users: []string{"alice"}},
@@ -37,7 +36,7 @@ func TestComputeVisibleGroupNames(t *testing.T) {
 		},
 	)
 
-	assert.Equal(t, []string{"Sales", "Support"}, visibleGroups)
+	assert.Equal(t, []string{"Support"}, visibleGroups)
 }
 
 func TestGetUserGroupNamesForRead_FallsBackWhenGroupsUnavailable(t *testing.T) {
@@ -79,14 +78,14 @@ func TestGetLegacyCTIPhonebookContact_GroupVisibility(t *testing.T) {
 	getPhonebookEntryByIDFunc = func(context.Context, int64) (*store.PhonebookEntry, error) {
 		return &store.PhonebookEntry{ID: 7, OwnerID: "bob", Type: "group:Sales", Name: "Alice Shared"}, nil
 	}
+	// alice is a direct member of "Sales", so the group-shared contact is visible.
 	fetchPhonebookOperatorGroupsFunc = func(string) (map[string]legacyPhonebookOperatorGroup, error) {
-		return map[string]legacyPhonebookOperatorGroup{"Sales": {Users: []string{"bob"}}}, nil
+		return map[string]legacyPhonebookOperatorGroup{"Sales": {Users: []string{"bob", "alice"}}}, nil
 	}
 	getUserCapabilitiesFunc = func(string) (map[string]bool, error) {
 		return map[string]bool{
 			"phonebook":                   true,
 			"phonebook.phonebook_level_2": true,
-			"presence_panel.grp_sales":    true,
 		}, nil
 	}
 
@@ -480,13 +479,15 @@ func TestGetLegacyCTIPhonebookContact_GroupVisibilityCaseInsensitive(t *testing.
 	getPhonebookEntryByIDFunc = func(context.Context, int64) (*store.PhonebookEntry, error) {
 		return &store.PhonebookEntry{ID: 10, OwnerID: "bob", Type: "group:sales", Name: "Shared Lower"}, nil
 	}
+	// alice is a member of "Sales" (capitalized) while the contact is shared with
+	// "sales" (lowercase): the membership match is by username, the group-name
+	// match is case-insensitive (see containsStringFold).
 	fetchPhonebookOperatorGroupsFunc = func(string) (map[string]legacyPhonebookOperatorGroup, error) {
-		return map[string]legacyPhonebookOperatorGroup{"Sales": {Users: []string{"bob"}}}, nil
+		return map[string]legacyPhonebookOperatorGroup{"Sales": {Users: []string{"bob", "alice"}}}, nil
 	}
 	getUserCapabilitiesFunc = func(string) (map[string]bool, error) {
 		return map[string]bool{
-			"phonebook":                true,
-			"presence_panel.grp_sales": true,
+			"phonebook": true,
 		}, nil
 	}
 
