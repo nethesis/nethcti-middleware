@@ -578,10 +578,10 @@ func validateSharedGroupsPayload(username string, rawValue any) ([]string, error
 		}
 	}
 
-	if store.GetPhonebookPermissionLevel(username) >= 2 {
-		return sharedGroups, nil
-	}
-
+	// Contact sharing depends only on the operator groups the user is a member
+	// of (CTI Configurations > Users > Group). There is no admin bypass: a
+	// phonebook level-2 / ad_phonebook user may still only share with groups
+	// they belong to, mirroring the membership-only read visibility.
 	userGroups, err := getUserGroupNames(username)
 	if err != nil {
 		return nil, err
