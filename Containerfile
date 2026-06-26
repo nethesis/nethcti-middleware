@@ -13,7 +13,7 @@ RUN go mod download
 # Build the Go application
 RUN go build -o whale
 
-FROM docker.io/alpine:3.23 AS runtime
+FROM docker.io/alpine:3.24 AS runtime
 
 # Set working directory
 WORKDIR /app
