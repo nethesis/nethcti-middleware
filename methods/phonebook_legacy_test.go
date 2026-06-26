@@ -25,11 +25,10 @@ import (
 )
 
 func TestComputeVisibleGroupNames(t *testing.T) {
+	// Visibility depends only on direct membership: "Sales" is enabled via the
+	// presence-panel permission but alice is not a member, so it must not show.
 	visibleGroups := computeVisibleGroupNames(
 		"alice",
-		map[string]bool{
-			"presence_panel.grp_sales": true,
-		},
 		map[string]legacyPhonebookOperatorGroup{
 			"Sales":   {Users: []string{"bob"}},
 			"Support": {Users: []string{"alice"}},
@@ -37,7 +36,7 @@ func TestComputeVisibleGroupNames(t *testing.T) {
 		},
 	)
 
-	assert.Equal(t, []string{"Sales", "Support"}, visibleGroups)
+	assert.Equal(t, []string{"Support"}, visibleGroups)
 }
 
 func TestGetUserGroupNamesForRead_FallsBackWhenGroupsUnavailable(t *testing.T) {
@@ -79,14 +78,14 @@ func TestGetLegacyCTIPhonebookContact_GroupVisibility(t *testing.T) {
 	getPhonebookEntryByIDFunc = func(context.Context, int64) (*store.PhonebookEntry, error) {
 		return &store.PhonebookEntry{ID: 7, OwnerID: "bob", Type: "group:Sales", Name: "Alice Shared"}, nil
 	}
+	// alice is a direct member of "Sales", so the group-shared contact is visible.
 	fetchPhonebookOperatorGroupsFunc = func(string) (map[string]legacyPhonebookOperatorGroup, error) {
-		return map[string]legacyPhonebookOperatorGroup{"Sales": {Users: []string{"bob"}}}, nil
+		return map[string]legacyPhonebookOperatorGroup{"Sales": {Users: []string{"bob", "alice"}}}, nil
 	}
 	getUserCapabilitiesFunc = func(string) (map[string]bool, error) {
 		return map[string]bool{
 			"phonebook":                   true,
 			"phonebook.phonebook_level_2": true,
-			"presence_panel.grp_sales":    true,
 		}, nil
 	}
 
@@ -302,6 +301,73 @@ func TestCreateLegacyCTIPhonebookContact_PublicAllowedForLevelTwo(t *testing.T) 
 	assert.Equal(t, "public", capturedEntry.Type)
 }
 
+func TestCreateLegacyCTIPhonebookContact_GroupForbiddenWhenNotMemberEvenForLevelTwo(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	// Level 2 user, but NOT a member of the target group. Sharing must be
+	// rejected: there is no admin bypass, membership is required for everyone.
+	loadPhonebookTestProfiles(t, `{"p":{"id":"p","name":"P","macro_permissions":{"phonebook":{"value":true,"permissions":[{"id":"p2","name":"phonebook_level_2","value":true}]},"presence_panel":{"value":true,"permissions":[{"id":"grp_sales","name":"grp_sales","value":true}]}}}}`, `{"alice":{"profile_id":"p"}}`)
+
+	originalCreate := createPhonebookEntryFunc
+	originalFetchGroups := fetchPhonebookOperatorGroupsFunc
+	defer func() {
+		createPhonebookEntryFunc = originalCreate
+		fetchPhonebookOperatorGroupsFunc = originalFetchGroups
+	}()
+
+	createPhonebookEntryFunc = func(_ context.Context, entry *store.PhonebookEntry) error {
+		t.Fatalf("create should not be called when sharing with a non-membership group")
+		return nil
+	}
+	// alice is NOT in the "Sales" members list.
+	fetchPhonebookOperatorGroupsFunc = func(string) (map[string]legacyPhonebookOperatorGroup, error) {
+		return map[string]legacyPhonebookOperatorGroup{"Sales": {Users: []string{"bob"}}}, nil
+	}
+
+	payload := map[string]any{
+		"name": "Alice",
+		"type": "group:Sales",
+	}
+	ctx, recorder := newLegacyPhonebookTestContext(http.MethodPost, "/phonebook/create", payload, "alice")
+
+	CreateLegacyCTIPhonebookContact(ctx)
+
+	require.Equal(t, http.StatusForbidden, recorder.Code)
+}
+
+func TestCreateLegacyCTIPhonebookContact_GroupAllowedForMemberLevelTwo(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	loadPhonebookTestProfiles(t, `{"p":{"id":"p","name":"P","macro_permissions":{"phonebook":{"value":true,"permissions":[{"id":"p2","name":"phonebook_level_2","value":true}]}}}}`, `{"alice":{"profile_id":"p"}}`)
+
+	originalCreate := createPhonebookEntryFunc
+	originalFetchGroups := fetchPhonebookOperatorGroupsFunc
+	defer func() {
+		createPhonebookEntryFunc = originalCreate
+		fetchPhonebookOperatorGroupsFunc = originalFetchGroups
+	}()
+
+	var capturedEntry *store.PhonebookEntry
+	createPhonebookEntryFunc = func(_ context.Context, entry *store.PhonebookEntry) error {
+		capturedEntry = entry
+		return nil
+	}
+	// alice IS a member of "Sales".
+	fetchPhonebookOperatorGroupsFunc = func(string) (map[string]legacyPhonebookOperatorGroup, error) {
+		return map[string]legacyPhonebookOperatorGroup{"Sales": {Users: []string{"bob", "alice"}}}, nil
+	}
+
+	payload := map[string]any{
+		"name": "Alice",
+		"type": "group:Sales",
+	}
+	ctx, recorder := newLegacyPhonebookTestContext(http.MethodPost, "/phonebook/create", payload, "alice")
+
+	CreateLegacyCTIPhonebookContact(ctx)
+
+	require.Equal(t, http.StatusCreated, recorder.Code)
+	require.NotNil(t, capturedEntry)
+	assert.Equal(t, "group:Sales", capturedEntry.Type)
+}
+
 func TestUpdateLegacyCTIPhonebookContact_RejectsVisibilityEscalation(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	loadPhonebookTestProfiles(t, `{"p":{"id":"p","name":"P","macro_permissions":{"phonebook":{"value":true,"permissions":[{"id":"p1","name":"phonebook_level_1","value":true}]}}}}`, `{"alice":{"profile_id":"p"}}`)
@@ -480,13 +546,15 @@ func TestGetLegacyCTIPhonebookContact_GroupVisibilityCaseInsensitive(t *testing.
 	getPhonebookEntryByIDFunc = func(context.Context, int64) (*store.PhonebookEntry, error) {
 		return &store.PhonebookEntry{ID: 10, OwnerID: "bob", Type: "group:sales", Name: "Shared Lower"}, nil
 	}
+	// alice is a member of "Sales" (capitalized) while the contact is shared with
+	// "sales" (lowercase): the membership match is by username, the group-name
+	// match is case-insensitive (see containsStringFold).
 	fetchPhonebookOperatorGroupsFunc = func(string) (map[string]legacyPhonebookOperatorGroup, error) {
-		return map[string]legacyPhonebookOperatorGroup{"Sales": {Users: []string{"bob"}}}, nil
+		return map[string]legacyPhonebookOperatorGroup{"Sales": {Users: []string{"bob", "alice"}}}, nil
 	}
 	getUserCapabilitiesFunc = func(string) (map[string]bool, error) {
 		return map[string]bool{
-			"phonebook":                true,
-			"presence_panel.grp_sales": true,
+			"phonebook": true,
 		}, nil
 	}
 

@@ -454,60 +454,38 @@ func fetchPhonebookOperatorGroupsFromV1(username string) (map[string]legacyPhone
 }
 
 func getUserGroupNames(username string) ([]string, error) {
-	capabilities, err := getUserCapabilitiesFunc(username)
-	if err != nil {
-		return nil, err
-	}
-
 	allGroups, err := fetchPhonebookOperatorGroupsFunc(username)
 	if err != nil {
 		return nil, err
 	}
 
-	return computeVisibleGroupNames(username, capabilities, allGroups), nil
+	return computeVisibleGroupNames(username, allGroups), nil
 }
 
 func getUserGroupNamesForRead(username string) ([]string, error) {
-	capabilities, err := getUserCapabilitiesFunc(username)
-	if err != nil {
-		return nil, err
-	}
-
 	allGroups, err := fetchPhonebookOperatorGroupsFunc(username)
 	if err != nil {
 		logs.Log("[WARNING][PHONEBOOK] Failed to load operator groups for read path, using empty group set: " + err.Error())
 		allGroups = map[string]legacyPhonebookOperatorGroup{}
 	}
 
-	return computeVisibleGroupNames(username, capabilities, allGroups), nil
+	return computeVisibleGroupNames(username, allGroups), nil
 }
 
-func computeVisibleGroupNames(username string, capabilities map[string]bool, allGroups map[string]legacyPhonebookOperatorGroup) []string {
-	groupNames := make([]string, 0, len(allGroups))
+// computeVisibleGroupNames returns the operator groups the user is directly a
+// member of. Group-shared phonebook visibility must depend only on the groups
+// assigned to the user (CTI Configurations > Users > Group), not on the wizard
+// profile's presence-panel permissions: an "Advanced" profile that enables all
+// groups in the presence panel must not grant access to every group-shared
+// contact.
+func computeVisibleGroupNames(username string, allGroups map[string]legacyPhonebookOperatorGroup) []string {
+	visibleGroups := make([]string, 0, len(allGroups))
 	for groupName := range allGroups {
-		groupNames = append(groupNames, groupName)
-	}
-	sort.Strings(groupNames)
-
-	if store.CanSeeAllOperatorGroups(capabilities) {
-		return groupNames
-	}
-
-	allowedGroupIDs := store.GetAllowedOperatorGroupIDs(capabilities)
-	allowedGroupSet := make(map[string]struct{}, len(allowedGroupIDs))
-	for _, groupID := range allowedGroupIDs {
-		allowedGroupSet[groupID] = struct{}{}
-	}
-
-	visibleGroups := make([]string, 0, len(groupNames))
-	for _, groupName := range groupNames {
-		groupPermissionID := store.GetGroupPermissionID(groupName)
-		_, explicitlyAllowed := allowedGroupSet[groupPermissionID]
-		belongsToGroup := containsString(allGroups[groupName].Users, username)
-		if explicitlyAllowed || belongsToGroup {
+		if containsString(allGroups[groupName].Users, username) {
 			visibleGroups = append(visibleGroups, groupName)
 		}
 	}
+	sort.Strings(visibleGroups)
 
 	return visibleGroups
 }
@@ -600,10 +578,10 @@ func validateSharedGroupsPayload(username string, rawValue any) ([]string, error
 		}
 	}
 
-	if store.GetPhonebookPermissionLevel(username) >= 2 {
-		return sharedGroups, nil
-	}
-
+	// Contact sharing depends only on the operator groups the user is a member
+	// of (CTI Configurations > Users > Group). There is no admin bypass: a
+	// phonebook level-2 / ad_phonebook user may still only share with groups
+	// they belong to, mirroring the membership-only read visibility.
 	userGroups, err := getUserGroupNames(username)
 	if err != nil {
 		return nil, err
