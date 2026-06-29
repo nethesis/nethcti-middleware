@@ -267,7 +267,11 @@ func syncCentralizedPublicContacts() {
 	defer cancel()
 
 	if err := syncCentralizedPublicContactsFunc(ctx); err != nil {
-		logs.Log("[ERROR][PHONEBOOK] Failed to sync public contacts to centralized phonebook: " + err.Error())
+		// CRITICAL, not ERROR: the originating CTI write already returned success to the
+		// client, so this is a silent divergence — the centralized phonebook stays stale
+		// until the next successful republish or the nightly export. A distinguishable
+		// level lets monitoring alert on "cti OK / centralized republish failed".
+		logs.Log("[CRITICAL][PHONEBOOK] Centralized phonebook republish failed (CTI write already committed; centralized lookup stale until next sync or nightly export): " + err.Error())
 	}
 }
 

@@ -425,6 +425,19 @@ func DeletePhonebookEntryByID(ctx context.Context, id int64) error {
 	return err
 }
 
+// centralizedSyncColumns are the cti_phonebook columns copied verbatim into
+// phonebook.phonebook by SyncPublicContactsToCentralized. `type` and `sid_imported`
+// are intentionally NOT in this list: both are written as the literal 'nethcti' marker
+// (lockstep with nethcti_export.php). Keeping a single list, reused for both the INSERT
+// column clause and the SELECT projection, is the single source of truth for a schema
+// change and prevents the two halves from drifting out of column alignment.
+var centralizedSyncColumns = []string{
+	"owner_id", "homeemail", "workemail", "homephone", "workphone", "cellphone", "fax",
+	"title", "company", "notes", "name", "homestreet", "homepob", "homecity", "homeprovince",
+	"homepostalcode", "homecountry", "workstreet", "workpob", "workcity", "workprovince",
+	"workpostalcode", "workcountry", "url",
+}
+
 // SyncPublicContactsToCentralized republishes every public CTI contact into the
 // centralized phonebook used for call-time name resolution (Asterisk lookup.php and
 // the CTI customer-card "Identity" query both read phonebook.phonebook).
@@ -474,21 +487,15 @@ func SyncPublicContactsToCentralized(ctx context.Context) error {
 		return err
 	}
 
-	insertSelect := `
-		INSERT INTO ` + "`phonebook`.`phonebook`" + ` (
-			owner_id, type, homeemail, workemail, homephone, workphone, cellphone, fax,
-			title, company, notes, name, homestreet, homepob, homecity, homeprovince,
-			homepostalcode, homecountry, workstreet, workpob, workcity, workprovince,
-			workpostalcode, workcountry, url, sid_imported
-		)
-		SELECT
-			owner_id, 'nethcti', homeemail, workemail, homephone, workphone, cellphone, fax,
-			title, company, notes, name, homestreet, homepob, homecity, homeprovince,
-			homepostalcode, homecountry, workstreet, workpob, workcity, workprovince,
-			workpostalcode, workcountry, url, 'nethcti'
-		FROM cti_phonebook
-		WHERE type = 'public'
-	`
+	// Build the INSERT column clause and the SELECT projection from the same list so
+	// they cannot drift out of alignment (a mismatch would silently write a value into
+	// the wrong column). `type` and `sid_imported` are appended explicitly because both
+	// are written as the literal 'nethcti' marker rather than copied from the source row.
+	columns := strings.Join(centralizedSyncColumns, ", ")
+	insertSelect := "INSERT INTO `phonebook`.`phonebook` (" + columns + ", type, sid_imported)\n" +
+		"SELECT " + columns + ", 'nethcti', 'nethcti'\n" +
+		"FROM cti_phonebook\n" +
+		"WHERE type = 'public'"
 	if _, err := conn.ExecContext(ctx, insertSelect); err != nil {
 		return err
 	}
