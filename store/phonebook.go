@@ -428,10 +428,13 @@ func DeletePhonebookEntryByID(ctx context.Context, id int64) error {
 // centralized phonebook used for call-time name resolution (Asterisk lookup.php and
 // the CTI customer-card "Identity" query both read phonebook.phonebook).
 //
-// It mirrors exactly the nightly nethcti_export.php job: it deletes the rows previously
-// exported by NethCTI (sid_imported = 'nethcti') and reinserts every cti_phonebook row
-// with type='public'. Calling it on each contact mutation makes new/changed public
-// contacts immediately resolvable instead of waiting for the nightly export.
+// It mirrors exactly the nightly nethcti_export.php job. NethCTI-exported rows are marked
+// with both type='nethcti' and sid_imported='nethcti': the middleware union search excludes
+// them via type != 'nethcti', while cleanup here keys on sid_imported='nethcti' to stay in
+// lockstep with the nightly export (which deletes by the same column). The function deletes
+// those rows and reinserts every cti_phonebook row with type='public', so new/changed public
+// contacts become immediately resolvable instead of waiting for the nightly export. Rows from
+// other sync sources (sid_imported != 'nethcti') are left untouched.
 //
 // phonebook.phonebook is a MyISAM table (no transactions), so the delete+reinsert is
 // wrapped in LOCK TABLES ... WRITE to avoid exposing an empty result set to concurrent
