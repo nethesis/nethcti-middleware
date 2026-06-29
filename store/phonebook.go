@@ -424,6 +424,67 @@ func DeletePhonebookEntryByID(ctx context.Context, id int64) error {
 	return err
 }
 
+// SyncPublicContactsToCentralized republishes every public CTI contact into the
+// centralized phonebook used for call-time name resolution (Asterisk lookup.php and
+// the CTI customer-card "Identity" query both read phonebook.phonebook).
+//
+// It mirrors exactly the nightly nethcti_export.php job: it deletes the rows previously
+// exported by NethCTI (sid_imported = 'nethcti') and reinserts every cti_phonebook row
+// with type='public'. Calling it on each contact mutation makes new/changed public
+// contacts immediately resolvable instead of waiting for the nightly export.
+//
+// phonebook.phonebook is a MyISAM table (no transactions), so the delete+reinsert is
+// wrapped in LOCK TABLES ... WRITE to avoid exposing an empty result set to concurrent
+// readers. LOCK TABLES is connection-scoped, hence the work runs on a single pinned
+// connection.
+func SyncPublicContactsToCentralized(ctx context.Context) error {
+	database := db.GetDB()
+	if database == nil {
+		return errors.New("database not initialized")
+	}
+
+	conn, err := database.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	if _, err := conn.ExecContext(ctx, "LOCK TABLES `phonebook`.`phonebook` WRITE, `cti_phonebook` READ"); err != nil {
+		return err
+	}
+	// Always release the lock, even on error.
+	defer func() {
+		if _, unlockErr := conn.ExecContext(ctx, "UNLOCK TABLES"); unlockErr != nil {
+			logs.Log("[ERROR][PHONEBOOK] Failed to unlock tables after centralized sync: " + unlockErr.Error())
+		}
+	}()
+
+	if _, err := conn.ExecContext(ctx, "DELETE FROM `phonebook`.`phonebook` WHERE sid_imported = 'nethcti'"); err != nil {
+		return err
+	}
+
+	insertSelect := `
+		INSERT INTO ` + "`phonebook`.`phonebook`" + ` (
+			owner_id, type, homeemail, workemail, homephone, workphone, cellphone, fax,
+			title, company, notes, name, homestreet, homepob, homecity, homeprovince,
+			homepostalcode, homecountry, workstreet, workpob, workcity, workprovince,
+			workpostalcode, workcountry, url, sid_imported
+		)
+		SELECT
+			owner_id, 'nethcti', homeemail, workemail, homephone, workphone, cellphone, fax,
+			title, company, notes, name, homestreet, homepob, homecity, homeprovince,
+			homepostalcode, homecountry, workstreet, workpob, workcity, workprovince,
+			workpostalcode, workcountry, url, 'nethcti'
+		FROM cti_phonebook
+		WHERE type = 'public'
+	`
+	if _, err := conn.ExecContext(ctx, insertSelect); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func scanPhonebookEntry(scanner interface{ Scan(dest ...any) error }) (*PhonebookEntry, error) {
 	var (
 		entry           PhonebookEntry

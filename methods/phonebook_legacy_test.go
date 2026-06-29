@@ -619,3 +619,87 @@ func loadPhonebookTestProfiles(t *testing.T, profilesJSON, usersJSON string) {
 	require.NoError(t, os.WriteFile(usersPath, []byte(usersJSON), 0o600))
 	require.NoError(t, store.InitProfiles(profilesPath, usersPath))
 }
+
+func TestCreateLegacyCTIPhonebookContact_PublicTriggersCentralizedSync(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	loadPhonebookTestProfiles(t, `{"p":{"id":"p","name":"P","macro_permissions":{"phonebook":{"value":true,"permissions":[{"id":"p2","name":"phonebook_level_2","value":true}]}}}}`, `{"alice":{"profile_id":"p"}}`)
+
+	originalCreate := createPhonebookEntryFunc
+	originalSync := syncCentralizedPublicContactsFunc
+	defer func() {
+		createPhonebookEntryFunc = originalCreate
+		syncCentralizedPublicContactsFunc = originalSync
+	}()
+
+	createPhonebookEntryFunc = func(context.Context, *store.PhonebookEntry) error { return nil }
+	syncCalls := 0
+	syncCentralizedPublicContactsFunc = func(context.Context) error {
+		syncCalls++
+		return nil
+	}
+
+	payload := map[string]any{"name": "Alice", "type": "public"}
+	ctx, recorder := newLegacyPhonebookTestContext(http.MethodPost, "/phonebook/create", payload, "alice")
+
+	CreateLegacyCTIPhonebookContact(ctx)
+
+	require.Equal(t, http.StatusCreated, recorder.Code)
+	assert.Equal(t, 1, syncCalls)
+}
+
+func TestCreateLegacyCTIPhonebookContact_PrivateDoesNotTriggerCentralizedSync(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	loadPhonebookTestProfiles(t, `{"p":{"id":"p","name":"P","macro_permissions":{"phonebook":{"value":true,"permissions":[{"id":"p2","name":"phonebook_level_2","value":true}]}}}}`, `{"alice":{"profile_id":"p"}}`)
+
+	originalCreate := createPhonebookEntryFunc
+	originalSync := syncCentralizedPublicContactsFunc
+	defer func() {
+		createPhonebookEntryFunc = originalCreate
+		syncCentralizedPublicContactsFunc = originalSync
+	}()
+
+	createPhonebookEntryFunc = func(context.Context, *store.PhonebookEntry) error { return nil }
+	syncCentralizedPublicContactsFunc = func(context.Context) error {
+		t.Fatalf("centralized sync must not run for a private contact")
+		return nil
+	}
+
+	payload := map[string]any{"name": "Alice", "type": "private"}
+	ctx, recorder := newLegacyPhonebookTestContext(http.MethodPost, "/phonebook/create", payload, "alice")
+
+	CreateLegacyCTIPhonebookContact(ctx)
+
+	require.Equal(t, http.StatusCreated, recorder.Code)
+}
+
+func TestDeleteLegacyCTIPhonebookContact_PublicTriggersCentralizedSync(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	loadPhonebookTestProfiles(t, `{"p":{"id":"p","name":"P","macro_permissions":{"phonebook":{"value":true,"permissions":[{"id":"p2","name":"phonebook_level_2","value":true}]}}}}`, `{"alice":{"profile_id":"p"}}`)
+
+	originalGet := getPhonebookEntryByIDFunc
+	originalDelete := deletePhonebookEntryByIDFunc
+	originalSync := syncCentralizedPublicContactsFunc
+	defer func() {
+		getPhonebookEntryByIDFunc = originalGet
+		deletePhonebookEntryByIDFunc = originalDelete
+		syncCentralizedPublicContactsFunc = originalSync
+	}()
+
+	getPhonebookEntryByIDFunc = func(context.Context, int64) (*store.PhonebookEntry, error) {
+		return &store.PhonebookEntry{ID: 7, OwnerID: "alice", Type: "public", Name: "Alice"}, nil
+	}
+	deletePhonebookEntryByIDFunc = func(context.Context, int64) error { return nil }
+	syncCalls := 0
+	syncCentralizedPublicContactsFunc = func(context.Context) error {
+		syncCalls++
+		return nil
+	}
+
+	payload := map[string]any{"id": "7"}
+	ctx, recorder := newLegacyPhonebookTestContext(http.MethodPost, "/phonebook/delete_cticontact", payload, "alice")
+
+	DeleteLegacyCTIPhonebookContact(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	assert.Equal(t, 1, syncCalls)
+}

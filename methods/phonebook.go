@@ -172,6 +172,17 @@ func parsePhonebookCSV(file io.Reader) ([]*store.PhonebookEntry, *PhonebookImpor
 // AdminImportPhonebookCSV handles CSV phonebook imports for admin users.
 // Admin can import contacts into any target user's phonebook by specifying the username form field.
 // Requires super admin bearer token authentication.
+// entriesContainPublic reports whether any parsed entry is a public contact, i.e. one
+// that must be republished to the centralized phonebook for call-time name resolution.
+func entriesContainPublic(entries []*store.PhonebookEntry) bool {
+	for _, entry := range entries {
+		if strings.EqualFold(strings.TrimSpace(entry.Type), "public") {
+			return true
+		}
+	}
+	return false
+}
+
 func AdminImportPhonebookCSV(c *gin.Context) {
 	// Get target username from form field
 	targetUsername := strings.TrimSpace(c.Request.FormValue("username"))
@@ -219,6 +230,10 @@ func AdminImportPhonebookCSV(c *gin.Context) {
 
 	response.ImportedRows = successful
 	response.FailedRows = failed
+
+	if successful > 0 && entriesContainPublic(entries) {
+		syncCentralizedPublicContacts(ctx)
+	}
 
 	// Log admin action with user profile info for audit trail
 	logs.Log(fmt.Sprintf("[INFO][PHONEBOOK] Admin imported %d contacts for user %s (total_rows: %d, failed: %d, skipped: %d)",
@@ -277,6 +292,10 @@ func ImportPhonebookCSV(c *gin.Context) {
 
 	response.ImportedRows = successful
 	response.FailedRows = failed
+
+	if successful > 0 && entriesContainPublic(entries) {
+		syncCentralizedPublicContacts(ctx)
+	}
 
 	// Log user action for audit trail
 	logs.Log(fmt.Sprintf("[INFO][PHONEBOOK] User %s imported %d contacts (total_rows: %d, failed: %d, skipped: %d)",

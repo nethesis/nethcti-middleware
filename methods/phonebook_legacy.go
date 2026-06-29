@@ -39,6 +39,7 @@ var (
 	createPhonebookEntryFunc             = store.CreatePhonebookEntry
 	updatePhonebookEntryFieldsFunc       = store.UpdatePhonebookEntryFields
 	deletePhonebookEntryByIDFunc         = store.DeletePhonebookEntryByID
+	syncCentralizedPublicContactsFunc    = store.SyncPublicContactsToCentralized
 	searchLegacyPhonebookFunc            = store.SearchLegacyPhonebook
 	listLegacyPhonebookFunc              = store.ListLegacyPhonebook
 	getUserCapabilitiesFunc              = store.GetUserCapabilities
@@ -220,6 +221,16 @@ func GetCentralizedPhonebookContact(c *gin.Context) {
 }
 
 // CreateLegacyCTIPhonebookContact creates a legacy CTI phonebook contact from middleware.
+// syncCentralizedPublicContacts republishes public CTI contacts into the centralized
+// phonebook so they become immediately resolvable at call time. It is best-effort: a
+// failure is logged but never fails the CRUD request (the cti_phonebook write already
+// succeeded and the nightly export remains a fallback).
+func syncCentralizedPublicContacts(ctx context.Context) {
+	if err := syncCentralizedPublicContactsFunc(ctx); err != nil {
+		logs.Log("[ERROR][PHONEBOOK] Failed to sync public contacts to centralized phonebook: " + err.Error())
+	}
+}
+
 func CreateLegacyCTIPhonebookContact(c *gin.Context) {
 	username, err := getUsernameFromContext(c)
 	if err != nil {
@@ -282,6 +293,10 @@ func CreateLegacyCTIPhonebookContact(c *gin.Context) {
 		logs.Log("[ERROR][PHONEBOOK] Failed to create CTI phonebook contact: " + err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{"message": "failed to create phonebook contact"})
 		return
+	}
+
+	if contactType == "public" {
+		syncCentralizedPublicContacts(ctx)
 	}
 
 	c.Status(http.StatusCreated)
@@ -361,6 +376,10 @@ func UpdateLegacyCTIPhonebookContact(c *gin.Context) {
 		return
 	}
 
+	if existingContact.Type == "public" || nextType == "public" {
+		syncCentralizedPublicContacts(ctx)
+	}
+
 	c.Status(http.StatusOK)
 	c.Writer.WriteHeaderNow()
 }
@@ -404,6 +423,10 @@ func DeleteLegacyCTIPhonebookContact(c *gin.Context) {
 		logs.Log("[ERROR][PHONEBOOK] Failed to delete CTI phonebook contact: " + err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{"message": "failed to delete phonebook contact"})
 		return
+	}
+
+	if existingContact.Type == "public" {
+		syncCentralizedPublicContacts(ctx)
 	}
 
 	c.Status(http.StatusOK)
