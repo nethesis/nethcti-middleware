@@ -78,6 +78,7 @@ var legacyPhonebookWritableFields = []string{
 	"linkedin",
 	"workphone2",
 	"cellphone2",
+	"otherphone",
 }
 
 // SearchLegacyPhonebook serves the legacy union search route from middleware.
@@ -850,6 +851,8 @@ func assignPhonebookEntryField(entry *store.PhonebookEntry, fieldName, value str
 		entry.WorkPhone2 = value
 	case "cellphone2":
 		entry.CellPhone2 = value
+	case "otherphone":
+		entry.OtherPhone = value
 	}
 }
 
@@ -899,6 +902,7 @@ func legacyPhonebookEntryResponseWithSource(entry *store.PhonebookEntry, source 
 		"linkedin":       entry.LinkedIn,
 		"workphone2":     entry.WorkPhone2,
 		"cellphone2":     entry.CellPhone2,
+		"otherphone":     entry.OtherPhone,
 		"source":         source,
 	}
 }

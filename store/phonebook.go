@@ -55,6 +55,7 @@ var phonebookMutableColumns = []string{
 	"linkedin",
 	"workphone2",
 	"cellphone2",
+	"otherphone",
 }
 
 // PhonebookEntry represents a phonebook contact from cti_phonebook table.
@@ -95,6 +96,7 @@ type PhonebookEntry struct {
 	LinkedIn       string
 	WorkPhone2     string
 	CellPhone2     string
+	OtherPhone     string
 }
 
 // IsReservedContactType reports whether the contact type is one of the built-in visibilities.
@@ -294,8 +296,8 @@ func batchInsertPhonebookEntries(ctx context.Context, entries []*PhonebookEntry)
 			title, company, notes, name, homestreet, homepob, homecity, homeprovince,
 			homepostalcode, homecountry, workstreet, workpob, workcity, workprovince,
 			workpostalcode, workcountry, url, extension, speeddial_num,
-			firstname, lastname, job, facebook, instagram, linkedin, workphone2, cellphone2
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			firstname, lastname, job, facebook, instagram, linkedin, workphone2, cellphone2, otherphone
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	successful := 0
@@ -310,7 +312,7 @@ func batchInsertPhonebookEntries(ctx context.Context, entries []*PhonebookEntry)
 			entry.WorkCity, entry.WorkProvince, entry.WorkPostalCode, entry.WorkCountry,
 			entry.URL, entry.Extension, entry.SpeedDialNum,
 			entry.FirstName, entry.LastName, entry.Job, entry.Facebook, entry.Instagram,
-			entry.LinkedIn, entry.WorkPhone2, entry.CellPhone2,
+			entry.LinkedIn, entry.WorkPhone2, entry.CellPhone2, entry.OtherPhone,
 		)
 		if err != nil {
 			logs.Log("[ERROR][PHONEBOOK] Failed to insert entry for " + entry.Name + ": " + err.Error())
@@ -353,7 +355,7 @@ func GetPhonebookEntryByID(ctx context.Context, id int64) (*PhonebookEntry, erro
 			title, company, notes, name, homestreet, homepob, homecity, homeprovince,
 			homepostalcode, homecountry, workstreet, workpob, workcity, workprovince,
 			workpostalcode, workcountry, url, extension, speeddial_num,
-			firstname, lastname, job, facebook, instagram, linkedin, workphone2, cellphone2
+			firstname, lastname, job, facebook, instagram, linkedin, workphone2, cellphone2, otherphone
 		FROM cti_phonebook
 		WHERE id = ?
 		LIMIT 1
@@ -484,6 +486,7 @@ func scanPhonebookEntry(scanner interface{ Scan(dest ...any) error }) (*Phoneboo
 		linkedIn        sql.NullString
 		workPhone2      sql.NullString
 		cellPhone2      sql.NullString
+		otherPhone      sql.NullString
 	)
 
 	err := scanner.Scan(
@@ -523,6 +526,7 @@ func scanPhonebookEntry(scanner interface{ Scan(dest ...any) error }) (*Phoneboo
 		&linkedIn,
 		&workPhone2,
 		&cellPhone2,
+		&otherPhone,
 	)
 	if err != nil {
 		return nil, err
@@ -563,6 +567,7 @@ func scanPhonebookEntry(scanner interface{ Scan(dest ...any) error }) (*Phoneboo
 	entry.LinkedIn = nullStringValue(linkedIn)
 	entry.WorkPhone2 = nullStringValue(workPhone2)
 	entry.CellPhone2 = nullStringValue(cellPhone2)
+	entry.OtherPhone = nullStringValue(otherPhone)
 
 	return &entry, nil
 }

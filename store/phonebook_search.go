@@ -53,8 +53,8 @@ var legacyPhonebookSelectColumns = strings.Join([]string{
 // Columns added by issue #7124. They exist only in cti_phonebook, so the
 // centralized branch of every UNION must project empty literals to keep the
 // column count aligned with the scan order.
-const ctiPhonebookExtraColumns = "firstname, lastname, job, facebook, instagram, linkedin, workphone2, cellphone2"
-const centralizedPhonebookExtraColumns = "'' AS firstname, '' AS lastname, '' AS job, '' AS facebook, '' AS instagram, '' AS linkedin, '' AS workphone2, '' AS cellphone2"
+const ctiPhonebookExtraColumns = "firstname, lastname, job, facebook, instagram, linkedin, workphone2, cellphone2, otherphone"
+const centralizedPhonebookExtraColumns = "'' AS firstname, '' AS lastname, '' AS job, '' AS facebook, '' AS instagram, '' AS linkedin, '' AS workphone2, '' AS cellphone2, '' AS otherphone"
 
 // LegacyPhonebookQuery describes legacy-compatible union search/list parameters.
 type LegacyPhonebookQuery struct {
@@ -108,6 +108,7 @@ type LegacyPhonebookContact struct {
 	LinkedIn       string `json:"linkedin"`
 	WorkPhone2     string `json:"workphone2"`
 	CellPhone2     string `json:"cellphone2"`
+	OtherPhone     string `json:"otherphone"`
 	Source         string `json:"source"`
 	Contacts       string `json:"contacts,omitempty"`
 }
@@ -163,7 +164,7 @@ func ListLegacyPhonebook(ctx context.Context, query LegacyPhonebookQuery) (*Lega
 	countArgs = append(countArgs, centralizedVisibilityArgs...)
 
 	listQuery := strings.Join([]string{
-		"SELECT id, owner_id, type, homeemail, workemail, homephone, workphone, cellphone, fax, title, company, notes, name, homestreet, homepob, homecity, homeprovince, homepostalcode, homecountry, workstreet, workpob, workcity, workprovince, workpostalcode, workcountry, url, extension, speeddial_num, firstname, lastname, job, facebook, instagram, linkedin, workphone2, cellphone2, source, sort_name",
+		"SELECT id, owner_id, type, homeemail, workemail, homephone, workphone, cellphone, fax, title, company, notes, name, homestreet, homepob, homecity, homeprovince, homepostalcode, homecountry, workstreet, workpob, workcity, workprovince, workpostalcode, workcountry, url, extension, speeddial_num, firstname, lastname, job, facebook, instagram, linkedin, workphone2, cellphone2, otherphone, source, sort_name",
 		"FROM (",
 		"SELECT", legacyPhonebookSelectColumns, ", extension, speeddial_num, " + ctiPhonebookExtraColumns + ", 'cti' AS source, name AS sort_name",
 		"FROM cti_phonebook",
@@ -582,6 +583,7 @@ func buildLegacySearchClauses(view, rawTerm string) ([]any, []any, string, strin
 		"OR homephone LIKE ? ESCAPE '\\\\'",
 		"OR cellphone LIKE ? ESCAPE '\\\\'",
 		"OR cellphone2 LIKE ? ESCAPE '\\\\'",
+		"OR otherphone LIKE ? ESCAPE '\\\\'",
 		"OR extension LIKE ? ESCAPE '\\\\'",
 		"OR notes LIKE ? ESCAPE '\\\\'",
 	}, " ")
@@ -593,7 +595,7 @@ func buildLegacySearchClauses(view, rawTerm string) ([]any, []any, string, strin
 		"OR notes LIKE ? ESCAPE '\\\\'",
 	}, " ")
 
-	ctiArgs = append(ctiArgs, term, term, term, term, term, term, term)
+	ctiArgs = append(ctiArgs, term, term, term, term, term, term, term, term)
 	centralizedArgs = append(centralizedArgs, term, term, term, term)
 
 	return ctiArgs, centralizedArgs, ctiClause, centralizedClause
@@ -686,6 +688,7 @@ func scanLegacyPhonebookContact(scanner interface{ Scan(dest ...any) error }) (L
 		linkedIn       sql.NullString
 		workPhone2     sql.NullString
 		cellPhone2     sql.NullString
+		otherPhone     sql.NullString
 		source         sql.NullString
 	)
 
@@ -726,6 +729,7 @@ func scanLegacyPhonebookContact(scanner interface{ Scan(dest ...any) error }) (L
 		&linkedIn,
 		&workPhone2,
 		&cellPhone2,
+		&otherPhone,
 		&source,
 	)
 	if err != nil {
@@ -767,6 +771,7 @@ func scanLegacyPhonebookContact(scanner interface{ Scan(dest ...any) error }) (L
 	contact.LinkedIn = nullStringValue(linkedIn)
 	contact.WorkPhone2 = nullStringValue(workPhone2)
 	contact.CellPhone2 = nullStringValue(cellPhone2)
+	contact.OtherPhone = nullStringValue(otherPhone)
 	contact.Source = nullStringValue(source)
 
 	return contact, nil
@@ -810,6 +815,7 @@ func scanLegacyPhonebookContactWithSortKey(scanner interface{ Scan(dest ...any) 
 		linkedIn       sql.NullString
 		workPhone2     sql.NullString
 		cellPhone2     sql.NullString
+		otherPhone     sql.NullString
 		source         sql.NullString
 		sortKey        sql.NullString
 	)
@@ -851,6 +857,7 @@ func scanLegacyPhonebookContactWithSortKey(scanner interface{ Scan(dest ...any) 
 		&linkedIn,
 		&workPhone2,
 		&cellPhone2,
+		&otherPhone,
 		&source,
 		&sortKey,
 	)
@@ -893,6 +900,7 @@ func scanLegacyPhonebookContactWithSortKey(scanner interface{ Scan(dest ...any) 
 	contact.LinkedIn = nullStringValue(linkedIn)
 	contact.WorkPhone2 = nullStringValue(workPhone2)
 	contact.CellPhone2 = nullStringValue(cellPhone2)
+	contact.OtherPhone = nullStringValue(otherPhone)
 	contact.Source = nullStringValue(source)
 
 	return contact, nil

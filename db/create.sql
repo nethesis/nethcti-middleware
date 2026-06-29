@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS cti_phonebook (
 	linkedin varchar(255) DEFAULT NULL,
 	workphone2 varchar(25) DEFAULT NULL,
 	cellphone2 varchar(25) DEFAULT NULL,
+	otherphone varchar(25) DEFAULT NULL,
 	PRIMARY KEY (id),
 	KEY owner_idx (owner_id),
 	KEY wemail_idx (workemail),
@@ -52,5 +53,6 @@ CREATE TABLE IF NOT EXISTS cti_phonebook (
 	KEY company_idx (company),
 	KEY lastname_idx (lastname),
 	KEY wphone2_idx (workphone2),
-	KEY cphone2_idx (cellphone2)
+	KEY cphone2_idx (cellphone2),
+	KEY ophone_idx (otherphone)
 ) ENGINE=MyISAM DEFAULT CHARSET=utf8mb3
