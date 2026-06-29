@@ -220,17 +220,23 @@ func GetCentralizedPhonebookContact(c *gin.Context) {
 	c.JSON(http.StatusOK, legacyPhonebookEntryResponseWithSource(contact, "centralized"))
 }
 
-// CreateLegacyCTIPhonebookContact creates a legacy CTI phonebook contact from middleware.
 // syncCentralizedPublicContacts republishes public CTI contacts into the centralized
 // phonebook so they become immediately resolvable at call time. It is best-effort: a
 // failure is logged but never fails the CRUD request (the cti_phonebook write already
 // succeeded and the nightly export remains a fallback).
-func syncCentralizedPublicContacts(ctx context.Context) {
+//
+// It runs with its own context/timeout, independent of the originating HTTP request, so
+// that a near-deadline (or already-cancelled) request context cannot starve the sync.
+func syncCentralizedPublicContacts() {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
 	if err := syncCentralizedPublicContactsFunc(ctx); err != nil {
 		logs.Log("[ERROR][PHONEBOOK] Failed to sync public contacts to centralized phonebook: " + err.Error())
 	}
 }
 
+// CreateLegacyCTIPhonebookContact creates a legacy CTI phonebook contact from middleware.
 func CreateLegacyCTIPhonebookContact(c *gin.Context) {
 	username, err := getUsernameFromContext(c)
 	if err != nil {
@@ -296,7 +302,7 @@ func CreateLegacyCTIPhonebookContact(c *gin.Context) {
 	}
 
 	if contactType == "public" {
-		syncCentralizedPublicContacts(ctx)
+		syncCentralizedPublicContacts()
 	}
 
 	c.Status(http.StatusCreated)
@@ -377,7 +383,7 @@ func UpdateLegacyCTIPhonebookContact(c *gin.Context) {
 	}
 
 	if existingContact.Type == "public" || nextType == "public" {
-		syncCentralizedPublicContacts(ctx)
+		syncCentralizedPublicContacts()
 	}
 
 	c.Status(http.StatusOK)
@@ -426,7 +432,7 @@ func DeleteLegacyCTIPhonebookContact(c *gin.Context) {
 	}
 
 	if existingContact.Type == "public" {
-		syncCentralizedPublicContacts(ctx)
+		syncCentralizedPublicContacts()
 	}
 
 	c.Status(http.StatusOK)

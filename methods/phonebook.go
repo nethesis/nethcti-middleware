@@ -169,9 +169,6 @@ func parsePhonebookCSV(file io.Reader) ([]*store.PhonebookEntry, *PhonebookImpor
 	return entries, response, nil
 }
 
-// AdminImportPhonebookCSV handles CSV phonebook imports for admin users.
-// Admin can import contacts into any target user's phonebook by specifying the username form field.
-// Requires super admin bearer token authentication.
 // entriesContainPublic reports whether any parsed entry is a public contact, i.e. one
 // that must be republished to the centralized phonebook for call-time name resolution.
 func entriesContainPublic(entries []*store.PhonebookEntry) bool {
@@ -183,6 +180,9 @@ func entriesContainPublic(entries []*store.PhonebookEntry) bool {
 	return false
 }
 
+// AdminImportPhonebookCSV handles CSV phonebook imports for admin users.
+// Admin can import contacts into any target user's phonebook by specifying the username form field.
+// Requires super admin bearer token authentication.
 func AdminImportPhonebookCSV(c *gin.Context) {
 	// Get target username from form field
 	targetUsername := strings.TrimSpace(c.Request.FormValue("username"))
@@ -232,7 +232,7 @@ func AdminImportPhonebookCSV(c *gin.Context) {
 	response.FailedRows = failed
 
 	if successful > 0 && entriesContainPublic(entries) {
-		syncCentralizedPublicContacts(ctx)
+		syncCentralizedPublicContacts()
 	}
 
 	// Log admin action with user profile info for audit trail
@@ -294,7 +294,7 @@ func ImportPhonebookCSV(c *gin.Context) {
 	response.FailedRows = failed
 
 	if successful > 0 && entriesContainPublic(entries) {
-		syncCentralizedPublicContacts(ctx)
+		syncCentralizedPublicContacts()
 	}
 
 	// Log user action for audit trail
