@@ -625,17 +625,16 @@ func TestCreateLegacyCTIPhonebookContact_PublicTriggersCentralizedSync(t *testin
 	loadPhonebookTestProfiles(t, `{"p":{"id":"p","name":"P","macro_permissions":{"phonebook":{"value":true,"permissions":[{"id":"p2","name":"phonebook_level_2","value":true}]}}}}`, `{"alice":{"profile_id":"p"}}`)
 
 	originalCreate := createPhonebookEntryFunc
-	originalSync := syncCentralizedPublicContactsFunc
+	originalSchedule := scheduleSyncCentralizedPublicContactsFunc
 	defer func() {
 		createPhonebookEntryFunc = originalCreate
-		syncCentralizedPublicContactsFunc = originalSync
+		scheduleSyncCentralizedPublicContactsFunc = originalSchedule
 	}()
 
 	createPhonebookEntryFunc = func(context.Context, *store.PhonebookEntry) error { return nil }
 	syncCalls := 0
-	syncCentralizedPublicContactsFunc = func(context.Context) error {
+	scheduleSyncCentralizedPublicContactsFunc = func() {
 		syncCalls++
-		return nil
 	}
 
 	payload := map[string]any{"name": "Alice", "type": "public"}
@@ -652,16 +651,15 @@ func TestCreateLegacyCTIPhonebookContact_PrivateDoesNotTriggerCentralizedSync(t 
 	loadPhonebookTestProfiles(t, `{"p":{"id":"p","name":"P","macro_permissions":{"phonebook":{"value":true,"permissions":[{"id":"p2","name":"phonebook_level_2","value":true}]}}}}`, `{"alice":{"profile_id":"p"}}`)
 
 	originalCreate := createPhonebookEntryFunc
-	originalSync := syncCentralizedPublicContactsFunc
+	originalSchedule := scheduleSyncCentralizedPublicContactsFunc
 	defer func() {
 		createPhonebookEntryFunc = originalCreate
-		syncCentralizedPublicContactsFunc = originalSync
+		scheduleSyncCentralizedPublicContactsFunc = originalSchedule
 	}()
 
 	createPhonebookEntryFunc = func(context.Context, *store.PhonebookEntry) error { return nil }
-	syncCentralizedPublicContactsFunc = func(context.Context) error {
+	scheduleSyncCentralizedPublicContactsFunc = func() {
 		t.Fatalf("centralized sync must not run for a private contact")
-		return nil
 	}
 
 	payload := map[string]any{"name": "Alice", "type": "private"}
@@ -678,11 +676,11 @@ func TestDeleteLegacyCTIPhonebookContact_PublicTriggersCentralizedSync(t *testin
 
 	originalGet := getPhonebookEntryByIDFunc
 	originalDelete := deletePhonebookEntryByIDFunc
-	originalSync := syncCentralizedPublicContactsFunc
+	originalSchedule := scheduleSyncCentralizedPublicContactsFunc
 	defer func() {
 		getPhonebookEntryByIDFunc = originalGet
 		deletePhonebookEntryByIDFunc = originalDelete
-		syncCentralizedPublicContactsFunc = originalSync
+		scheduleSyncCentralizedPublicContactsFunc = originalSchedule
 	}()
 
 	getPhonebookEntryByIDFunc = func(context.Context, int64) (*store.PhonebookEntry, error) {
@@ -690,9 +688,8 @@ func TestDeleteLegacyCTIPhonebookContact_PublicTriggersCentralizedSync(t *testin
 	}
 	deletePhonebookEntryByIDFunc = func(context.Context, int64) error { return nil }
 	syncCalls := 0
-	syncCentralizedPublicContactsFunc = func(context.Context) error {
+	scheduleSyncCentralizedPublicContactsFunc = func() {
 		syncCalls++
-		return nil
 	}
 
 	payload := map[string]any{"id": "7"}
@@ -710,11 +707,11 @@ func TestUpdateLegacyCTIPhonebookContact_PrivateToPublicTriggersCentralizedSync(
 
 	originalGet := getPhonebookEntryByIDFunc
 	originalUpdate := updatePhonebookEntryFieldsFunc
-	originalSync := syncCentralizedPublicContactsFunc
+	originalSchedule := scheduleSyncCentralizedPublicContactsFunc
 	defer func() {
 		getPhonebookEntryByIDFunc = originalGet
 		updatePhonebookEntryFieldsFunc = originalUpdate
-		syncCentralizedPublicContactsFunc = originalSync
+		scheduleSyncCentralizedPublicContactsFunc = originalSchedule
 	}()
 
 	getPhonebookEntryByIDFunc = func(context.Context, int64) (*store.PhonebookEntry, error) {
@@ -722,9 +719,8 @@ func TestUpdateLegacyCTIPhonebookContact_PrivateToPublicTriggersCentralizedSync(
 	}
 	updatePhonebookEntryFieldsFunc = func(context.Context, int64, map[string]any) error { return nil }
 	syncCalls := 0
-	syncCentralizedPublicContactsFunc = func(context.Context) error {
+	scheduleSyncCentralizedPublicContactsFunc = func() {
 		syncCalls++
-		return nil
 	}
 
 	payload := map[string]any{"id": "5", "type": "public"}
@@ -742,11 +738,11 @@ func TestUpdateLegacyCTIPhonebookContact_PublicToPrivateTriggersCentralizedSync(
 
 	originalGet := getPhonebookEntryByIDFunc
 	originalUpdate := updatePhonebookEntryFieldsFunc
-	originalSync := syncCentralizedPublicContactsFunc
+	originalSchedule := scheduleSyncCentralizedPublicContactsFunc
 	defer func() {
 		getPhonebookEntryByIDFunc = originalGet
 		updatePhonebookEntryFieldsFunc = originalUpdate
-		syncCentralizedPublicContactsFunc = originalSync
+		scheduleSyncCentralizedPublicContactsFunc = originalSchedule
 	}()
 
 	getPhonebookEntryByIDFunc = func(context.Context, int64) (*store.PhonebookEntry, error) {
@@ -754,9 +750,8 @@ func TestUpdateLegacyCTIPhonebookContact_PublicToPrivateTriggersCentralizedSync(
 	}
 	updatePhonebookEntryFieldsFunc = func(context.Context, int64, map[string]any) error { return nil }
 	syncCalls := 0
-	syncCentralizedPublicContactsFunc = func(context.Context) error {
+	scheduleSyncCentralizedPublicContactsFunc = func() {
 		syncCalls++
-		return nil
 	}
 
 	payload := map[string]any{"id": "5", "type": "private"}
@@ -774,20 +769,19 @@ func TestUpdateLegacyCTIPhonebookContact_PrivateToPrivateDoesNotTriggerCentraliz
 
 	originalGet := getPhonebookEntryByIDFunc
 	originalUpdate := updatePhonebookEntryFieldsFunc
-	originalSync := syncCentralizedPublicContactsFunc
+	originalSchedule := scheduleSyncCentralizedPublicContactsFunc
 	defer func() {
 		getPhonebookEntryByIDFunc = originalGet
 		updatePhonebookEntryFieldsFunc = originalUpdate
-		syncCentralizedPublicContactsFunc = originalSync
+		scheduleSyncCentralizedPublicContactsFunc = originalSchedule
 	}()
 
 	getPhonebookEntryByIDFunc = func(context.Context, int64) (*store.PhonebookEntry, error) {
 		return &store.PhonebookEntry{ID: 5, OwnerID: "alice", Type: "private", Name: "Alice"}, nil
 	}
 	updatePhonebookEntryFieldsFunc = func(context.Context, int64, map[string]any) error { return nil }
-	syncCentralizedPublicContactsFunc = func(context.Context) error {
+	scheduleSyncCentralizedPublicContactsFunc = func() {
 		t.Fatalf("centralized sync must not run for a private->private update")
-		return nil
 	}
 
 	payload := map[string]any{"id": "5", "name": "Alice Updated"}

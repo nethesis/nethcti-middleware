@@ -232,7 +232,7 @@ func AdminImportPhonebookCSV(c *gin.Context) {
 	response.FailedRows = failed
 
 	if successful > 0 && entriesContainPublic(entries) {
-		syncCentralizedPublicContacts()
+		scheduleSyncCentralizedPublicContactsFunc()
 	}
 
 	// Log admin action with user profile info for audit trail
@@ -294,7 +294,7 @@ func ImportPhonebookCSV(c *gin.Context) {
 	response.FailedRows = failed
 
 	if successful > 0 && entriesContainPublic(entries) {
-		syncCentralizedPublicContacts()
+		scheduleSyncCentralizedPublicContactsFunc()
 	}
 
 	// Log user action for audit trail

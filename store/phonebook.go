@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/nethesis/nethcti-middleware/db"
 	"github.com/nethesis/nethcti-middleware/logs"
@@ -455,10 +456,17 @@ func SyncPublicContactsToCentralized(ctx context.Context) error {
 	if _, err := conn.ExecContext(ctx, "LOCK TABLES `phonebook`.`phonebook` WRITE, `cti_phonebook` READ"); err != nil {
 		return err
 	}
-	// Always release the lock, even on error.
+	// Always release the lock with a fresh context. The original ctx may be expired by
+	// the time DELETE/INSERT finishes (large table or WRITE-lock contention), and
+	// conn.ExecContext with a cancelled ctx returns immediately without sending UNLOCK to
+	// MySQL, leaving the connection in LOCK TABLES state inside the pool. The next
+	// borrower would then inherit the lock and receive MySQL error 1100 on unrelated
+	// queries, poisoning up to MaxOpenConns connections until ConnMaxLifetime recycles them.
 	defer func() {
-		if _, unlockErr := conn.ExecContext(ctx, "UNLOCK TABLES"); unlockErr != nil {
-			logs.Log("[ERROR][PHONEBOOK] Failed to unlock tables after centralized sync: " + unlockErr.Error())
+		unlockCtx, unlockCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer unlockCancel()
+		if _, unlockErr := conn.ExecContext(unlockCtx, "UNLOCK TABLES"); unlockErr != nil {
+			logs.Log("[CRITICAL][PHONEBOOK] Failed to unlock tables after centralized sync: " + unlockErr.Error())
 		}
 	}()
 
