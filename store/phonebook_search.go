@@ -50,12 +50,19 @@ var legacyPhonebookSelectColumns = strings.Join([]string{
 	"url",
 }, ", ")
 
+// Columns added by issue #7124. They exist only in cti_phonebook, so the
+// centralized branch of every UNION must project empty literals to keep the
+// column count aligned with the scan order.
+const ctiPhonebookExtraColumns = "firstname, lastname, job, facebook, instagram, linkedin, workphone2, cellphone2, otherphone, otheremail"
+const centralizedPhonebookExtraColumns = "'' AS firstname, '' AS lastname, '' AS job, '' AS facebook, '' AS instagram, '' AS linkedin, '' AS workphone2, '' AS cellphone2, '' AS otherphone, '' AS otheremail"
+
 // LegacyPhonebookQuery describes legacy-compatible union search/list parameters.
 type LegacyPhonebookQuery struct {
 	Username               string
 	UserGroups             []string
 	View                   string
 	Visibility             string
+	Sort                   string
 	Term                   string
 	Offset                 int
 	Limit                  int
@@ -93,6 +100,16 @@ type LegacyPhonebookContact struct {
 	URL            string `json:"url"`
 	Extension      string `json:"extension"`
 	SpeedDialNum   string `json:"speeddial_num"`
+	FirstName      string `json:"firstname"`
+	LastName       string `json:"lastname"`
+	Job            string `json:"job"`
+	Facebook       string `json:"facebook"`
+	Instagram      string `json:"instagram"`
+	LinkedIn       string `json:"linkedin"`
+	WorkPhone2     string `json:"workphone2"`
+	CellPhone2     string `json:"cellphone2"`
+	OtherPhone     string `json:"otherphone"`
+	OtherEmail     string `json:"otheremail"`
 	Source         string `json:"source"`
 	Contacts       string `json:"contacts,omitempty"`
 }
@@ -148,25 +165,25 @@ func ListLegacyPhonebook(ctx context.Context, query LegacyPhonebookQuery) (*Lega
 	countArgs = append(countArgs, centralizedVisibilityArgs...)
 
 	listQuery := strings.Join([]string{
-		"SELECT id, owner_id, type, homeemail, workemail, homephone, workphone, cellphone, fax, title, company, notes, name, homestreet, homepob, homecity, homeprovince, homepostalcode, homecountry, workstreet, workpob, workcity, workprovince, workpostalcode, workcountry, url, extension, speeddial_num, source, sort_name",
+		"SELECT id, owner_id, type, homeemail, workemail, homephone, workphone, cellphone, fax, title, company, notes, name, homestreet, homepob, homecity, homeprovince, homepostalcode, homecountry, workstreet, workpob, workcity, workprovince, workpostalcode, workcountry, url, extension, speeddial_num, firstname, lastname, job, facebook, instagram, linkedin, workphone2, cellphone2, otherphone, otheremail, source, sort_name",
 		"FROM (",
-		"SELECT", legacyPhonebookSelectColumns, ", extension, speeddial_num, 'cti' AS source, name AS sort_name",
+		"SELECT", legacyPhonebookSelectColumns, ", extension, speeddial_num, " + ctiPhonebookExtraColumns + ", 'cti' AS source, name AS sort_name",
 		"FROM cti_phonebook",
 		"WHERE (name IS NOT NULL AND name != '') AND", visibleCTIWhere, "AND type != 'speeddial' AND", ctiVisibilityWhere,
 		"UNION",
-		"SELECT", legacyPhonebookSelectColumns, ", '' AS extension, '' AS speeddial_num, 'centralized' AS source, name AS sort_name",
+		"SELECT", legacyPhonebookSelectColumns, ", '' AS extension, '' AS speeddial_num, " + centralizedPhonebookExtraColumns + ", 'centralized' AS source, name AS sort_name",
 		"FROM", centralizedPhonebookTable,
 		"WHERE (name IS NOT NULL AND name != '') AND type != 'nethcti' AND", centralizedVisibilityWhere,
 		"UNION",
-		"SELECT", legacyPhonebookSelectColumns, ", extension, speeddial_num, 'cti' AS source, company AS sort_name",
+		"SELECT", legacyPhonebookSelectColumns, ", extension, speeddial_num, " + ctiPhonebookExtraColumns + ", 'cti' AS source, company AS sort_name",
 		"FROM cti_phonebook",
 		"WHERE (name IS NULL OR name = '') AND (company IS NOT NULL AND company != '') AND", visibleCTIWhere, "AND type != 'speeddial' AND", ctiVisibilityWhere,
 		"UNION",
-		"SELECT", legacyPhonebookSelectColumns, ", '' AS extension, '' AS speeddial_num, 'centralized' AS source, company AS sort_name",
+		"SELECT", legacyPhonebookSelectColumns, ", '' AS extension, '' AS speeddial_num, " + centralizedPhonebookExtraColumns + ", 'centralized' AS source, company AS sort_name",
 		"FROM", centralizedPhonebookTable,
 		"WHERE (name IS NULL OR name = '') AND (company IS NOT NULL AND company != '') AND type != 'nethcti' AND", centralizedVisibilityWhere,
 		") phonebook_union",
-		"ORDER BY sort_name ASC",
+		legacyListOrderByClause(query.Sort),
 	}, " ")
 	if query.ApplyPagination {
 		listQuery += " LIMIT ? OFFSET ?"
@@ -237,14 +254,14 @@ func searchLegacyPhonebookFlat(ctx context.Context, database *sql.DB, query Lega
 
 	selectQuery := strings.Join([]string{
 		"SELECT * FROM (",
-		"SELECT", legacyPhonebookSelectColumns, ", extension, speeddial_num, 'cti' AS source",
+		"SELECT", legacyPhonebookSelectColumns, ", extension, speeddial_num, " + ctiPhonebookExtraColumns + ", 'cti' AS source",
 		"FROM cti_phonebook",
 		"WHERE", visibleCTIWhere, "AND type != 'speeddial' AND", ctiVisibilityWhere, "AND (", ctiSearchClause, ")",
 		"UNION",
-		"SELECT", legacyPhonebookSelectColumns, ", '' AS extension, '' AS speeddial_num, 'centralized' AS source",
+		"SELECT", legacyPhonebookSelectColumns, ", '' AS extension, '' AS speeddial_num, " + centralizedPhonebookExtraColumns + ", 'centralized' AS source",
 		"FROM", centralizedPhonebookTable,
 		"WHERE type != 'nethcti' AND", centralizedVisibilityWhere, "AND (", centralizedSearchClause, ")",
-		") phonebook_union ORDER BY company ASC, name ASC",
+		") phonebook_union " + legacyFlatOrderByClause(query.Sort),
 	}, " ")
 	if query.ApplyPagination {
 		selectQuery += " LIMIT ? OFFSET ?"
@@ -420,11 +437,11 @@ func loadLegacyCompanyResult(
 
 	infoQuery := strings.Join([]string{
 		"SELECT * FROM (",
-		"SELECT", legacyPhonebookSelectColumns, ", extension, speeddial_num, 'cti' AS source",
+		"SELECT", legacyPhonebookSelectColumns, ", extension, speeddial_num, " + ctiPhonebookExtraColumns + ", 'cti' AS source",
 		"FROM cti_phonebook",
 		"WHERE", visibleCTIWhere, "AND company = ? AND (name IS NULL OR name = '') AND type != 'speeddial' AND", ctiVisibilityWhere,
 		"UNION",
-		"SELECT", legacyPhonebookSelectColumns, ", '' AS extension, '' AS speeddial_num, 'centralized' AS source",
+		"SELECT", legacyPhonebookSelectColumns, ", '' AS extension, '' AS speeddial_num, " + centralizedPhonebookExtraColumns + ", 'centralized' AS source",
 		"FROM", centralizedPhonebookTable,
 		"WHERE company = ? AND (name IS NULL OR name = '') AND type != 'nethcti' AND", centralizedVisibilityWhere,
 		") company_info LIMIT 1",
@@ -513,6 +530,51 @@ func queryLegacyPhonebookCount(ctx context.Context, database *sql.DB, query stri
 	return count, nil
 }
 
+// flatDisplayKey is the display-name sort key used by the flat search union.
+// Companies store an empty or '-' placeholder name, so we fall back to the
+// company field; otherwise such rows would collapse to the top (in MariaDB
+// '-'/NULL sort before letters and digits in ASC).
+const flatDisplayKey = "COALESCE(NULLIF(NULLIF(name, ''), '-'), company)"
+
+// legacyFlatOrderByClause returns the ORDER BY clause for the flat search/list
+// union. The phonebook UI sorts by firstname / lastname / displayname  "name"/"surname"/"company" are kept as backward-compatible aliases.
+//
+// firstname/lastname use a two-level ordering: contacts that have the new field
+// populated come first (A-Z by that field), then everyone else A-Z by the
+// display key (legacy single "name", company for company rows).
+func legacyFlatOrderByClause(sort string) string {
+	switch strings.ToLower(strings.TrimSpace(sort)) {
+	case "firstname":
+		return "ORDER BY (firstname IS NULL OR firstname = '') ASC, " +
+			"COALESCE(NULLIF(firstname, ''), " + flatDisplayKey + ") ASC"
+	case "lastname", "surname":
+		return "ORDER BY (lastname IS NULL OR lastname = '') ASC, " +
+			"COALESCE(NULLIF(lastname, ''), " + flatDisplayKey + ") ASC"
+	case "company":
+		return "ORDER BY COALESCE(NULLIF(company, ''), " + flatDisplayKey + ") ASC"
+	default: // "displayname", "name", empty
+		return "ORDER BY " + flatDisplayKey + " ASC"
+	}
+}
+
+// legacyListOrderByClause returns the ORDER BY clause for the alphabetical list
+// union, which exposes a computed sort_name (name, falling back to company).
+// Mirrors legacyFlatOrderByClause but reuses sort_name as the display key.
+func legacyListOrderByClause(sort string) string {
+	switch strings.ToLower(strings.TrimSpace(sort)) {
+	case "firstname":
+		return "ORDER BY (firstname IS NULL OR firstname = '') ASC, " +
+			"COALESCE(NULLIF(firstname, ''), sort_name) ASC"
+	case "lastname", "surname":
+		return "ORDER BY (lastname IS NULL OR lastname = '') ASC, " +
+			"COALESCE(NULLIF(lastname, ''), sort_name) ASC"
+	case "company":
+		return "ORDER BY company ASC, sort_name ASC"
+	default: // "displayname", "name", empty
+		return "ORDER BY sort_name ASC"
+	}
+}
+
 func buildLegacySearchClauses(view, rawTerm string) ([]any, []any, string, string) {
 	term := "%" + escapeLikeValue(rawTerm) + "%"
 	baseClause := "(name LIKE ? ESCAPE '\\\\' OR company LIKE ? ESCAPE '\\\\')"
@@ -533,8 +595,11 @@ func buildLegacySearchClauses(view, rawTerm string) ([]any, []any, string, strin
 	ctiClause := strings.Join([]string{
 		baseClause,
 		"OR workphone LIKE ? ESCAPE '\\\\'",
+		"OR workphone2 LIKE ? ESCAPE '\\\\'",
 		"OR homephone LIKE ? ESCAPE '\\\\'",
 		"OR cellphone LIKE ? ESCAPE '\\\\'",
+		"OR cellphone2 LIKE ? ESCAPE '\\\\'",
+		"OR otherphone LIKE ? ESCAPE '\\\\'",
 		"OR extension LIKE ? ESCAPE '\\\\'",
 		"OR notes LIKE ? ESCAPE '\\\\'",
 	}, " ")
@@ -546,8 +611,17 @@ func buildLegacySearchClauses(view, rawTerm string) ([]any, []any, string, strin
 		"OR notes LIKE ? ESCAPE '\\\\'",
 	}, " ")
 
-	ctiArgs = append(ctiArgs, term, term, term, term, term)
+	ctiArgs = append(ctiArgs, term, term, term, term, term, term, term, term)
 	centralizedArgs = append(centralizedArgs, term, term, term, term)
+
+	// The phone/notes OR-terms above match any contact with a populated phone,
+	// so "person" alone would still leak companies (which keep an empty/'-'
+	// placeholder name). Guard the whole clause to real-name contacts only.
+	if strings.EqualFold(strings.TrimSpace(view), "person") {
+		const personGuard = "name IS NOT NULL AND name != '' AND name != '-'"
+		ctiClause = personGuard + " AND (" + ctiClause + ")"
+		centralizedClause = personGuard + " AND (" + centralizedClause + ")"
+	}
 
 	return ctiArgs, centralizedArgs, ctiClause, centralizedClause
 }
@@ -631,6 +705,16 @@ func scanLegacyPhonebookContact(scanner interface{ Scan(dest ...any) error }) (L
 		url            sql.NullString
 		extension      sql.NullString
 		speedDialNum   sql.NullString
+		firstName      sql.NullString
+		lastName       sql.NullString
+		job            sql.NullString
+		facebook       sql.NullString
+		instagram      sql.NullString
+		linkedIn       sql.NullString
+		workPhone2     sql.NullString
+		cellPhone2     sql.NullString
+		otherPhone     sql.NullString
+		otherEmail     sql.NullString
 		source         sql.NullString
 	)
 
@@ -663,6 +747,16 @@ func scanLegacyPhonebookContact(scanner interface{ Scan(dest ...any) error }) (L
 		&url,
 		&extension,
 		&speedDialNum,
+		&firstName,
+		&lastName,
+		&job,
+		&facebook,
+		&instagram,
+		&linkedIn,
+		&workPhone2,
+		&cellPhone2,
+		&otherPhone,
+		&otherEmail,
 		&source,
 	)
 	if err != nil {
@@ -696,6 +790,16 @@ func scanLegacyPhonebookContact(scanner interface{ Scan(dest ...any) error }) (L
 	contact.URL = nullStringValue(url)
 	contact.Extension = nullStringValue(extension)
 	contact.SpeedDialNum = nullStringValue(speedDialNum)
+	contact.FirstName = nullStringValue(firstName)
+	contact.LastName = nullStringValue(lastName)
+	contact.Job = nullStringValue(job)
+	contact.Facebook = nullStringValue(facebook)
+	contact.Instagram = nullStringValue(instagram)
+	contact.LinkedIn = nullStringValue(linkedIn)
+	contact.WorkPhone2 = nullStringValue(workPhone2)
+	contact.CellPhone2 = nullStringValue(cellPhone2)
+	contact.OtherPhone = nullStringValue(otherPhone)
+	contact.OtherEmail = nullStringValue(otherEmail)
 	contact.Source = nullStringValue(source)
 
 	return contact, nil
@@ -731,6 +835,16 @@ func scanLegacyPhonebookContactWithSortKey(scanner interface{ Scan(dest ...any) 
 		url            sql.NullString
 		extension      sql.NullString
 		speedDialNum   sql.NullString
+		firstName      sql.NullString
+		lastName       sql.NullString
+		job            sql.NullString
+		facebook       sql.NullString
+		instagram      sql.NullString
+		linkedIn       sql.NullString
+		workPhone2     sql.NullString
+		cellPhone2     sql.NullString
+		otherPhone     sql.NullString
+		otherEmail     sql.NullString
 		source         sql.NullString
 		sortKey        sql.NullString
 	)
@@ -764,6 +878,16 @@ func scanLegacyPhonebookContactWithSortKey(scanner interface{ Scan(dest ...any) 
 		&url,
 		&extension,
 		&speedDialNum,
+		&firstName,
+		&lastName,
+		&job,
+		&facebook,
+		&instagram,
+		&linkedIn,
+		&workPhone2,
+		&cellPhone2,
+		&otherPhone,
+		&otherEmail,
 		&source,
 		&sortKey,
 	)
@@ -798,6 +922,16 @@ func scanLegacyPhonebookContactWithSortKey(scanner interface{ Scan(dest ...any) 
 	contact.URL = nullStringValue(url)
 	contact.Extension = nullStringValue(extension)
 	contact.SpeedDialNum = nullStringValue(speedDialNum)
+	contact.FirstName = nullStringValue(firstName)
+	contact.LastName = nullStringValue(lastName)
+	contact.Job = nullStringValue(job)
+	contact.Facebook = nullStringValue(facebook)
+	contact.Instagram = nullStringValue(instagram)
+	contact.LinkedIn = nullStringValue(linkedIn)
+	contact.WorkPhone2 = nullStringValue(workPhone2)
+	contact.CellPhone2 = nullStringValue(cellPhone2)
+	contact.OtherPhone = nullStringValue(otherPhone)
+	contact.OtherEmail = nullStringValue(otherEmail)
 	contact.Source = nullStringValue(source)
 
 	return contact, nil

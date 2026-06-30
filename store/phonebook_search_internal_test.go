@@ -41,6 +41,12 @@ func TestBuildLegacySearchClauses_EscapesLikeWildcards(t *testing.T) {
 	assert.Contains(t, ctiClause, `LIKE ? ESCAPE '\\'`)
 	assert.Contains(t, centralizedClause, `LIKE ? ESCAPE '\\'`)
 	assert.Equal(t, []any{
+		// base name + company, then workphone, workphone2, homephone,
+		// cellphone, cellphone2, otherphone, extension, notes (issue #7124
+		// added the secondary phone columns and otherphone).
+		`%Sales\%\_\\West%`,
+		`%Sales\%\_\\West%`,
+		`%Sales\%\_\\West%`,
 		`%Sales\%\_\\West%`,
 		`%Sales\%\_\\West%`,
 		`%Sales\%\_\\West%`,

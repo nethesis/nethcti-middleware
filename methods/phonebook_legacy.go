@@ -70,6 +70,16 @@ var legacyPhonebookWritableFields = []string{
 	"url",
 	"extension",
 	"speeddial_num",
+	"firstname",
+	"lastname",
+	"job",
+	"facebook",
+	"instagram",
+	"linkedin",
+	"workphone2",
+	"cellphone2",
+	"otherphone",
+	"otheremail",
 }
 
 // SearchLegacyPhonebook serves the legacy union search route from middleware.
@@ -686,6 +696,7 @@ func buildLegacyPhonebookQuery(c *gin.Context, username string, userGroups []str
 		UserGroups:             userGroups,
 		View:                   strings.TrimSpace(c.Query("view")),
 		Visibility:             firstNonEmpty(strings.TrimSpace(c.Query("visibility")), strings.TrimSpace(c.Query("sharing"))),
+		Sort:                   strings.TrimSpace(c.Query("sort")),
 		IncludePrivateContacts: canReadPrivateContacts(username),
 	}
 
@@ -825,6 +836,26 @@ func assignPhonebookEntryField(entry *store.PhonebookEntry, fieldName, value str
 		entry.Extension = value
 	case "speeddial_num":
 		entry.SpeedDialNum = value
+	case "firstname":
+		entry.FirstName = value
+	case "lastname":
+		entry.LastName = value
+	case "job":
+		entry.Job = value
+	case "facebook":
+		entry.Facebook = value
+	case "instagram":
+		entry.Instagram = value
+	case "linkedin":
+		entry.LinkedIn = value
+	case "workphone2":
+		entry.WorkPhone2 = value
+	case "cellphone2":
+		entry.CellPhone2 = value
+	case "otherphone":
+		entry.OtherPhone = value
+	case "otheremail":
+		entry.OtherEmail = value
 	}
 }
 
@@ -866,6 +897,16 @@ func legacyPhonebookEntryResponseWithSource(entry *store.PhonebookEntry, source 
 		"url":            entry.URL,
 		"extension":      entry.Extension,
 		"speeddial_num":  entry.SpeedDialNum,
+		"firstname":      entry.FirstName,
+		"lastname":       entry.LastName,
+		"job":            entry.Job,
+		"facebook":       entry.Facebook,
+		"instagram":      entry.Instagram,
+		"linkedin":       entry.LinkedIn,
+		"workphone2":     entry.WorkPhone2,
+		"cellphone2":     entry.CellPhone2,
+		"otherphone":     entry.OtherPhone,
+		"otheremail":     entry.OtherEmail,
 		"source":         source,
 	}
 }
