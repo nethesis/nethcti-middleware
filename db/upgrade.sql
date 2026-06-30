@@ -15,10 +15,12 @@ ALTER TABLE cti_phonebook
 	ADD COLUMN IF NOT EXISTS linkedin varchar(255) DEFAULT NULL,
 	ADD COLUMN IF NOT EXISTS workphone2 varchar(25) DEFAULT NULL,
 	ADD COLUMN IF NOT EXISTS cellphone2 varchar(25) DEFAULT NULL,
-	ADD COLUMN IF NOT EXISTS otherphone varchar(25) DEFAULT NULL;
+	ADD COLUMN IF NOT EXISTS otherphone varchar(25) DEFAULT NULL,
+	ADD COLUMN IF NOT EXISTS otheremail varchar(255) DEFAULT NULL;
 
 ALTER TABLE cti_phonebook
 	ADD INDEX IF NOT EXISTS lastname_idx (lastname),
 	ADD INDEX IF NOT EXISTS wphone2_idx (workphone2),
 	ADD INDEX IF NOT EXISTS cphone2_idx (cellphone2),
-	ADD INDEX IF NOT EXISTS ophone_idx (otherphone);
+	ADD INDEX IF NOT EXISTS ophone_idx (otherphone),
+	ADD INDEX IF NOT EXISTS oemail_idx (otheremail);
