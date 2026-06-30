@@ -142,6 +142,13 @@ func SearchLegacyPhonebook(ctx context.Context, query LegacyPhonebookQuery) (*Le
 }
 
 // ListLegacyPhonebook returns the legacy alphabetical list across CTI and centralized phonebooks.
+//
+// The UNION is split into two sets of branches controlled by query.View:
+//   - "person" (or empty/all): branches that return contacts with a non-empty name field
+//   - "company" (or empty/all): branches that return contacts with an empty name but non-empty company
+//
+// When view is "all" or blank both sets are included; when view is "person" only the
+// name branches are used
 func ListLegacyPhonebook(ctx context.Context, query LegacyPhonebookQuery) (*LegacyPhonebookResult, error) {
 	database := db.GetDB()
 	if database == nil {
@@ -151,55 +158,99 @@ func ListLegacyPhonebook(ctx context.Context, query LegacyPhonebookQuery) (*Lega
 	visibleCTIWhere, visibleCTIArgs := buildVisibleCTIWhere(query.Username, query.UserGroups, query.IncludePrivateContacts)
 	ctiVisibilityWhere, ctiVisibilityArgs, centralizedVisibilityWhere, centralizedVisibilityArgs := buildLegacyVisibilityClauses(query.Visibility)
 
-	args := append([]any{}, visibleCTIArgs...)
-	args = append(args, ctiVisibilityArgs...)
-	args = append(args, centralizedVisibilityArgs...)
-	args = append(args, visibleCTIArgs...)
-	args = append(args, ctiVisibilityArgs...)
-	args = append(args, centralizedVisibilityArgs...)
-	countArgs := append([]any{}, visibleCTIArgs...)
-	countArgs = append(countArgs, ctiVisibilityArgs...)
-	countArgs = append(countArgs, centralizedVisibilityArgs...)
-	countArgs = append(countArgs, visibleCTIArgs...)
-	countArgs = append(countArgs, ctiVisibilityArgs...)
-	countArgs = append(countArgs, centralizedVisibilityArgs...)
+	view := strings.ToLower(strings.TrimSpace(query.View))
+	includePersonBranches := view != "company"
+	includeCompanyBranches := view != "person"
+
+	// Build the SELECT branches and their args conditionally.
+	var selectBranches []string
+	var args []any
+
+	if includePersonBranches {
+		selectBranches = append(selectBranches,
+			strings.Join([]string{
+				"SELECT", legacyPhonebookSelectColumns, ", extension, speeddial_num, " + ctiPhonebookExtraColumns + ", 'cti' AS source, name AS sort_name",
+				"FROM cti_phonebook",
+				"WHERE (name IS NOT NULL AND name != '') AND", visibleCTIWhere, "AND type != 'speeddial' AND", ctiVisibilityWhere,
+			}, " "),
+			strings.Join([]string{
+				"SELECT", legacyPhonebookSelectColumns, ", '' AS extension, '' AS speeddial_num, " + centralizedPhonebookExtraColumns + ", 'centralized' AS source, name AS sort_name",
+				"FROM", centralizedPhonebookTable,
+				"WHERE (name IS NOT NULL AND name != '') AND type != 'nethcti' AND", centralizedVisibilityWhere,
+			}, " "),
+		)
+		args = append(args, visibleCTIArgs...)
+		args = append(args, ctiVisibilityArgs...)
+		args = append(args, centralizedVisibilityArgs...)
+	}
+
+	if includeCompanyBranches {
+		selectBranches = append(selectBranches,
+			strings.Join([]string{
+				"SELECT", legacyPhonebookSelectColumns, ", extension, speeddial_num, " + ctiPhonebookExtraColumns + ", 'cti' AS source, company AS sort_name",
+				"FROM cti_phonebook",
+				"WHERE (name IS NULL OR name = '') AND (company IS NOT NULL AND company != '') AND", visibleCTIWhere, "AND type != 'speeddial' AND", ctiVisibilityWhere,
+			}, " "),
+			strings.Join([]string{
+				"SELECT", legacyPhonebookSelectColumns, ", '' AS extension, '' AS speeddial_num, " + centralizedPhonebookExtraColumns + ", 'centralized' AS source, company AS sort_name",
+				"FROM", centralizedPhonebookTable,
+				"WHERE (name IS NULL OR name = '') AND (company IS NOT NULL AND company != '') AND type != 'nethcti' AND", centralizedVisibilityWhere,
+			}, " "),
+		)
+		args = append(args, visibleCTIArgs...)
+		args = append(args, ctiVisibilityArgs...)
+		args = append(args, centralizedVisibilityArgs...)
+	}
 
 	listQuery := strings.Join([]string{
 		"SELECT id, owner_id, type, homeemail, workemail, homephone, workphone, cellphone, fax, title, company, notes, name, homestreet, homepob, homecity, homeprovince, homepostalcode, homecountry, workstreet, workpob, workcity, workprovince, workpostalcode, workcountry, url, extension, speeddial_num, firstname, lastname, job, facebook, instagram, linkedin, workphone2, cellphone2, otherphone, otheremail, source, sort_name",
 		"FROM (",
-		"SELECT", legacyPhonebookSelectColumns, ", extension, speeddial_num, " + ctiPhonebookExtraColumns + ", 'cti' AS source, name AS sort_name",
-		"FROM cti_phonebook",
-		"WHERE (name IS NOT NULL AND name != '') AND", visibleCTIWhere, "AND type != 'speeddial' AND", ctiVisibilityWhere,
-		"UNION",
-		"SELECT", legacyPhonebookSelectColumns, ", '' AS extension, '' AS speeddial_num, " + centralizedPhonebookExtraColumns + ", 'centralized' AS source, name AS sort_name",
-		"FROM", centralizedPhonebookTable,
-		"WHERE (name IS NOT NULL AND name != '') AND type != 'nethcti' AND", centralizedVisibilityWhere,
-		"UNION",
-		"SELECT", legacyPhonebookSelectColumns, ", extension, speeddial_num, " + ctiPhonebookExtraColumns + ", 'cti' AS source, company AS sort_name",
-		"FROM cti_phonebook",
-		"WHERE (name IS NULL OR name = '') AND (company IS NOT NULL AND company != '') AND", visibleCTIWhere, "AND type != 'speeddial' AND", ctiVisibilityWhere,
-		"UNION",
-		"SELECT", legacyPhonebookSelectColumns, ", '' AS extension, '' AS speeddial_num, " + centralizedPhonebookExtraColumns + ", 'centralized' AS source, company AS sort_name",
-		"FROM", centralizedPhonebookTable,
-		"WHERE (name IS NULL OR name = '') AND (company IS NOT NULL AND company != '') AND type != 'nethcti' AND", centralizedVisibilityWhere,
+		strings.Join(selectBranches, " UNION "),
 		") phonebook_union",
 		legacyListOrderByClause(query.Sort),
 	}, " ")
+
 	if query.ApplyPagination {
 		listQuery += " LIMIT ? OFFSET ?"
 		args = append(args, query.Limit, query.Offset)
 	}
 
+	// Build the COUNT branches (UNION ALL — no dedup needed for counting).
+	var countBranches []string
+	var countArgs []any
+
+	if includePersonBranches {
+		countBranches = append(countBranches,
+			strings.Join([]string{
+				"SELECT id FROM cti_phonebook WHERE (name IS NOT NULL AND name != '') AND", visibleCTIWhere, "AND type != 'speeddial' AND", ctiVisibilityWhere,
+			}, " "),
+			strings.Join([]string{
+				"SELECT id FROM", centralizedPhonebookTable, "WHERE (name IS NOT NULL AND name != '') AND type != 'nethcti' AND", centralizedVisibilityWhere,
+			}, " "),
+		)
+		countArgs = append(countArgs, visibleCTIArgs...)
+		countArgs = append(countArgs, ctiVisibilityArgs...)
+		countArgs = append(countArgs, centralizedVisibilityArgs...)
+	}
+
+	if includeCompanyBranches {
+		countBranches = append(countBranches,
+			strings.Join([]string{
+				"SELECT id FROM cti_phonebook WHERE (name IS NULL OR name = '') AND (company IS NOT NULL AND company != '') AND", visibleCTIWhere, "AND type != 'speeddial' AND", ctiVisibilityWhere,
+			}, " "),
+			strings.Join([]string{
+				"SELECT id FROM", centralizedPhonebookTable, "WHERE (name IS NULL OR name = '') AND (company IS NOT NULL AND company != '') AND type != 'nethcti' AND", centralizedVisibilityWhere,
+			}, " "),
+		)
+		countArgs = append(countArgs, visibleCTIArgs...)
+		countArgs = append(countArgs, ctiVisibilityArgs...)
+		countArgs = append(countArgs, centralizedVisibilityArgs...)
+	}
+
 	countQuery := strings.Join([]string{
 		"SELECT COUNT(*)",
 		"FROM (",
-		"SELECT id FROM cti_phonebook WHERE (name IS NOT NULL AND name != '') AND", visibleCTIWhere, "AND type != 'speeddial' AND", ctiVisibilityWhere,
-		"UNION ALL",
-		"SELECT id FROM", centralizedPhonebookTable, "WHERE (name IS NOT NULL AND name != '') AND type != 'nethcti' AND", centralizedVisibilityWhere,
-		"UNION ALL",
-		"SELECT id FROM cti_phonebook WHERE (name IS NULL OR name = '') AND (company IS NOT NULL AND company != '') AND", visibleCTIWhere, "AND type != 'speeddial' AND", ctiVisibilityWhere,
-		"UNION ALL",
-		"SELECT id FROM", centralizedPhonebookTable, "WHERE (name IS NULL OR name = '') AND (company IS NOT NULL AND company != '') AND type != 'nethcti' AND", centralizedVisibilityWhere,
+		strings.Join(countBranches, " UNION ALL "),
 		") phonebook_union",
 	}, " ")
 
@@ -551,6 +602,8 @@ func legacyFlatOrderByClause(sort string) string {
 // union, which exposes a computed sort_name (name, falling back to company).
 func legacyListOrderByClause(sort string) string {
 	switch strings.ToLower(strings.TrimSpace(sort)) {
+	case "name":
+		return "ORDER BY sort_name ASC"
 	case "surname":
 		return "ORDER BY COALESCE(NULLIF(lastname, ''), sort_name) ASC"
 	case "company":
