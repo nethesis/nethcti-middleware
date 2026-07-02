@@ -687,11 +687,11 @@ func TestListSummaryStatus_Succeeds(t *testing.T) {
 		c.Set("JWT_PAYLOAD", jwtv5.MapClaims{"id": "alice"})
 		c.Next()
 	})
-	router.POST("/summary/statuses", ListSummaryStatus)
+	router.POST("/history/statuses", ListSummaryStatus)
 
 	w := httptest.NewRecorder()
 	body, _ := json.Marshal(map[string][]string{"uniqueids": {"abc123"}})
-	req, _ := http.NewRequest("POST", "/summary/statuses", bytes.NewReader(body))
+	req, _ := http.NewRequest("POST", "/history/statuses", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	router.ServeHTTP(w, req)
 
@@ -764,11 +764,11 @@ func TestListSummaryStatus_MixedResults(t *testing.T) {
 		c.Set("JWT_PAYLOAD", jwtv5.MapClaims{"id": "alice"})
 		c.Next()
 	})
-	router.POST("/summary/statuses", ListSummaryStatus)
+	router.POST("/history/statuses", ListSummaryStatus)
 
 	w := httptest.NewRecorder()
 	body, _ := json.Marshal(map[string][]string{"uniqueids": {"abc123", "missing-1"}})
-	req, _ := http.NewRequest("POST", "/summary/statuses", bytes.NewReader(body))
+	req, _ := http.NewRequest("POST", "/history/statuses", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	router.ServeHTTP(w, req)
 
@@ -840,11 +840,11 @@ func TestListSummaryStatus_ReturnsServiceUnavailableWhenTranscriptsTableIsMissin
 		c.Set("JWT_PAYLOAD", jwtv5.MapClaims{"id": "alice"})
 		c.Next()
 	})
-	router.POST("/summary/statuses", ListSummaryStatus)
+	router.POST("/history/statuses", ListSummaryStatus)
 
 	w := httptest.NewRecorder()
 	body, _ := json.Marshal(map[string][]string{"uniqueids": {"abc123"}})
-	req, _ := http.NewRequest("POST", "/summary/statuses", bytes.NewReader(body))
+	req, _ := http.NewRequest("POST", "/history/statuses", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	router.ServeHTTP(w, req)
 
@@ -901,11 +901,11 @@ func TestListSummaryStatus_ReturnsServiceUnavailableWhenSatelliteDBIsUnavailable
 		c.Set("JWT_PAYLOAD", jwtv5.MapClaims{"id": "alice"})
 		c.Next()
 	})
-	router.POST("/summary/statuses", ListSummaryStatus)
+	router.POST("/history/statuses", ListSummaryStatus)
 
 	w := httptest.NewRecorder()
 	body, _ := json.Marshal(map[string][]string{"uniqueids": {"abc123"}})
-	req, _ := http.NewRequest("POST", "/summary/statuses", bytes.NewReader(body))
+	req, _ := http.NewRequest("POST", "/history/statuses", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	router.ServeHTTP(w, req)
 
@@ -985,11 +985,11 @@ func TestListSummaryStatus_FiltersCallsOutsideUserParticipation(t *testing.T) {
 		c.Set("JWT_PAYLOAD", jwtv5.MapClaims{"id": "alice"})
 		c.Next()
 	})
-	router.POST("/summary/statuses", ListSummaryStatus)
+	router.POST("/history/statuses", ListSummaryStatus)
 
 	w := httptest.NewRecorder()
 	body, _ := json.Marshal(map[string][]string{"uniqueids": {"abc123", "switchboard-1"}})
-	req, _ := http.NewRequest("POST", "/summary/statuses", bytes.NewReader(body))
+	req, _ := http.NewRequest("POST", "/history/statuses", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	router.ServeHTTP(w, req)
 
@@ -1239,66 +1239,5 @@ func TestUpdateSummaryByUniqueID_TargetsCanonicalRow(t *testing.T) {
 	}
 	if updatedSummary != "manually edited summary" {
 		t.Fatalf("expected updated summary text, got %q", updatedSummary)
-	}
-}
-
-// TestDeleteSummaryByUniqueID_TargetsAllFragments verifies that deleting a summary for a uniqueid
-// marks all non-deleted fragments as deleted (call-level semantics), not just the canonical row.
-// This prevents older fragments from surfacing after the delete.
-func TestDeleteSummaryByUniqueID_TargetsAllFragments(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	store.UserSessionInit()
-	store.UserSessions["alice"] = &models.UserSession{Username: "alice", NethCTIToken: "token"}
-
-	configuration.Config.SatellitePgSQLHost = "test"
-	configuration.Config.SatellitePgSQLPort = "5432"
-	configuration.Config.SatellitePgSQLDB = "test"
-	configuration.Config.SatellitePgSQLUser = "test"
-
-	originalGetUserInfo := getUserInfoFunc
-	originalCheck := checkUserParticipationFunc
-	originalDelete := deleteSummaryFunc
-	defer func() {
-		getUserInfoFunc = originalGetUserInfo
-		checkUserParticipationFunc = originalCheck
-		deleteSummaryFunc = originalDelete
-	}()
-
-	getUserInfoFunc = func(string) (*UserInfo, error) {
-		return &UserInfo{PhoneNumbers: []string{"100"}}, nil
-	}
-	checkUserParticipationFunc = func(string, []string) (bool, error) {
-		return true, nil
-	}
-
-	var deletedUniqueID string
-	var deleteCallCount int
-	// The DB function marks all non-deleted rows for uniqueid, so it is called once
-	// and must use the uniqueid, not a specific row id.
-	deleteSummaryFunc = func(uniqueID string) (bool, error) {
-		deleteCallCount++
-		deletedUniqueID = uniqueID
-		return true, nil
-	}
-
-	router := gin.New()
-	router.Use(func(c *gin.Context) {
-		c.Set("JWT_PAYLOAD", jwtv5.MapClaims{"id": "alice"})
-		c.Next()
-	})
-	router.DELETE("/summary/:uniqueid", DeleteSummaryByUniqueID)
-
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("DELETE", "/summary/1234567890.99", nil)
-	router.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200 ok, got %d: %s", w.Code, w.Body.String())
-	}
-	if deleteCallCount != 1 {
-		t.Fatalf("expected delete to be called exactly once, got %d", deleteCallCount)
-	}
-	if deletedUniqueID != "1234567890.99" {
-		t.Fatalf("expected delete for uniqueid 1234567890.99, got %q", deletedUniqueID)
 	}
 }

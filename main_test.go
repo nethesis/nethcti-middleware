@@ -221,6 +221,28 @@ func TestLogout(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 }
 
+func TestCreateRouter_IncludesLegacyPhonebookTrailingSlashRoutes(t *testing.T) {
+	router := createRouter()
+	routes := router.Routes()
+	expectedRoutes := map[string]bool{
+		"GET /phonebook/search/":      false,
+		"GET /phonebook/search/:term/": false,
+		"GET /phonebook/getall/":      false,
+		"GET /phonebook/getall/:term/": false,
+	}
+
+	for _, route := range routes {
+		key := route.Method + " " + route.Path
+		if _, ok := expectedRoutes[key]; ok {
+			expectedRoutes[key] = true
+		}
+	}
+
+	for routeKey, found := range expectedRoutes {
+		assert.True(t, found, "expected route %s to be registered", routeKey)
+	}
+}
+
 // Test 2FA QR code generation
 func TestQRCode(t *testing.T) {
 	resetTestState()
@@ -710,7 +732,7 @@ John Doe,john@example.com,5551234,Manager`
 	assert.Equal(t, float64(1), response["total_rows"].(float64))
 }
 
-// TestAdminPhonebookImportWithValidTypes tests valid type values (private/public)
+// TestAdminPhonebookImportWithValidTypes tests valid type values (private/public/group)
 func TestAdminPhonebookImportWithValidTypes(t *testing.T) {
 	resetTestState()
 
@@ -720,6 +742,7 @@ func TestAdminPhonebookImportWithValidTypes(t *testing.T) {
 	csvData := `name,type,workemail
 John Doe,private,john@example.com
 Jane Smith,public,jane@example.com
+Ops Team,"group:Sales,Support",ops@example.com
 Bob Johnson,,bob@example.com`
 
 	req, _ := createPhonebookImportRequest("testuser", csvData)
@@ -735,8 +758,8 @@ Bob Johnson,,bob@example.com`
 	var response map[string]interface{}
 	json.NewDecoder(resp.Body).Decode(&response)
 
-	// All 3 rows should be parsed (empty type defaults to 'private')
-	assert.Equal(t, float64(3), response["total_rows"].(float64))
+	// All 4 rows should be parsed (empty type defaults to 'private')
+	assert.Equal(t, float64(4), response["total_rows"].(float64))
 }
 
 // TestAdminPhonebookImportWithInvalidType tests rejection of invalid type values
