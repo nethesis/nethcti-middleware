@@ -6,6 +6,7 @@
 package main
 
 import (
+	"fmt"
 	"io"
 	"regexp"
 	"strings"
@@ -102,7 +103,21 @@ func createRouter() *gin.Engine {
 	router := gin.New()
 	router.RedirectTrailingSlash = false
 	router.Use(
-		gin.LoggerWithWriter(gin.DefaultWriter),
+		gin.LoggerWithFormatter(func(params gin.LogFormatterParams) string {
+			proxyFlag := ""
+			if _, proxied := params.Keys["proxied"]; proxied {
+				proxyFlag = " [proxied]"
+			}
+			return fmt.Sprintf("[GIN] %v | %3d | %13v | %15s | %-7s %#v%s\n",
+				params.TimeStamp.Format("2006/01/02 - 15:04:05"),
+				params.StatusCode,
+				params.Latency,
+				params.ClientIP,
+				params.Method,
+				params.Path,
+				proxyFlag,
+			)
+		}),
 		gin.Recovery(),
 	)
 
@@ -143,8 +158,6 @@ func createRouter() *gin.Engine {
 		api.GET("/summary/:uniqueid", middleware.RequireCapabilities("nethvoice_cti.satellite_stt"), methods.GetSummaryByUniqueID)
 		api.HEAD("/summary/:uniqueid", middleware.RequireCapabilities("nethvoice_cti.satellite_stt"), methods.CheckSummaryByUniqueID)
 		api.PUT("/summary/:uniqueid", middleware.RequireCapabilities("nethvoice_cti.satellite_stt"), methods.UpdateSummaryByUniqueID)
-		api.DELETE("/summary/:uniqueid", middleware.RequireCapabilities("nethvoice_cti.satellite_stt"), methods.DeleteSummaryByUniqueID)
-		api.POST("/summary/statuses", middleware.RequireCapabilities("nethvoice_cti.satellite_stt"), methods.ListSummaryStatus)
 		api.POST("/summary/watch", middleware.RequireCapabilities("nethvoice_cti.satellite_stt"), methods.WatchCallSummary)
 
 		// 2FA
@@ -172,13 +185,24 @@ func createRouter() *gin.Engine {
 		api.GET("/authentication/phone_island_token_check/:subtype", methods.PhoneIslandTokenCheck)
 
 		// Phonebook
+		api.GET("/phonebook/search", middleware.RequireCapabilities("phonebook"), methods.SearchLegacyPhonebook)
+		api.GET("/phonebook/search/", middleware.RequireCapabilities("phonebook"), methods.SearchLegacyPhonebook)
+		api.GET("/phonebook/search/:term", middleware.RequireCapabilities("phonebook"), methods.SearchLegacyPhonebook)
+		api.GET("/phonebook/search/:term/", middleware.RequireCapabilities("phonebook"), methods.SearchLegacyPhonebook)
+		api.GET("/phonebook/getall", middleware.RequireCapabilities("phonebook"), methods.ListLegacyPhonebook)
+		api.GET("/phonebook/getall/", middleware.RequireCapabilities("phonebook"), methods.ListLegacyPhonebook)
+		api.GET("/phonebook/getall/:term", middleware.RequireCapabilities("phonebook"), methods.ListLegacyPhonebook)
+		api.GET("/phonebook/getall/:term/", middleware.RequireCapabilities("phonebook"), methods.ListLegacyPhonebook)
+		api.GET("/phonebook/contact/:id", middleware.RequireCapabilities("phonebook"), methods.GetCentralizedPhonebookContact)
+		api.GET("/phonebook/cticontact/:id", middleware.RequireCapabilities("phonebook"), methods.GetLegacyCTIPhonebookContact)
+		api.POST("/phonebook/create", middleware.RequireCapabilities("phonebook"), methods.CreateLegacyCTIPhonebookContact)
+		api.POST("/phonebook/delete_cticontact", middleware.RequireCapabilities("phonebook"), methods.DeleteLegacyCTIPhonebookContact)
+		api.POST("/phonebook/modify_cticontact", middleware.RequireCapabilities("phonebook"), methods.UpdateLegacyCTIPhonebookContact)
 		api.POST("/phonebook/import", middleware.RequireCapabilities("phonebook.ad_phonebook"), methods.ImportPhonebookCSV)
-
-		// Extension
-		api.GET("/extensions/:mainextension/:type", methods.GetExtensionByMainExtensionAndType)
 
 		// History
 		api.GET("/history/calls", methods.GetFilteredHistory)
+		api.POST("/history/statuses", middleware.RequireCapabilities("nethvoice_cti.satellite_stt"), methods.ListSummaryStatus)
 
 		// Voicemail
 		api.GET("/voicemail/list/:id", methods.ListVoicemailByID)

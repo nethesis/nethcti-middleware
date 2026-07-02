@@ -36,10 +36,14 @@ func TestWatchCallSummary_StartsUserScopedWatch(t *testing.T) {
 
 	originalGetUserInfo := getUserInfoFunc
 	originalCheck := checkUserParticipationFunc
+	originalCheckByLinkedID := checkUserParticipationByLinkedIDFunc
+	originalResolve := resolveLinkedIDToUniqueIDFunc
 	originalStartWatch := startSummaryWatchFunc
 	defer func() {
 		getUserInfoFunc = originalGetUserInfo
 		checkUserParticipationFunc = originalCheck
+		checkUserParticipationByLinkedIDFunc = originalCheckByLinkedID
+		resolveLinkedIDToUniqueIDFunc = originalResolve
 		startSummaryWatchFunc = originalStartWatch
 	}()
 
@@ -49,10 +53,17 @@ func TestWatchCallSummary_StartsUserScopedWatch(t *testing.T) {
 	checkUserParticipationFunc = func(string, []string) (bool, error) {
 		return true, nil
 	}
+	checkUserParticipationByLinkedIDFunc = func(string, []string) (bool, error) {
+		return true, nil
+	}
+	resolveLinkedIDToUniqueIDFunc = func(string, []string) (string, error) {
+		return "abc123", nil
+	}
 
-	var gotUniqueID, gotUsername string
-	startSummaryWatchFunc = func(uniqueID, username string) summary.WatchStartResult {
+	var gotUniqueID, gotLinkedID, gotUsername string
+	startSummaryWatchFunc = func(uniqueID, linkedID, username string) summary.WatchStartResult {
 		gotUniqueID = uniqueID
+		gotLinkedID = linkedID
 		gotUsername = username
 		return summary.WatchStarted
 	}
@@ -65,7 +76,7 @@ func TestWatchCallSummary_StartsUserScopedWatch(t *testing.T) {
 	router.POST("/summary/watch", WatchCallSummary)
 
 	w := httptest.NewRecorder()
-	body, _ := json.Marshal(map[string]string{"uniqueid": "abc123"})
+	body, _ := json.Marshal(map[string]string{"uniqueid": "abc123", "linkedid": "linked123"})
 	req, _ := http.NewRequest("POST", "/summary/watch", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	router.ServeHTTP(w, req)
@@ -82,6 +93,9 @@ func TestWatchCallSummary_StartsUserScopedWatch(t *testing.T) {
 	}
 	if gotUniqueID != "abc123" {
 		t.Fatalf("unexpected watched uniqueid: %s", gotUniqueID)
+	}
+	if gotLinkedID != "linked123" {
+		t.Fatalf("unexpected watched linkedid: %s", gotLinkedID)
 	}
 	if gotUsername != "alice" {
 		t.Fatalf("unexpected watched username: %s", gotUsername)
@@ -100,10 +114,12 @@ func TestWatchCallSummary_RejectsUserOutsideCall(t *testing.T) {
 
 	originalGetUserInfo := getUserInfoFunc
 	originalCheck := checkUserParticipationFunc
+	originalCheckByLinkedID := checkUserParticipationByLinkedIDFunc
 	originalStartWatch := startSummaryWatchFunc
 	defer func() {
 		getUserInfoFunc = originalGetUserInfo
 		checkUserParticipationFunc = originalCheck
+		checkUserParticipationByLinkedIDFunc = originalCheckByLinkedID
 		startSummaryWatchFunc = originalStartWatch
 	}()
 
@@ -113,9 +129,12 @@ func TestWatchCallSummary_RejectsUserOutsideCall(t *testing.T) {
 	checkUserParticipationFunc = func(string, []string) (bool, error) {
 		return false, nil
 	}
+	checkUserParticipationByLinkedIDFunc = func(string, []string) (bool, error) {
+		return false, nil
+	}
 
 	called := false
-	startSummaryWatchFunc = func(uniqueID, username string) summary.WatchStartResult {
+	startSummaryWatchFunc = func(uniqueID, linkedID, username string) summary.WatchStartResult {
 		called = true
 		return summary.WatchStarted
 	}
@@ -153,10 +172,12 @@ func TestWatchCallSummary_ReturnsAlreadyActiveWhenWatcherExists(t *testing.T) {
 
 	originalGetUserInfo := getUserInfoFunc
 	originalCheck := checkUserParticipationFunc
+	originalCheckByLinkedID := checkUserParticipationByLinkedIDFunc
 	originalStartWatch := startSummaryWatchFunc
 	defer func() {
 		getUserInfoFunc = originalGetUserInfo
 		checkUserParticipationFunc = originalCheck
+		checkUserParticipationByLinkedIDFunc = originalCheckByLinkedID
 		startSummaryWatchFunc = originalStartWatch
 	}()
 
@@ -166,7 +187,10 @@ func TestWatchCallSummary_ReturnsAlreadyActiveWhenWatcherExists(t *testing.T) {
 	checkUserParticipationFunc = func(string, []string) (bool, error) {
 		return true, nil
 	}
-	startSummaryWatchFunc = func(uniqueID, username string) summary.WatchStartResult {
+	checkUserParticipationByLinkedIDFunc = func(string, []string) (bool, error) {
+		return true, nil
+	}
+	startSummaryWatchFunc = func(uniqueID, linkedID, username string) summary.WatchStartResult {
 		return summary.WatchAlreadyActive
 	}
 
@@ -208,10 +232,12 @@ func TestWatchCallSummary_ReturnsUnavailableWhenWatcherIsMisconfigured(t *testin
 
 	originalGetUserInfo := getUserInfoFunc
 	originalCheck := checkUserParticipationFunc
+	originalCheckByLinkedID := checkUserParticipationByLinkedIDFunc
 	originalStartWatch := startSummaryWatchFunc
 	defer func() {
 		getUserInfoFunc = originalGetUserInfo
 		checkUserParticipationFunc = originalCheck
+		checkUserParticipationByLinkedIDFunc = originalCheckByLinkedID
 		startSummaryWatchFunc = originalStartWatch
 	}()
 
@@ -221,7 +247,10 @@ func TestWatchCallSummary_ReturnsUnavailableWhenWatcherIsMisconfigured(t *testin
 	checkUserParticipationFunc = func(string, []string) (bool, error) {
 		return true, nil
 	}
-	startSummaryWatchFunc = func(uniqueID, username string) summary.WatchStartResult {
+	checkUserParticipationByLinkedIDFunc = func(string, []string) (bool, error) {
+		return true, nil
+	}
+	startSummaryWatchFunc = func(uniqueID, linkedID, username string) summary.WatchStartResult {
 		return summary.WatchMisconfigured
 	}
 
@@ -263,10 +292,12 @@ func TestCheckSummaryByUniqueID_NotFound(t *testing.T) {
 
 	originalGetUserInfo := getUserInfoFunc
 	originalCheck := checkUserParticipationFunc
+	originalCheckByLinkedID := checkUserParticipationByLinkedIDFunc
 	originalFetch := fetchSummaryStateFunc
 	defer func() {
 		getUserInfoFunc = originalGetUserInfo
 		checkUserParticipationFunc = originalCheck
+		checkUserParticipationByLinkedIDFunc = originalCheckByLinkedID
 		fetchSummaryStateFunc = originalFetch
 	}()
 
@@ -274,6 +305,9 @@ func TestCheckSummaryByUniqueID_NotFound(t *testing.T) {
 		return &UserInfo{PhoneNumbers: []string{"100"}}, nil
 	}
 	checkUserParticipationFunc = func(string, []string) (bool, error) {
+		return true, nil
+	}
+	checkUserParticipationByLinkedIDFunc = func(string, []string) (bool, error) {
 		return true, nil
 	}
 	fetchSummaryStateFunc = func(string) (string, bool, bool, bool, error) {
@@ -308,10 +342,12 @@ func TestCheckSummaryByUniqueID_ReturnsNoContentWhenSummaryIsStillProcessing(t *
 
 	originalGetUserInfo := getUserInfoFunc
 	originalCheck := checkUserParticipationFunc
+	originalCheckByLinkedID := checkUserParticipationByLinkedIDFunc
 	originalFetch := fetchSummaryStateFunc
 	defer func() {
 		getUserInfoFunc = originalGetUserInfo
 		checkUserParticipationFunc = originalCheck
+		checkUserParticipationByLinkedIDFunc = originalCheckByLinkedID
 		fetchSummaryStateFunc = originalFetch
 	}()
 
@@ -319,6 +355,9 @@ func TestCheckSummaryByUniqueID_ReturnsNoContentWhenSummaryIsStillProcessing(t *
 		return &UserInfo{PhoneNumbers: []string{"100"}}, nil
 	}
 	checkUserParticipationFunc = func(string, []string) (bool, error) {
+		return true, nil
+	}
+	checkUserParticipationByLinkedIDFunc = func(string, []string) (bool, error) {
 		return true, nil
 	}
 	fetchSummaryStateFunc = func(string) (string, bool, bool, bool, error) {
@@ -353,10 +392,12 @@ func TestCheckSummaryByUniqueID_ReturnsNoContentWhenSummaryIsSummarizing(t *test
 
 	originalGetUserInfo := getUserInfoFunc
 	originalCheck := checkUserParticipationFunc
+	originalCheckByLinkedID := checkUserParticipationByLinkedIDFunc
 	originalFetch := fetchSummaryStateFunc
 	defer func() {
 		getUserInfoFunc = originalGetUserInfo
 		checkUserParticipationFunc = originalCheck
+		checkUserParticipationByLinkedIDFunc = originalCheckByLinkedID
 		fetchSummaryStateFunc = originalFetch
 	}()
 
@@ -364,6 +405,9 @@ func TestCheckSummaryByUniqueID_ReturnsNoContentWhenSummaryIsSummarizing(t *test
 		return &UserInfo{PhoneNumbers: []string{"100"}}, nil
 	}
 	checkUserParticipationFunc = func(string, []string) (bool, error) {
+		return true, nil
+	}
+	checkUserParticipationByLinkedIDFunc = func(string, []string) (bool, error) {
 		return true, nil
 	}
 	fetchSummaryStateFunc = func(string) (string, bool, bool, bool, error) {
@@ -398,10 +442,12 @@ func TestCheckSummaryByUniqueID_ReturnsOKWhenSummaryExists(t *testing.T) {
 
 	originalGetUserInfo := getUserInfoFunc
 	originalCheck := checkUserParticipationFunc
+	originalCheckByLinkedID := checkUserParticipationByLinkedIDFunc
 	originalFetch := fetchSummaryStateFunc
 	defer func() {
 		getUserInfoFunc = originalGetUserInfo
 		checkUserParticipationFunc = originalCheck
+		checkUserParticipationByLinkedIDFunc = originalCheckByLinkedID
 		fetchSummaryStateFunc = originalFetch
 	}()
 
@@ -409,6 +455,9 @@ func TestCheckSummaryByUniqueID_ReturnsOKWhenSummaryExists(t *testing.T) {
 		return &UserInfo{PhoneNumbers: []string{"100"}}, nil
 	}
 	checkUserParticipationFunc = func(string, []string) (bool, error) {
+		return true, nil
+	}
+	checkUserParticipationByLinkedIDFunc = func(string, []string) (bool, error) {
 		return true, nil
 	}
 	fetchSummaryStateFunc = func(string) (string, bool, bool, bool, error) {
@@ -431,7 +480,7 @@ func TestCheckSummaryByUniqueID_ReturnsOKWhenSummaryExists(t *testing.T) {
 	}
 }
 
-func TestCheckSummaryByUniqueID_ReturnsNotFoundWhenProcessingCompletedWithoutSummary(t *testing.T) {
+func TestCheckSummaryByUniqueID_UsesPathUniqueID(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	store.UserSessionInit()
 	store.UserSessions["alice"] = &models.UserSession{Username: "alice", NethCTIToken: "token"}
@@ -454,6 +503,64 @@ func TestCheckSummaryByUniqueID_ReturnsNotFoundWhenProcessingCompletedWithoutSum
 		return &UserInfo{PhoneNumbers: []string{"100"}}, nil
 	}
 	checkUserParticipationFunc = func(string, []string) (bool, error) {
+		return true, nil
+	}
+	var lookedUpIDs []string
+	fetchSummaryStateFunc = func(uniqueID string) (string, bool, bool, bool, error) {
+		lookedUpIDs = append(lookedUpIDs, uniqueID)
+		if uniqueID == "abc123" {
+			return "done", true, true, true, nil
+		}
+		return "", false, false, false, nil
+	}
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("JWT_PAYLOAD", jwtv5.MapClaims{"id": "alice"})
+		c.Next()
+	})
+	router.HEAD("/summary/:uniqueid", CheckSummaryByUniqueID)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("HEAD", "/summary/abc123", nil)
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 ok when path uniqueid exists, got %d: %s", w.Code, w.Body.String())
+	}
+	if len(lookedUpIDs) == 0 || lookedUpIDs[0] != "abc123" {
+		t.Fatalf("expected lookup to use path uniqueid, got %v", lookedUpIDs)
+	}
+}
+
+func TestCheckSummaryByUniqueID_ReturnsNotFoundWhenProcessingCompletedWithoutSummary(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store.UserSessionInit()
+	store.UserSessions["alice"] = &models.UserSession{Username: "alice", NethCTIToken: "token"}
+
+	configuration.Config.SatellitePgSQLHost = "test"
+	configuration.Config.SatellitePgSQLPort = "5432"
+	configuration.Config.SatellitePgSQLDB = "test"
+	configuration.Config.SatellitePgSQLUser = "test"
+
+	originalGetUserInfo := getUserInfoFunc
+	originalCheck := checkUserParticipationFunc
+	originalCheckByLinkedID := checkUserParticipationByLinkedIDFunc
+	originalFetch := fetchSummaryStateFunc
+	defer func() {
+		getUserInfoFunc = originalGetUserInfo
+		checkUserParticipationFunc = originalCheck
+		checkUserParticipationByLinkedIDFunc = originalCheckByLinkedID
+		fetchSummaryStateFunc = originalFetch
+	}()
+
+	getUserInfoFunc = func(string) (*UserInfo, error) {
+		return &UserInfo{PhoneNumbers: []string{"100"}}, nil
+	}
+	checkUserParticipationFunc = func(string, []string) (bool, error) {
+		return true, nil
+	}
+	checkUserParticipationByLinkedIDFunc = func(string, []string) (bool, error) {
 		return true, nil
 	}
 	fetchSummaryStateFunc = func(string) (string, bool, bool, bool, error) {
@@ -488,10 +595,12 @@ func TestCheckSummaryByUniqueID_ReturnsNotFoundWhenSummaryFailed(t *testing.T) {
 
 	originalGetUserInfo := getUserInfoFunc
 	originalCheck := checkUserParticipationFunc
+	originalCheckByLinkedID := checkUserParticipationByLinkedIDFunc
 	originalFetch := fetchSummaryStateFunc
 	defer func() {
 		getUserInfoFunc = originalGetUserInfo
 		checkUserParticipationFunc = originalCheck
+		checkUserParticipationByLinkedIDFunc = originalCheckByLinkedID
 		fetchSummaryStateFunc = originalFetch
 	}()
 
@@ -499,6 +608,9 @@ func TestCheckSummaryByUniqueID_ReturnsNotFoundWhenSummaryFailed(t *testing.T) {
 		return &UserInfo{PhoneNumbers: []string{"100"}}, nil
 	}
 	checkUserParticipationFunc = func(string, []string) (bool, error) {
+		return true, nil
+	}
+	checkUserParticipationByLinkedIDFunc = func(string, []string) (bool, error) {
 		return true, nil
 	}
 	fetchSummaryStateFunc = func(string) (string, bool, bool, bool, error) {
@@ -533,17 +645,24 @@ func TestListSummaryStatus_Succeeds(t *testing.T) {
 
 	originalGetUserInfo := getUserInfoFunc
 	originalCheck := checkUserParticipationFunc
+	originalCheckByLinkedID := checkUserParticipationByLinkedIDFunc
 	originalFetchList := fetchSummaryListFunc
+	originalResolve := resolveLinkedIDToUniqueIDFunc
 	defer func() {
 		getUserInfoFunc = originalGetUserInfo
 		checkUserParticipationFunc = originalCheck
+		checkUserParticipationByLinkedIDFunc = originalCheckByLinkedID
 		fetchSummaryListFunc = originalFetchList
+		resolveLinkedIDToUniqueIDFunc = originalResolve
 	}()
 
 	getUserInfoFunc = func(string) (*UserInfo, error) {
 		return &UserInfo{PhoneNumbers: []string{"100"}}, nil
 	}
 	checkUserParticipationFunc = func(string, []string) (bool, error) {
+		return true, nil
+	}
+	checkUserParticipationByLinkedIDFunc = func(string, []string) (bool, error) {
 		return true, nil
 	}
 	fetchSummaryListFunc = func([]string) ([]SummaryListItem, error) {
@@ -559,16 +678,20 @@ func TestListSummaryStatus_Succeeds(t *testing.T) {
 		}, nil
 	}
 
+	resolveLinkedIDToUniqueIDFunc = func(string, []string) (string, error) {
+		return "", nil
+	}
+
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
 		c.Set("JWT_PAYLOAD", jwtv5.MapClaims{"id": "alice"})
 		c.Next()
 	})
-	router.POST("/summary/statuses", ListSummaryStatus)
+	router.POST("/history/statuses", ListSummaryStatus)
 
 	w := httptest.NewRecorder()
 	body, _ := json.Marshal(map[string][]string{"uniqueids": {"abc123"}})
-	req, _ := http.NewRequest("POST", "/summary/statuses", bytes.NewReader(body))
+	req, _ := http.NewRequest("POST", "/history/statuses", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	router.ServeHTTP(w, req)
 
@@ -599,17 +722,24 @@ func TestListSummaryStatus_MixedResults(t *testing.T) {
 
 	originalGetUserInfo := getUserInfoFunc
 	originalCheck := checkUserParticipationFunc
+	originalCheckByLinkedID := checkUserParticipationByLinkedIDFunc
 	originalFetchList := fetchSummaryListFunc
+	originalResolve := resolveLinkedIDToUniqueIDFunc
 	defer func() {
 		getUserInfoFunc = originalGetUserInfo
 		checkUserParticipationFunc = originalCheck
+		checkUserParticipationByLinkedIDFunc = originalCheckByLinkedID
 		fetchSummaryListFunc = originalFetchList
+		resolveLinkedIDToUniqueIDFunc = originalResolve
 	}()
 
 	getUserInfoFunc = func(string) (*UserInfo, error) {
 		return &UserInfo{PhoneNumbers: []string{"100"}}, nil
 	}
 	checkUserParticipationFunc = func(string, []string) (bool, error) {
+		return true, nil
+	}
+	checkUserParticipationByLinkedIDFunc = func(string, []string) (bool, error) {
 		return true, nil
 	}
 	fetchSummaryListFunc = func([]string) ([]SummaryListItem, error) {
@@ -625,16 +755,20 @@ func TestListSummaryStatus_MixedResults(t *testing.T) {
 		}, nil
 	}
 
+	resolveLinkedIDToUniqueIDFunc = func(string, []string) (string, error) {
+		return "", nil
+	}
+
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
 		c.Set("JWT_PAYLOAD", jwtv5.MapClaims{"id": "alice"})
 		c.Next()
 	})
-	router.POST("/summary/statuses", ListSummaryStatus)
+	router.POST("/history/statuses", ListSummaryStatus)
 
 	w := httptest.NewRecorder()
 	body, _ := json.Marshal(map[string][]string{"uniqueids": {"abc123", "missing-1"}})
-	req, _ := http.NewRequest("POST", "/summary/statuses", bytes.NewReader(body))
+	req, _ := http.NewRequest("POST", "/history/statuses", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	router.ServeHTTP(w, req)
 
@@ -706,11 +840,11 @@ func TestListSummaryStatus_ReturnsServiceUnavailableWhenTranscriptsTableIsMissin
 		c.Set("JWT_PAYLOAD", jwtv5.MapClaims{"id": "alice"})
 		c.Next()
 	})
-	router.POST("/summary/statuses", ListSummaryStatus)
+	router.POST("/history/statuses", ListSummaryStatus)
 
 	w := httptest.NewRecorder()
 	body, _ := json.Marshal(map[string][]string{"uniqueids": {"abc123"}})
-	req, _ := http.NewRequest("POST", "/summary/statuses", bytes.NewReader(body))
+	req, _ := http.NewRequest("POST", "/history/statuses", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	router.ServeHTTP(w, req)
 
@@ -767,11 +901,11 @@ func TestListSummaryStatus_ReturnsServiceUnavailableWhenSatelliteDBIsUnavailable
 		c.Set("JWT_PAYLOAD", jwtv5.MapClaims{"id": "alice"})
 		c.Next()
 	})
-	router.POST("/summary/statuses", ListSummaryStatus)
+	router.POST("/history/statuses", ListSummaryStatus)
 
 	w := httptest.NewRecorder()
 	body, _ := json.Marshal(map[string][]string{"uniqueids": {"abc123"}})
-	req, _ := http.NewRequest("POST", "/summary/statuses", bytes.NewReader(body))
+	req, _ := http.NewRequest("POST", "/history/statuses", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	router.ServeHTTP(w, req)
 
@@ -806,11 +940,15 @@ func TestListSummaryStatus_FiltersCallsOutsideUserParticipation(t *testing.T) {
 
 	originalGetUserInfo := getUserInfoFunc
 	originalCheck := checkUserParticipationFunc
+	originalCheckByLinkedID := checkUserParticipationByLinkedIDFunc
 	originalFetchList := fetchSummaryListFunc
+	originalResolve := resolveLinkedIDToUniqueIDFunc
 	defer func() {
 		getUserInfoFunc = originalGetUserInfo
 		checkUserParticipationFunc = originalCheck
+		checkUserParticipationByLinkedIDFunc = originalCheckByLinkedID
 		fetchSummaryListFunc = originalFetchList
+		resolveLinkedIDToUniqueIDFunc = originalResolve
 	}()
 
 	getUserInfoFunc = func(string) (*UserInfo, error) {
@@ -818,6 +956,9 @@ func TestListSummaryStatus_FiltersCallsOutsideUserParticipation(t *testing.T) {
 	}
 	checkUserParticipationFunc = func(uniqueID string, phoneNumbers []string) (bool, error) {
 		return uniqueID == "abc123", nil
+	}
+	checkUserParticipationByLinkedIDFunc = func(linkedID string, phoneNumbers []string) (bool, error) {
+		return linkedID == "abc123", nil
 	}
 
 	var fetchedUniqueIDs []string
@@ -835,16 +976,20 @@ func TestListSummaryStatus_FiltersCallsOutsideUserParticipation(t *testing.T) {
 		}, nil
 	}
 
+	resolveLinkedIDToUniqueIDFunc = func(string, []string) (string, error) {
+		return "", nil
+	}
+
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
 		c.Set("JWT_PAYLOAD", jwtv5.MapClaims{"id": "alice"})
 		c.Next()
 	})
-	router.POST("/summary/statuses", ListSummaryStatus)
+	router.POST("/history/statuses", ListSummaryStatus)
 
 	w := httptest.NewRecorder()
 	body, _ := json.Marshal(map[string][]string{"uniqueids": {"abc123", "switchboard-1"}})
-	req, _ := http.NewRequest("POST", "/summary/statuses", bytes.NewReader(body))
+	req, _ := http.NewRequest("POST", "/history/statuses", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	router.ServeHTTP(w, req)
 
@@ -882,5 +1027,217 @@ func TestListSummaryStatus_FiltersCallsOutsideUserParticipation(t *testing.T) {
 	}
 	if _, ok := second["has_summary"]; ok {
 		t.Fatalf("did not expect summary details for unauthorized item")
+	}
+}
+
+// TestGetSummaryByUniqueID_CanonicalRowWithDuplicateUniqueIDs verifies that when satellite stores
+// multiple transcript rows for the same uniqueid, the handler returns the canonical (latest) one.
+func TestGetSummaryByUniqueID_CanonicalRowWithDuplicateUniqueIDs(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store.UserSessionInit()
+	store.UserSessions["alice"] = &models.UserSession{Username: "alice", NethCTIToken: "token"}
+
+	configuration.Config.SatellitePgSQLHost = "test"
+	configuration.Config.SatellitePgSQLPort = "5432"
+	configuration.Config.SatellitePgSQLDB = "test"
+	configuration.Config.SatellitePgSQLUser = "test"
+
+	originalGetUserInfo := getUserInfoFunc
+	originalCheck := checkUserParticipationFunc
+	originalFetch := fetchSummaryDrawerFunc
+	defer func() {
+		getUserInfoFunc = originalGetUserInfo
+		checkUserParticipationFunc = originalCheck
+		fetchSummaryDrawerFunc = originalFetch
+	}()
+
+	getUserInfoFunc = func(string) (*UserInfo, error) {
+		return &UserInfo{PhoneNumbers: []string{"100"}}, nil
+	}
+	checkUserParticipationFunc = func(string, []string) (bool, error) {
+		return true, nil
+	}
+	// Simulate DB returning the canonical row (latest fragment) when duplicates exist.
+	fetchSummaryDrawerFunc = func(uniqueID string, _ []string, _ []string) (*SummaryDrawer, bool, error) {
+		return &SummaryDrawer{
+			UniqueID:  uniqueID,
+			Summary:   "latest fragment summary",
+			State:     "done",
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+		}, true, nil
+	}
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("JWT_PAYLOAD", jwtv5.MapClaims{"id": "alice"})
+		c.Next()
+	})
+	router.GET("/summary/:uniqueid", GetSummaryByUniqueID)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/summary/1234567890.99", nil)
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 ok, got %d: %s", w.Code, w.Body.String())
+	}
+	var response struct {
+		Data SummaryDrawer `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if response.Data.Summary != "latest fragment summary" {
+		t.Fatalf("expected canonical (latest) summary, got %q", response.Data.Summary)
+	}
+}
+
+// TestListSummaryStatus_DeduplicatesByUniqueID verifies that when the satellite DB returns
+// one canonical row per uniqueid (via DISTINCT ON), the list endpoint returns exactly one
+// item per uniqueid even when multiple fragments exist for the same call.
+func TestListSummaryStatus_DeduplicatesByUniqueID(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store.UserSessionInit()
+	store.UserSessions["alice"] = &models.UserSession{Username: "alice", NethCTIToken: "token"}
+
+	configuration.Config.SatellitePgSQLHost = "test"
+	configuration.Config.SatellitePgSQLPort = "5432"
+	configuration.Config.SatellitePgSQLDB = "test"
+	configuration.Config.SatellitePgSQLUser = "test"
+
+	originalGetUserInfo := getUserInfoFunc
+	originalCheck := checkUserParticipationFunc
+	originalCheckByLinkedID := checkUserParticipationByLinkedIDFunc
+	originalResolve := resolveLinkedIDToUniqueIDFunc
+	originalFetchList := fetchSummaryListFunc
+	defer func() {
+		getUserInfoFunc = originalGetUserInfo
+		checkUserParticipationFunc = originalCheck
+		checkUserParticipationByLinkedIDFunc = originalCheckByLinkedID
+		resolveLinkedIDToUniqueIDFunc = originalResolve
+		fetchSummaryListFunc = originalFetchList
+	}()
+
+	getUserInfoFunc = func(string) (*UserInfo, error) {
+		return &UserInfo{PhoneNumbers: []string{"100"}}, nil
+	}
+	checkUserParticipationFunc = func(string, []string) (bool, error) {
+		return true, nil
+	}
+	checkUserParticipationByLinkedIDFunc = func(string, []string) (bool, error) {
+		return true, nil
+	}
+	resolveLinkedIDToUniqueIDFunc = func(string, []string) (string, error) {
+		return "", nil
+	}
+
+	updatedAt := time.Now()
+	// The DB function uses DISTINCT ON (uniqueid), so it returns exactly one row per uniqueid.
+	fetchSummaryListFunc = func(uniqueIDs []string) ([]SummaryListItem, error) {
+		items := make([]SummaryListItem, 0, len(uniqueIDs))
+		for _, uid := range uniqueIDs {
+			items = append(items, SummaryListItem{
+				UniqueID:         uid,
+				State:            "done",
+				HasTranscription: true,
+				HasSummary:       true,
+				UpdatedAt:        &updatedAt,
+			})
+		}
+		return items, nil
+	}
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("JWT_PAYLOAD", jwtv5.MapClaims{"id": "alice"})
+		c.Next()
+	})
+	router.POST("/summary/status", ListSummaryStatus)
+
+	// Request status for two uniqueids (each may have multiple DB rows for transferred calls).
+	body, _ := json.Marshal(map[string][]string{"uniqueids": {"uid-transfer-a", "uid-transfer-b"}})
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("POST", "/summary/status", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 ok, got %d: %s", w.Code, w.Body.String())
+	}
+	var response struct {
+		Data []map[string]interface{} `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	// Must return exactly one item per uniqueid, not one per DB row.
+	if len(response.Data) != 2 {
+		t.Fatalf("expected 2 items (one per uniqueid), got %d: %v", len(response.Data), response.Data)
+	}
+}
+
+// TestUpdateSummaryByUniqueID_TargetsCanonicalRow verifies that manual summary updates are
+// routed to the canonical transcript row (latest non-deleted), not fan-out to all fragments.
+func TestUpdateSummaryByUniqueID_TargetsCanonicalRow(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store.UserSessionInit()
+	store.UserSessions["alice"] = &models.UserSession{Username: "alice", NethCTIToken: "token"}
+
+	configuration.Config.SatellitePgSQLHost = "test"
+	configuration.Config.SatellitePgSQLPort = "5432"
+	configuration.Config.SatellitePgSQLDB = "test"
+	configuration.Config.SatellitePgSQLUser = "test"
+
+	originalGetUserInfo := getUserInfoFunc
+	originalCheck := checkUserParticipationFunc
+	originalUpdate := updateSummaryFunc
+	defer func() {
+		getUserInfoFunc = originalGetUserInfo
+		checkUserParticipationFunc = originalCheck
+		updateSummaryFunc = originalUpdate
+	}()
+
+	getUserInfoFunc = func(string) (*UserInfo, error) {
+		return &UserInfo{PhoneNumbers: []string{"100"}}, nil
+	}
+	checkUserParticipationFunc = func(string, []string) (bool, error) {
+		return true, nil
+	}
+
+	var updatedUniqueID, updatedSummary string
+	var updateCallCount int
+	// The DB function uses a canonical-row CTE, so it updates exactly one row.
+	updateSummaryFunc = func(uniqueID, summaryText string) (bool, error) {
+		updateCallCount++
+		updatedUniqueID = uniqueID
+		updatedSummary = summaryText
+		return true, nil
+	}
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("JWT_PAYLOAD", jwtv5.MapClaims{"id": "alice"})
+		c.Next()
+	})
+	router.PUT("/summary/:uniqueid", UpdateSummaryByUniqueID)
+
+	body, _ := json.Marshal(map[string]string{"summary": "manually edited summary"})
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("PUT", "/summary/1234567890.99", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 ok, got %d: %s", w.Code, w.Body.String())
+	}
+	if updateCallCount != 1 {
+		t.Fatalf("expected update to be called exactly once, got %d", updateCallCount)
+	}
+	if updatedUniqueID != "1234567890.99" {
+		t.Fatalf("expected update for uniqueid 1234567890.99, got %q", updatedUniqueID)
+	}
+	if updatedSummary != "manually edited summary" {
+		t.Fatalf("expected updated summary text, got %q", updatedSummary)
 	}
 }

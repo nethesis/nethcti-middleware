@@ -12,7 +12,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 	"sync"
 
 	"github.com/nethesis/nethcti-middleware/logs"
@@ -190,51 +189,6 @@ func GetUserDisplayInfo(username string) (string, []string, error) {
 	copy(phoneNumbers, user.PhoneNumbers)
 
 	return displayName, phoneNumbers, nil
-}
-
-// GetExtensionByMainExtensionAndType resolves a user endpoint extension starting
-// from the user's main extension and the requested endpoint type.
-func GetExtensionByMainExtensionAndType(mainExtension, extensionType string) (string, string, error) {
-	profileMutex.RLock()
-	defer profileMutex.RUnlock()
-
-	mainExtension = strings.TrimSpace(mainExtension)
-	extensionType = strings.TrimSpace(extensionType)
-	if mainExtension == "" {
-		return "", "", fmt.Errorf("missing main extension")
-	}
-	if extensionType == "" {
-		return "", "", fmt.Errorf("missing extension type")
-	}
-
-	for username, user := range users {
-		if user == nil {
-			continue
-		}
-		if _, ok := user.Endpoints.MainExtension[mainExtension]; !ok {
-			continue
-		}
-
-		keys := make([]string, 0, len(user.Endpoints.Extension))
-		for extension := range user.Endpoints.Extension {
-			keys = append(keys, extension)
-		}
-		sort.Strings(keys)
-
-		for _, extension := range keys {
-			endpoint := user.Endpoints.Extension[extension]
-			if endpoint == nil {
-				continue
-			}
-			if strings.EqualFold(strings.TrimSpace(endpoint.Type), extensionType) {
-				return username, extension, nil
-			}
-		}
-
-		return username, "", fmt.Errorf("extension type %s not found for main extension %s", extensionType, mainExtension)
-	}
-
-	return "", "", fmt.Errorf("main extension %s not found", mainExtension)
 }
 
 // ReloadProfiles reloads profiles and users and returns resulting counters.
