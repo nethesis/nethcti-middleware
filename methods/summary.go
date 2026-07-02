@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -26,6 +27,7 @@ import (
 
 type SummaryWatchRequest struct {
 	UniqueID string `json:"uniqueid"`
+	LinkedID string `json:"linkedid,omitempty"`
 }
 
 type SummaryUpdateRequest struct {
@@ -60,22 +62,68 @@ type CallMetadata struct {
 }
 
 type SummaryListItem struct {
+	ID               int64      `json:"id,omitempty"`
+	LinkedID         string     `json:"linkedid,omitempty"`
 	UniqueID         string     `json:"uniqueid"`
 	State            string     `json:"state"`
 	HasTranscription bool       `json:"has_transcription"`
 	HasSummary       bool       `json:"has_summary"`
-	UpdatedAt        *time.Time `json:"updated_at"`
+	SrcNumber        string     `json:"src_number,omitempty"`
+	DstNumber        string     `json:"dst_number,omitempty"`
+	// DurationSeconds is the wall-clock length of this conversation segment, set by
+	// the satellite for transfer sub-legs (consultation / post-transfer) that have
+	// no CDR row of their own for every participant. Lets the UI render a real
+	// duration instead of 00:00:00. Nil when unknown.
+	DurationSeconds  *int       `json:"duration_seconds,omitempty"`
+	// Extra marks a conversation surfaced in addition to the requested history
+	// row (e.g. the consultation leg of a transfer). The frontend renders these
+	// as their own conversation rows, keyed by id (not uniqueid, which they may
+	// share with the main leg).
+	Extra     bool       `json:"extra,omitempty"`
+	UpdatedAt *time.Time `json:"updated_at"`
 }
 
 var (
-	fetchSummaryDrawerFunc = fetchSummaryDrawerFromDB
-	fetchSummaryListFunc   = fetchSummaryListFromDB
-	fetchSummaryStateFunc  = fetchSummaryStateFromDB
-	fetchSummaryFunc       = fetchSummaryFromDB
-	updateSummaryFunc      = updateSummaryInDB
-	deleteSummaryFunc      = deleteSummaryInDB
-	startSummaryWatchFunc  = summary.StartSummaryWatch
+	fetchSummaryDrawerFunc                     = fetchSummaryDrawerFromDB
+	fetchSummaryDrawerByIDFunc                 = fetchSummaryDrawerByID
+	fetchSummaryListFunc                       = fetchSummaryListFromDB
+	fetchParticipatedConversationsFunc         = fetchParticipatedConversationsFromDB
+	fetchAllConversationsByLinkedIDsFunc       = fetchAllConversationsByLinkedIDsFromDB
+	fetchSummaryStateFunc                      = fetchSummaryStateFromDB
+	fetchSummaryFunc                           = fetchSummaryFromDB
+	updateSummaryFunc                          = updateSummaryInDB
+	updateSummaryByIDFunc                      = updateSummaryByID
+	startSummaryWatchFunc = summary.StartSummaryWatchWithLinkedID
 )
+
+// getTranscriptIDFromQuery returns the optional ?id= transcript row id used to
+// disambiguate conversations that share an Asterisk uniqueid. 0 means absent.
+func getTranscriptIDFromQuery(c *gin.Context) int64 {
+	raw := strings.TrimSpace(c.Query("id"))
+	if raw == "" {
+		return 0
+	}
+	id, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || id < 0 {
+		return 0
+	}
+	return id
+}
+
+func getUniqueIDFromPath(c *gin.Context) string {
+	return strings.TrimSpace(c.Param("uniqueid"))
+}
+
+type SummaryStatusLookup struct {
+	UniqueID string `json:"uniqueid,omitempty"`
+	LinkedID string `json:"linkedid,omitempty"`
+}
+
+type resolvedSummaryStatusLookup struct {
+	UniqueID         string
+	LinkedID         string
+	ResolvedUniqueID string
+}
 
 // WatchCallSummary starts watching for a summary in the satellite transcripts table.
 func WatchCallSummary(c *gin.Context) {
@@ -89,8 +137,9 @@ func WatchCallSummary(c *gin.Context) {
 		return
 	}
 
-	uniqueID := strings.TrimSpace(req.UniqueID)
-	if uniqueID == "" {
+	uniqueIDHint := strings.TrimSpace(req.UniqueID)
+	linkedID := strings.TrimSpace(req.LinkedID)
+	if uniqueIDHint == "" {
 		c.JSON(http.StatusBadRequest, structs.Map(models.StatusBadRequest{
 			Code:    http.StatusBadRequest,
 			Message: "uniqueid is required",
@@ -118,7 +167,8 @@ func WatchCallSummary(c *gin.Context) {
 		return
 	}
 
-	if ok, err := ensureUserParticipatedInCall(c, uniqueID); err != nil {
+	uniqueID, _, _, ok, err := ensureUserParticipatedInCall(c, uniqueIDHint, linkedID)
+	if err != nil {
 		if errors.Is(err, errUnauthorized) {
 			c.JSON(http.StatusUnauthorized, structs.Map(models.StatusUnauthorized{
 				Code:    http.StatusUnauthorized,
@@ -127,15 +177,16 @@ func WatchCallSummary(c *gin.Context) {
 			}))
 			return
 		}
-		logs.Log("[ERROR][SUMMARY] Failed to validate CDR participation for watch uniqueid " + uniqueID + ": " + err.Error())
+		logs.Log("[ERROR][SUMMARY] Failed to validate CDR participation for watch uniqueid " + uniqueIDHint + ": " + err.Error())
 		c.JSON(http.StatusServiceUnavailable, structs.Map(models.StatusServiceUnavailable{
 			Code:    http.StatusServiceUnavailable,
 			Message: "cdr database unavailable",
 			Data:    nil,
 		}))
 		return
-	} else if !ok {
-		logForbiddenParticipation(c, uniqueID)
+	}
+	if !ok {
+		logForbiddenParticipation(c, uniqueIDHint)
 		c.JSON(http.StatusForbidden, structs.Map(models.StatusForbidden{
 			Code:    http.StatusForbidden,
 			Message: "forbidden: user not part of call",
@@ -144,7 +195,7 @@ func WatchCallSummary(c *gin.Context) {
 		return
 	}
 
-	startResult := startSummaryWatchFunc(uniqueID, username)
+	startResult := startSummaryWatchFunc(uniqueID, linkedID, username)
 	if startResult != summary.WatchStarted {
 		message := "watch unavailable"
 		switch startResult {
@@ -174,11 +225,12 @@ func WatchCallSummary(c *gin.Context) {
 	}))
 }
 
-// CheckSummaryByUniqueID verifies whether a non-deleted summary exists for the given unique ID.
+// CheckSummaryByUniqueID verifies whether a non-deleted summary exists for the given uniqueid.
 // It is intended for HEAD endpoints and returns status only (no response body).
 func CheckSummaryByUniqueID(c *gin.Context) {
-	uniqueID := strings.TrimSpace(c.Param("uniqueid"))
-	if uniqueID == "" {
+	uniqueIDHint := getUniqueIDFromPath(c)
+	linkedID := getLinkedIDFromQuery(c)
+	if uniqueIDHint == "" {
 		c.Status(http.StatusBadRequest)
 		return
 	}
@@ -188,16 +240,18 @@ func CheckSummaryByUniqueID(c *gin.Context) {
 		return
 	}
 
-	if ok, err := ensureUserParticipatedInCall(c, uniqueID); err != nil {
+	uniqueID, _, _, ok, err := ensureUserParticipatedInCall(c, uniqueIDHint, linkedID)
+	if err != nil {
 		if errors.Is(err, errUnauthorized) {
 			c.Status(http.StatusUnauthorized)
 			return
 		}
-		logs.Log("[ERROR][SUMMARY] Failed to validate CDR participation for uniqueid " + uniqueID + ": " + err.Error())
+		logs.Log("[ERROR][SUMMARY] Failed to validate CDR participation for uniqueid " + uniqueIDHint + ": " + err.Error())
 		c.Status(http.StatusServiceUnavailable)
 		return
-	} else if !ok {
-		logForbiddenParticipation(c, uniqueID)
+	}
+	if !ok {
+		logForbiddenParticipation(c, uniqueIDHint)
 		c.Status(http.StatusForbidden)
 		return
 	}
@@ -220,18 +274,25 @@ func CheckSummaryByUniqueID(c *gin.Context) {
 		return
 	}
 
-	if !exists {
-		c.Status(http.StatusNotFound)
-		return
-	}
+	foundRecord := exists
+	keepWaiting := shouldKeepWaitingForSummary(state)
 
 	if hasSummary {
 		c.Status(http.StatusOK)
 		return
 	}
 
-	if shouldKeepWaitingForSummary(state) {
+	if keepWaiting {
 		c.Status(http.StatusNoContent)
+		return
+	}
+
+	if !foundRecord {
+		if linkedID != "" {
+			c.Status(http.StatusNoContent)
+			return
+		}
+		c.Status(http.StatusNotFound)
 		return
 	}
 
@@ -247,10 +308,11 @@ func shouldKeepWaitingForSummary(state string) bool {
 	}
 }
 
-// GetSummaryByUniqueID returns the summary for the given unique ID.
+// GetSummaryByUniqueID returns the summary for the given uniqueid.
 func GetSummaryByUniqueID(c *gin.Context) {
-	uniqueID := strings.TrimSpace(c.Param("uniqueid"))
-	if uniqueID == "" {
+	uniqueIDHint := getUniqueIDFromPath(c)
+	linkedID := getLinkedIDFromQuery(c)
+	if uniqueIDHint == "" {
 		c.JSON(http.StatusBadRequest, structs.Map(models.StatusBadRequest{
 			Code:    http.StatusBadRequest,
 			Message: "uniqueid is required",
@@ -268,7 +330,8 @@ func GetSummaryByUniqueID(c *gin.Context) {
 		return
 	}
 
-	if ok, err := ensureUserParticipatedInCall(c, uniqueID); err != nil {
+	uniqueID, phoneNumbers, excludedSrcNums, ok, err := ensureUserParticipatedInCall(c, uniqueIDHint, linkedID)
+	if err != nil {
 		if errors.Is(err, errUnauthorized) {
 			c.JSON(http.StatusUnauthorized, structs.Map(models.StatusUnauthorized{
 				Code:    http.StatusUnauthorized,
@@ -277,15 +340,19 @@ func GetSummaryByUniqueID(c *gin.Context) {
 			}))
 			return
 		}
-		logs.Log("[ERROR][SUMMARY] Failed to validate CDR participation for uniqueid " + uniqueID + ": " + err.Error())
+		logs.Log("[ERROR][SUMMARY] Failed to validate CDR participation for uniqueid " + uniqueIDHint + ": " + err.Error())
 		c.JSON(http.StatusServiceUnavailable, structs.Map(models.StatusServiceUnavailable{
 			Code:    http.StatusServiceUnavailable,
 			Message: "cdr database unavailable",
 			Data:    nil,
 		}))
 		return
-	} else if !ok {
-		logForbiddenParticipation(c, uniqueID)
+	}
+	// Switchboard supervisors (cdr.ad_cdr) may read any call's transcript via ?id,
+	// so they are not blocked by the per-call participation gate.
+	sbAllowed := switchboardDrawerAllowed(c)
+	if !ok && !sbAllowed {
+		logForbiddenParticipation(c, uniqueIDHint)
 		c.JSON(http.StatusForbidden, structs.Map(models.StatusForbidden{
 			Code:    http.StatusForbidden,
 			Message: "forbidden: user not part of call",
@@ -294,7 +361,16 @@ func GetSummaryByUniqueID(c *gin.Context) {
 		return
 	}
 
-	details, found, err := fetchSummaryDrawerFunc(uniqueID)
+	// When a specific transcript id is requested, fetch that exact conversation
+	// (disambiguates the legs of an attended transfer that share a uniqueid);
+	// otherwise pick the best transcript for the uniqueid as before.
+	var details *SummaryDrawer
+	var found bool
+	if transcriptID := getTranscriptIDFromQuery(c); transcriptID > 0 {
+		details, found, err = fetchSummaryDrawerByIDFunc(transcriptID, phoneNumbers, sbAllowed)
+	} else {
+		details, found, err = fetchSummaryDrawerFunc(uniqueID, phoneNumbers, excludedSrcNums)
+	}
 	if err != nil {
 		if isSatelliteSchemaMissingError(err) {
 			logs.Log("[WARNING][SUMMARY] Satellite schema is not initialized while fetching summary for uniqueid " + uniqueID + ": " + err.Error())
@@ -332,97 +408,11 @@ func GetSummaryByUniqueID(c *gin.Context) {
 	})
 }
 
-// DeleteSummaryByUniqueID removes the summary for the given unique ID.
-func DeleteSummaryByUniqueID(c *gin.Context) {
-	uniqueID := strings.TrimSpace(c.Param("uniqueid"))
-	if uniqueID == "" {
-		c.JSON(http.StatusBadRequest, structs.Map(models.StatusBadRequest{
-			Code:    http.StatusBadRequest,
-			Message: "uniqueid is required",
-			Data:    nil,
-		}))
-		return
-	}
-
-	if !summary.IsSatelliteDBConfigured() {
-		c.JSON(http.StatusServiceUnavailable, structs.Map(models.StatusServiceUnavailable{
-			Code:    http.StatusServiceUnavailable,
-			Message: "satellite database not configured",
-			Data:    nil,
-		}))
-		return
-	}
-
-	if ok, err := ensureUserParticipatedInCall(c, uniqueID); err != nil {
-		if errors.Is(err, errUnauthorized) {
-			c.JSON(http.StatusUnauthorized, structs.Map(models.StatusUnauthorized{
-				Code:    http.StatusUnauthorized,
-				Message: "unauthorized",
-				Data:    nil,
-			}))
-			return
-		}
-		logs.Log("[ERROR][SUMMARY] Failed to validate CDR participation for uniqueid " + uniqueID + ": " + err.Error())
-		c.JSON(http.StatusServiceUnavailable, structs.Map(models.StatusServiceUnavailable{
-			Code:    http.StatusServiceUnavailable,
-			Message: "cdr database unavailable",
-			Data:    nil,
-		}))
-		return
-	} else if !ok {
-		logForbiddenParticipation(c, uniqueID)
-		c.JSON(http.StatusForbidden, structs.Map(models.StatusForbidden{
-			Code:    http.StatusForbidden,
-			Message: "forbidden: user not part of call",
-			Data:    nil,
-		}))
-		return
-	}
-
-	deleted, err := deleteSummaryFunc(uniqueID)
-	if err != nil {
-		if isSatelliteSchemaMissingError(err) {
-			logs.Log("[WARNING][SUMMARY] Satellite schema is not initialized while deleting summary for uniqueid " + uniqueID + ": " + err.Error())
-			writeSatelliteSchemaMissingResponse(c)
-			return
-		}
-		if isSatelliteDBUnavailableError(err) {
-			logs.Log("[WARNING][SUMMARY] Satellite database is unavailable while deleting summary for uniqueid " + uniqueID + ": " + err.Error())
-			writeSatelliteDBUnavailableResponse(c)
-			return
-		}
-
-		logs.Log("[ERROR][SUMMARY] Failed to delete summary for uniqueid " + uniqueID + ": " + err.Error())
-		c.JSON(http.StatusInternalServerError, structs.Map(models.StatusInternalServerError{
-			Code:    http.StatusInternalServerError,
-			Message: "failed to delete summary",
-			Data:    nil,
-		}))
-		return
-	}
-
-	if !deleted {
-		c.JSON(http.StatusNotFound, structs.Map(models.StatusNotFound{
-			Code:    http.StatusNotFound,
-			Message: "summary not found",
-			Data:    nil,
-		}))
-		return
-	}
-
-	c.JSON(http.StatusOK, structs.Map(models.StatusOK{
-		Code:    http.StatusOK,
-		Message: "summary deleted",
-		Data: gin.H{
-			"uniqueid": uniqueID,
-		},
-	}))
-}
-
-// UpdateSummaryByUniqueID updates the summary for the given unique ID.
+// UpdateSummaryByUniqueID updates the summary for the given uniqueid.
 func UpdateSummaryByUniqueID(c *gin.Context) {
-	uniqueID := strings.TrimSpace(c.Param("uniqueid"))
-	if uniqueID == "" {
+	uniqueIDHint := getUniqueIDFromPath(c)
+	linkedID := getLinkedIDFromQuery(c)
+	if uniqueIDHint == "" {
 		c.JSON(http.StatusBadRequest, structs.Map(models.StatusBadRequest{
 			Code:    http.StatusBadRequest,
 			Message: "uniqueid is required",
@@ -460,7 +450,8 @@ func UpdateSummaryByUniqueID(c *gin.Context) {
 		return
 	}
 
-	if ok, err := ensureUserParticipatedInCall(c, uniqueID); err != nil {
+	uniqueID, _, _, ok, err := ensureUserParticipatedInCall(c, uniqueIDHint, linkedID)
+	if err != nil {
 		if errors.Is(err, errUnauthorized) {
 			c.JSON(http.StatusUnauthorized, structs.Map(models.StatusUnauthorized{
 				Code:    http.StatusUnauthorized,
@@ -469,15 +460,19 @@ func UpdateSummaryByUniqueID(c *gin.Context) {
 			}))
 			return
 		}
-		logs.Log("[ERROR][SUMMARY] Failed to validate CDR participation for uniqueid " + uniqueID + ": " + err.Error())
+		logs.Log("[ERROR][SUMMARY] Failed to validate CDR participation for uniqueid " + uniqueIDHint + ": " + err.Error())
 		c.JSON(http.StatusServiceUnavailable, structs.Map(models.StatusServiceUnavailable{
 			Code:    http.StatusServiceUnavailable,
 			Message: "cdr database unavailable",
 			Data:    nil,
 		}))
 		return
-	} else if !ok {
-		logForbiddenParticipation(c, uniqueID)
+	}
+	// Switchboard supervisors (cdr.ad_cdr) may edit any call's summary via ?id,
+	// so they are not blocked by the per-call participation gate.
+	sbAllowed := switchboardDrawerAllowed(c)
+	if !ok && !sbAllowed {
+		logForbiddenParticipation(c, uniqueIDHint)
 		c.JSON(http.StatusForbidden, structs.Map(models.StatusForbidden{
 			Code:    http.StatusForbidden,
 			Message: "forbidden: user not part of call",
@@ -486,7 +481,15 @@ func UpdateSummaryByUniqueID(c *gin.Context) {
 		return
 	}
 
-	updated, err := updateSummaryFunc(uniqueID, summaryText)
+	// When a specific transcript id is given, update that exact conversation
+	// (so editing one transfer leg's summary does not overwrite the other).
+	var updated bool
+	if transcriptID := getTranscriptIDFromQuery(c); transcriptID > 0 {
+		phoneNumbers, _ := getUserPhoneNumbersFromContext(c)
+		updated, err = updateSummaryByIDFunc(transcriptID, summaryText, phoneNumbers, sbAllowed)
+	} else {
+		updated, err = updateSummaryFunc(uniqueID, summaryText)
+	}
 	if err != nil {
 		if isSatelliteSchemaMissingError(err) {
 			logs.Log("[WARNING][SUMMARY] Satellite schema is not initialized while updating summary for uniqueid " + uniqueID + ": " + err.Error())
@@ -538,7 +541,7 @@ func ListSummaryStatus(c *gin.Context) {
 		return
 	}
 
-	uniqueIDs, err := extractSummaryStatusUniqueIDs(c)
+	lookups, err := extractSummaryStatusLookups(c)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, structs.Map(models.StatusBadRequest{
 			Code:    http.StatusBadRequest,
@@ -548,7 +551,7 @@ func ListSummaryStatus(c *gin.Context) {
 		return
 	}
 
-	if len(uniqueIDs) == 0 {
+	if len(lookups) == 0 {
 		c.JSON(http.StatusBadRequest, structs.Map(models.StatusBadRequest{
 			Code:    http.StatusBadRequest,
 			Message: "uniqueids is required",
@@ -557,7 +560,7 @@ func ListSummaryStatus(c *gin.Context) {
 		return
 	}
 
-	authorizedUniqueIDs, err := filterSummaryStatusUniqueIDsByParticipation(c, uniqueIDs)
+	resolvedLookups, err := resolveSummaryStatusLookups(c, lookups)
 	if err != nil {
 		if errors.Is(err, errUnauthorized) {
 			c.JSON(http.StatusUnauthorized, structs.Map(models.StatusUnauthorized{
@@ -577,7 +580,8 @@ func ListSummaryStatus(c *gin.Context) {
 		return
 	}
 
-	items, err := fetchSummaryListFunc(authorizedUniqueIDs)
+	resolvedUniqueIDs := collectResolvedUniqueIDs(resolvedLookups)
+	items, err := fetchSummaryListFunc(resolvedUniqueIDs)
 	if err != nil {
 		if isSatelliteSchemaMissingError(err) {
 			logs.Log("[WARNING][SUMMARY] Satellite schema is not initialized while listing summary statuses: " + err.Error())
@@ -599,22 +603,47 @@ func ListSummaryStatus(c *gin.Context) {
 		return
 	}
 
-	itemByID := make(map[string]SummaryListItem, len(items))
+	itemByUniqueID := make(map[string]SummaryListItem, len(items))
 	for _, item := range items {
-		itemByID[item.UniqueID] = item
+		itemByUniqueID[item.UniqueID] = item
 	}
 
-	result := make([]interface{}, 0, len(uniqueIDs))
-	for _, id := range uniqueIDs {
-		if item, ok := itemByID[id]; ok {
+	result := make([]interface{}, 0, len(resolvedLookups))
+	presentKeys := make(map[string]bool)
+	for _, lookup := range resolvedLookups {
+		if item, ok := itemByUniqueID[lookup.ResolvedUniqueID]; ok {
+			item.LinkedID = lookup.LinkedID
+			// Use the requested uniqueid so the frontend can match
+			// the response entry to the correct history row.
+			if lookup.UniqueID != "" {
+				item.UniqueID = lookup.UniqueID
+			}
 			result = append(result, item)
+			presentKeys[conversationKey(lookup.LinkedID, item.SrcNumber, item.DstNumber)] = true
 			continue
 		}
+		reportedUniqueID := lookup.UniqueID
+		if reportedUniqueID == "" {
+			reportedUniqueID = lookup.ResolvedUniqueID
+		}
 		result = append(result, gin.H{
-			"uniqueid": id,
+			"uniqueid": reportedUniqueID,
+			"linkedid": lookup.LinkedID,
 			"error":    "not_found",
 		})
 	}
+
+	// Surface the extra conversations to render as their own rows. Personal view:
+	// the legs the user took part in (e.g. a transfer consultation). Switchboard
+	// view (only if the user holds the cdr.ad_cdr capability): every conversation
+	// of the calls, regardless of participant.
+	switchboard := false
+	if c.GetBool("summaryStatusSwitchboard") {
+		if username, uerr := getUsernameFromContext(c); uerr == nil {
+			switchboard = userHasSwitchboardCapability(username)
+		}
+	}
+	result = appendParticipatedConversations(c, resolvedLookups, presentKeys, result, switchboard)
 
 	c.JSON(http.StatusOK, structs.Map(models.StatusOK{
 		Code:    http.StatusOK,
@@ -623,52 +652,102 @@ func ListSummaryStatus(c *gin.Context) {
 	}))
 }
 
-func filterSummaryStatusUniqueIDsByParticipation(c *gin.Context, uniqueIDs []string) ([]string, error) {
-	username, err := getUsernameFromContext(c)
-	if err != nil {
-		return nil, err
+// appendParticipatedConversations adds, to the status result, the conversations
+// under the requested linkedids in which the user participated and that are not
+// already represented by a requested row. Failures are non-fatal: extra
+// discovery never breaks the base response.
+func appendParticipatedConversations(c *gin.Context, resolvedLookups []resolvedSummaryStatusLookup, presentKeys map[string]bool, result []interface{}, switchboard bool) []interface{} {
+	linkedIDs := distinctLinkedIDs(resolvedLookups)
+	if len(linkedIDs) == 0 {
+		return result
 	}
 
-	userSession := store.UserSessions[username]
-	if userSession == nil || strings.TrimSpace(userSession.NethCTIToken) == "" {
-		logs.Log("[WARNING][SUMMARY] Missing user session or token for user " + username + " while listing summary statuses")
-		return nil, errUnauthorized
-	}
-
-	userInfo, err := getUserInfoFunc(userSession.NethCTIToken)
-	if err != nil {
-		logs.Log("[ERROR][SUMMARY] Failed to load user info for user " + username + " while listing summary statuses: " + err.Error())
-		return nil, err
-	}
-
-	if len(userInfo.PhoneNumbers) == 0 {
-		logs.Log("[WARNING][SUMMARY] No phone numbers for user " + username + " while listing summary statuses")
-		return []string{}, nil
-	}
-
-	authorized := make([]string, 0, len(uniqueIDs))
-	for _, uniqueID := range uniqueIDs {
-		ok, err := checkUserParticipationFunc(uniqueID, userInfo.PhoneNumbers)
-		if err != nil {
-			return nil, err
+	var conversations []SummaryListItem
+	var err error
+	if switchboard {
+		// Supervisor view: every conversation of the calls, regardless of who
+		// took part. Already authorized by the cdr.ad_cdr capability check.
+		conversations, err = fetchAllConversationsByLinkedIDsFunc(linkedIDs)
+	} else {
+		phoneNumbers, perr := getUserPhoneNumbersFromContext(c)
+		if perr != nil || len(phoneNumbers) == 0 {
+			return result
 		}
-		if ok {
-			authorized = append(authorized, uniqueID)
-		}
+		conversations, err = fetchParticipatedConversationsFunc(linkedIDs, phoneNumbers)
+	}
+	if err != nil {
+		logs.Log("[WARNING][SUMMARY] Failed to fetch extra conversations: " + err.Error())
+		return result
 	}
 
-	return authorized, nil
+	for _, conv := range conversations {
+		// Only surface legs where an actual conversation happened.
+		if !conv.HasTranscription {
+			continue
+		}
+		if !switchboard {
+			// Personal view: skip the conversation already represented by the
+			// requested history row.
+			key := conversationKey(conv.LinkedID, conv.SrcNumber, conv.DstNumber)
+			if presentKeys[key] {
+				continue
+			}
+			presentKeys[key] = true
+		}
+		// Switchboard returns every conversation as its own row (query is
+		// DISTINCT per conversation, so no duplicates).
+		conv.Extra = true
+		result = append(result, conv)
+	}
+
+	return result
 }
 
-func extractSummaryStatusUniqueIDs(c *gin.Context) ([]string, error) {
+func conversationKey(linkedID, src, dst string) string {
+	return strings.TrimSpace(linkedID) + "|" + strings.TrimSpace(src) + "|" + strings.TrimSpace(dst)
+}
+
+func distinctLinkedIDs(lookups []resolvedSummaryStatusLookup) []string {
+	seen := make(map[string]bool)
+	out := make([]string, 0)
+	for _, l := range lookups {
+		lid := strings.TrimSpace(l.LinkedID)
+		if lid == "" || seen[lid] {
+			continue
+		}
+		seen[lid] = true
+		out = append(out, lid)
+	}
+	return out
+}
+
+func extractSummaryStatusLookups(c *gin.Context) ([]SummaryStatusLookup, error) {
 	var req struct {
-		UniqueIDs []string `json:"uniqueids"`
+		UniqueIDs   []string              `json:"uniqueids"`
+		Lookups     []SummaryStatusLookup `json:"lookups"`
+		Switchboard bool                  `json:"switchboard"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		return nil, err
 	}
+	// Remember the requested scope; honoured only if the user is authorized
+	// (see ListSummaryStatus).
+	c.Set("summaryStatusSwitchboard", req.Switchboard)
 
-	return normalizeUniqueIDs(req.UniqueIDs), nil
+	if len(req.Lookups) > 0 {
+		return normalizeSummaryStatusLookups(req.Lookups), nil
+	}
+
+	if len(req.UniqueIDs) == 0 {
+		return []SummaryStatusLookup{}, nil
+	}
+
+	normalizedUniqueIDs := normalizeLookupIDs(req.UniqueIDs)
+	lookups := make([]SummaryStatusLookup, 0, len(normalizedUniqueIDs))
+	for _, uniqueID := range normalizedUniqueIDs {
+		lookups = append(lookups, SummaryStatusLookup{UniqueID: uniqueID})
+	}
+	return lookups, nil
 }
 
 func writeSatelliteSchemaMissingResponse(c *gin.Context) {
@@ -719,11 +798,87 @@ func isSatelliteDBUnavailableError(err error) bool {
 		strings.Contains(errText, "failed to connect")
 }
 
-func normalizeUniqueIDs(uniqueIDs []string) []string {
-	cleaned := make([]string, 0, len(uniqueIDs))
+func normalizeSummaryStatusLookups(lookups []SummaryStatusLookup) []SummaryStatusLookup {
+	cleaned := make([]SummaryStatusLookup, 0, len(lookups))
 	seen := make(map[string]struct{})
 
-	for _, id := range uniqueIDs {
+	for _, lookup := range lookups {
+		normalized := SummaryStatusLookup{
+			UniqueID: strings.TrimSpace(lookup.UniqueID),
+			LinkedID: strings.TrimSpace(lookup.LinkedID),
+		}
+		if normalized.UniqueID == "" && normalized.LinkedID == "" {
+			continue
+		}
+
+		key := normalized.UniqueID
+		if key == "" {
+			key = normalized.LinkedID
+		}
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		cleaned = append(cleaned, normalized)
+	}
+
+	return cleaned
+}
+
+func resolveSummaryStatusLookups(c *gin.Context, lookups []SummaryStatusLookup) ([]resolvedSummaryStatusLookup, error) {
+	phoneNumbers, err := getUserPhoneNumbersFromContext(c)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(phoneNumbers) == 0 {
+		return []resolvedSummaryStatusLookup{}, nil
+	}
+
+	resolved := make([]resolvedSummaryStatusLookup, 0, len(lookups))
+	for _, lookup := range lookups {
+		resolvedUniqueID, ok, err := resolveAuthorizedUniqueID(lookup.UniqueID, lookup.LinkedID, phoneNumbers)
+		if err != nil {
+			return nil, err
+		}
+
+		entry := resolvedSummaryStatusLookup{
+			UniqueID:         lookup.UniqueID,
+			LinkedID:         lookup.LinkedID,
+			ResolvedUniqueID: resolvedUniqueID,
+		}
+		if !ok {
+			entry.ResolvedUniqueID = ""
+		}
+		resolved = append(resolved, entry)
+	}
+
+	return resolved, nil
+}
+
+func collectResolvedUniqueIDs(lookups []resolvedSummaryStatusLookup) []string {
+	collected := make([]string, 0, len(lookups))
+	seen := make(map[string]struct{})
+
+	for _, lookup := range lookups {
+		if lookup.ResolvedUniqueID == "" {
+			continue
+		}
+		if _, exists := seen[lookup.ResolvedUniqueID]; exists {
+			continue
+		}
+		seen[lookup.ResolvedUniqueID] = struct{}{}
+		collected = append(collected, lookup.ResolvedUniqueID)
+	}
+
+	return collected
+}
+
+func normalizeLookupIDs(lookupIDs []string) []string {
+	cleaned := make([]string, 0, len(lookupIDs))
+	seen := make(map[string]struct{})
+
+	for _, id := range lookupIDs {
 		for _, candidate := range strings.Split(id, ",") {
 			value := strings.TrimSpace(candidate)
 			if value == "" {
@@ -740,7 +895,7 @@ func normalizeUniqueIDs(uniqueIDs []string) []string {
 	return cleaned
 }
 
-func fetchSummaryDrawerFromDB(uniqueID string) (*SummaryDrawer, bool, error) {
+func fetchSummaryDrawerFromDB(uniqueID string, phoneNumbers []string, excludedSrcNums []string) (*SummaryDrawer, bool, error) {
 	database := db.GetSatelliteDB()
 	if database == nil {
 		return nil, false, sql.ErrConnDone
@@ -749,11 +904,37 @@ func fetchSummaryDrawerFromDB(uniqueID string) (*SummaryDrawer, bool, error) {
 	queryCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	query := `
+	args := []interface{}{uniqueID}
+	phoneStart := 2
+	for _, phoneNumber := range phoneNumbers {
+		args = append(args, phoneNumber)
+	}
+
+	excludeStart := phoneStart + len(phoneNumbers)
+	for _, excludedSrcNum := range excludedSrcNums {
+		args = append(args, excludedSrcNum)
+	}
+
+	orderBy := "updated_at DESC, id DESC"
+	if len(phoneNumbers) > 0 {
+		phonePlaceholders := buildPostgresPlaceholders(len(phoneNumbers), phoneStart)
+		srcClause := fmt.Sprintf("(src_number IN (%s)) DESC", phonePlaceholders)
+		dstClause := fmt.Sprintf("(dst_number IN (%s)) DESC", phonePlaceholders)
+		if len(excludedSrcNums) > 0 {
+			excludePlaceholders := buildPostgresPlaceholders(len(excludedSrcNums), excludeStart)
+			notExcludedClause := fmt.Sprintf("(src_number NOT IN (%s)) DESC", excludePlaceholders)
+			orderBy = srcClause + ", " + notExcludedClause + ", " + dstClause + ", " + orderBy
+		} else {
+			orderBy = srcClause + ", " + dstClause + ", " + orderBy
+		}
+	}
+
+	query := fmt.Sprintf(`
 		SELECT uniqueid, summary, sentiment, state, cleaned_transcription, raw_transcription, created_at, updated_at, deleted_at
 		FROM transcripts
-		WHERE uniqueid = $1
-		LIMIT 1`
+		WHERE uniqueid = $1 AND deleted_at IS NULL
+		ORDER BY %s
+		LIMIT 1`, orderBy)
 
 	var (
 		dbUniqueID  string
@@ -767,7 +948,7 @@ func fetchSummaryDrawerFromDB(uniqueID string) (*SummaryDrawer, bool, error) {
 		dbDeletedAt sql.NullTime
 	)
 
-	if err := database.QueryRowContext(queryCtx, query, uniqueID).Scan(
+	if err := database.QueryRowContext(queryCtx, query, args...).Scan(
 		&dbUniqueID,
 		&dbSummary,
 		&dbSentiment,
@@ -843,10 +1024,10 @@ func fetchSummaryListFromDB(uniqueIDs []string) ([]SummaryListItem, error) {
 
 	placeholders := buildPostgresPlaceholders(len(uniqueIDs), 1)
 	query := fmt.Sprintf(`
-		SELECT uniqueid, cleaned_transcription, raw_transcription, summary, state, updated_at
+		SELECT DISTINCT ON (uniqueid) id, uniqueid, cleaned_transcription, raw_transcription, summary, state, src_number, dst_number, updated_at
 		FROM transcripts
 		WHERE deleted_at IS NULL AND uniqueid IN (%s)
-		ORDER BY updated_at DESC`, placeholders)
+		ORDER BY uniqueid, updated_at DESC, id DESC`, placeholders)
 
 	args := make([]interface{}, 0, len(uniqueIDs))
 	for _, id := range uniqueIDs {
@@ -862,15 +1043,18 @@ func fetchSummaryListFromDB(uniqueIDs []string) ([]SummaryListItem, error) {
 	items := make([]SummaryListItem, 0)
 	for rows.Next() {
 		var (
+			dbID        int64
 			dbUniqueID  string
 			dbCleaned   sql.NullString
 			dbRaw       sql.NullString
 			dbSummary   sql.NullString
 			dbState     string
+			dbSrc       sql.NullString
+			dbDst       sql.NullString
 			dbUpdatedAt time.Time
 		)
 
-		if err := rows.Scan(&dbUniqueID, &dbCleaned, &dbRaw, &dbSummary, &dbState, &dbUpdatedAt); err != nil {
+		if err := rows.Scan(&dbID, &dbUniqueID, &dbCleaned, &dbRaw, &dbSummary, &dbState, &dbSrc, &dbDst, &dbUpdatedAt); err != nil {
 			return nil, err
 		}
 
@@ -885,10 +1069,13 @@ func fetchSummaryListFromDB(uniqueIDs []string) ([]SummaryListItem, error) {
 
 		updatedAt := dbUpdatedAt
 		items = append(items, SummaryListItem{
+			ID:               dbID,
 			UniqueID:         dbUniqueID,
 			State:            dbState,
 			HasTranscription: hasTranscription,
 			HasSummary:       hasSummary,
+			SrcNumber:        strings.TrimSpace(dbSrc.String),
+			DstNumber:        strings.TrimSpace(dbDst.String),
 			UpdatedAt:        &updatedAt,
 		})
 	}
@@ -898,6 +1085,312 @@ func fetchSummaryListFromDB(uniqueIDs []string) ([]SummaryListItem, error) {
 	}
 
 	return items, nil
+}
+
+// fetchParticipatedConversationsFromDB returns every non-deleted transcript under
+// the given linkedids in which the user (one of phoneNumbers) is a participant
+// (matches src_number or dst_number). Attended/blind transfers produce several
+// conversations under one linkedid (e.g. consultation A<->B and post-transfer
+// C<->B): each is a distinct row here, so a participant sees all the legs they
+// actually took part in. Rows are de-duplicated per (uniqueid, src, dst) keeping
+// the newest, which collapses retry-duplicates without hiding distinct legs.
+func fetchParticipatedConversationsFromDB(linkedIDs []string, phoneNumbers []string) ([]SummaryListItem, error) {
+	if len(linkedIDs) == 0 || len(phoneNumbers) == 0 {
+		return []SummaryListItem{}, nil
+	}
+
+	database := db.GetSatelliteDB()
+	if database == nil {
+		return nil, sql.ErrConnDone
+	}
+
+	queryCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	linkedPlaceholders := buildPostgresPlaceholders(len(linkedIDs), 1)
+	srcPlaceholders := buildPostgresPlaceholders(len(phoneNumbers), 1+len(linkedIDs))
+	dstPlaceholders := buildPostgresPlaceholders(len(phoneNumbers), 1+len(linkedIDs)+len(phoneNumbers))
+
+	query := fmt.Sprintf(`
+		SELECT DISTINCT ON (uniqueid, src_number, dst_number)
+			id, uniqueid, linkedid, cleaned_transcription, raw_transcription, summary, state, src_number, dst_number, duration_seconds, updated_at
+		FROM transcripts
+		WHERE deleted_at IS NULL
+			AND linkedid IN (%s)
+			AND (src_number IN (%s) OR dst_number IN (%s))
+		ORDER BY uniqueid, src_number, dst_number, updated_at DESC, id DESC`,
+		linkedPlaceholders, srcPlaceholders, dstPlaceholders)
+
+	args := make([]interface{}, 0, len(linkedIDs)+2*len(phoneNumbers))
+	for _, id := range linkedIDs {
+		args = append(args, id)
+	}
+	for _, p := range phoneNumbers {
+		args = append(args, p)
+	}
+	for _, p := range phoneNumbers {
+		args = append(args, p)
+	}
+
+	rows, err := database.QueryContext(queryCtx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]SummaryListItem, 0)
+	for rows.Next() {
+		var (
+			dbID        int64
+			dbUniqueID  string
+			dbLinkedID  sql.NullString
+			dbCleaned   sql.NullString
+			dbRaw       sql.NullString
+			dbSummary   sql.NullString
+			dbState     string
+			dbSrc       sql.NullString
+			dbDst       sql.NullString
+			dbDuration  sql.NullInt64
+			dbUpdatedAt time.Time
+		)
+
+		if err := rows.Scan(&dbID, &dbUniqueID, &dbLinkedID, &dbCleaned, &dbRaw, &dbSummary, &dbState, &dbSrc, &dbDst, &dbDuration, &dbUpdatedAt); err != nil {
+			return nil, err
+		}
+
+		hasTranscription := (dbCleaned.Valid && strings.TrimSpace(dbCleaned.String) != "") ||
+			(dbRaw.Valid && strings.TrimSpace(dbRaw.String) != "")
+		hasSummary := dbSummary.Valid && strings.TrimSpace(dbSummary.String) != ""
+
+		updatedAt := dbUpdatedAt
+		item := SummaryListItem{
+			ID:               dbID,
+			LinkedID:         strings.TrimSpace(dbLinkedID.String),
+			UniqueID:         dbUniqueID,
+			State:            dbState,
+			HasTranscription: hasTranscription,
+			HasSummary:       hasSummary,
+			SrcNumber:        strings.TrimSpace(dbSrc.String),
+			DstNumber:        strings.TrimSpace(dbDst.String),
+			UpdatedAt:        &updatedAt,
+		}
+		if dbDuration.Valid {
+			d := int(dbDuration.Int64)
+			item.DurationSeconds = &d
+		}
+		items = append(items, item)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return items, nil
+}
+
+// userHasSwitchboardCapability reports whether the user may view the switchboard
+// (all-extensions) CDR — and therefore the transcripts of any call, not just
+// the ones they took part in.
+func userHasSwitchboardCapability(username string) bool {
+	if username == "" {
+		return false
+	}
+	caps, err := store.GetUserCapabilities(username)
+	if err != nil {
+		return false
+	}
+	return caps["cdr.ad_cdr"]
+}
+
+// switchboardDrawerAllowed reports whether the request asked for the switchboard
+// scope (?switchboard=true) AND the user is authorized for it (cdr.ad_cdr).
+func switchboardDrawerAllowed(c *gin.Context) bool {
+	if c.Query("switchboard") != "true" {
+		return false
+	}
+	username, err := getUsernameFromContext(c)
+	if err != nil {
+		return false
+	}
+	return userHasSwitchboardCapability(username)
+}
+
+// fetchAllConversationsByLinkedIDsFromDB returns every non-deleted transcript
+// under the given linkedids, regardless of participant. Used for the switchboard
+// (supervisor) view, where the caller is authorized to see all conversations.
+func fetchAllConversationsByLinkedIDsFromDB(linkedIDs []string) ([]SummaryListItem, error) {
+	if len(linkedIDs) == 0 {
+		return []SummaryListItem{}, nil
+	}
+
+	database := db.GetSatelliteDB()
+	if database == nil {
+		return nil, sql.ErrConnDone
+	}
+
+	queryCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	placeholders := buildPostgresPlaceholders(len(linkedIDs), 1)
+	query := fmt.Sprintf(`
+		SELECT DISTINCT ON (uniqueid, src_number, dst_number)
+			id, uniqueid, linkedid, cleaned_transcription, raw_transcription, summary, state, src_number, dst_number, duration_seconds, updated_at
+		FROM transcripts
+		WHERE deleted_at IS NULL AND linkedid IN (%s)
+		ORDER BY uniqueid, src_number, dst_number, updated_at DESC, id DESC`, placeholders)
+
+	args := make([]interface{}, 0, len(linkedIDs))
+	for _, id := range linkedIDs {
+		args = append(args, id)
+	}
+
+	rows, err := database.QueryContext(queryCtx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]SummaryListItem, 0)
+	for rows.Next() {
+		var (
+			dbID        int64
+			dbUniqueID  string
+			dbLinkedID  sql.NullString
+			dbCleaned   sql.NullString
+			dbRaw       sql.NullString
+			dbSummary   sql.NullString
+			dbState     string
+			dbSrc       sql.NullString
+			dbDst       sql.NullString
+			dbDuration  sql.NullInt64
+			dbUpdatedAt time.Time
+		)
+		if err := rows.Scan(&dbID, &dbUniqueID, &dbLinkedID, &dbCleaned, &dbRaw, &dbSummary, &dbState, &dbSrc, &dbDst, &dbDuration, &dbUpdatedAt); err != nil {
+			return nil, err
+		}
+		hasTranscription := (dbCleaned.Valid && strings.TrimSpace(dbCleaned.String) != "") ||
+			(dbRaw.Valid && strings.TrimSpace(dbRaw.String) != "")
+		hasSummary := dbSummary.Valid && strings.TrimSpace(dbSummary.String) != ""
+		updatedAt := dbUpdatedAt
+		item := SummaryListItem{
+			ID:               dbID,
+			LinkedID:         strings.TrimSpace(dbLinkedID.String),
+			UniqueID:         dbUniqueID,
+			State:            dbState,
+			HasTranscription: hasTranscription,
+			HasSummary:       hasSummary,
+			SrcNumber:        strings.TrimSpace(dbSrc.String),
+			DstNumber:        strings.TrimSpace(dbDst.String),
+			UpdatedAt:        &updatedAt,
+		}
+		if dbDuration.Valid {
+			d := int(dbDuration.Int64)
+			item.DurationSeconds = &d
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+// phoneNumberMatches reports whether value equals one of the user's phone numbers.
+func phoneNumberMatches(value string, phoneNumbers []string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return false
+	}
+	for _, p := range phoneNumbers {
+		if strings.TrimSpace(p) == value {
+			return true
+		}
+	}
+	return false
+}
+
+// fetchSummaryDrawerByID returns the summary of one specific transcript row,
+// identified by its database id. This disambiguates conversations that share an
+// Asterisk uniqueid (e.g. the consultation and post-transfer legs of an attended
+// transfer). The caller must be a party of the conversation (IDOR guard).
+func fetchSummaryDrawerByID(id int64, phoneNumbers []string, bypassParty bool) (*SummaryDrawer, bool, error) {
+	database := db.GetSatelliteDB()
+	if database == nil {
+		return nil, false, sql.ErrConnDone
+	}
+
+	queryCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var (
+		dbUniqueID  string
+		dbSummary   sql.NullString
+		dbSentiment sql.NullInt16
+		dbState     string
+		dbSrc       sql.NullString
+		dbDst       sql.NullString
+		dbCreatedAt time.Time
+		dbUpdatedAt time.Time
+		dbDeletedAt sql.NullTime
+	)
+
+	query := `SELECT uniqueid, summary, sentiment, state, src_number, dst_number, created_at, updated_at, deleted_at
+		FROM transcripts WHERE id = $1 AND deleted_at IS NULL LIMIT 1`
+	if err := database.QueryRowContext(queryCtx, query, id).Scan(
+		&dbUniqueID, &dbSummary, &dbSentiment, &dbState, &dbSrc, &dbDst, &dbCreatedAt, &dbUpdatedAt, &dbDeletedAt,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+
+	// IDOR guard: only a participant of this conversation may read it, unless the
+	// caller is authorized for the switchboard (all-calls) view.
+	if !bypassParty && !phoneNumberMatches(dbSrc.String, phoneNumbers) && !phoneNumberMatches(dbDst.String, phoneNumbers) {
+		return nil, false, nil
+	}
+	if !dbSummary.Valid || strings.TrimSpace(dbSummary.String) == "" {
+		return nil, false, nil
+	}
+
+	var sentiment *int
+	if dbSentiment.Valid {
+		value := int(dbSentiment.Int16)
+		sentiment = &value
+	}
+
+	callMeta, err := fetchSummaryCDRFields(dbUniqueID)
+	if err != nil {
+		return nil, false, err
+	}
+	callTimestamp := alignCallTimestampLocation(callMeta.CallTimestamp, &dbCreatedAt)
+
+	// Prefer the conversation's own parties (from the transcript) for the header.
+	src := callMeta.Src
+	dst := callMeta.Dst
+	if strings.TrimSpace(dbSrc.String) != "" {
+		src = strings.TrimSpace(dbSrc.String)
+	}
+	if strings.TrimSpace(dbDst.String) != "" {
+		dst = strings.TrimSpace(dbDst.String)
+	}
+
+	return &SummaryDrawer{
+		UniqueID:      dbUniqueID,
+		Summary:       strings.TrimSpace(dbSummary.String),
+		Sentiment:     sentiment,
+		State:         dbState,
+		Src:           src,
+		Dst:           dst,
+		CNam:          callMeta.CNam,
+		Company:       callMeta.Company,
+		DstCompany:    callMeta.DstCompany,
+		DstCNam:       callMeta.DstCNam,
+		CallTimestamp: callTimestamp,
+		CreatedAt:     dbCreatedAt,
+		UpdatedAt:     dbUpdatedAt,
+	}, true, nil
 }
 
 func fetchSummaryStateFromDB(uniqueID string) (string, bool, bool, bool, error) {
@@ -917,7 +1410,7 @@ func fetchSummaryStateFromDB(uniqueID string) (string, bool, bool, bool, error) 
 		deletedAt sql.NullTime
 	)
 
-	query := "SELECT state, summary, cleaned_transcription, raw_transcription, deleted_at FROM transcripts WHERE uniqueid = $1 LIMIT 1"
+	query := "SELECT state, summary, cleaned_transcription, raw_transcription, deleted_at FROM transcripts WHERE uniqueid = $1 AND deleted_at IS NULL ORDER BY updated_at DESC, id DESC LIMIT 1"
 	if err := database.QueryRowContext(queryCtx, query, uniqueID).Scan(&state, &summary, &cleaned, &raw, &deletedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return "", false, false, false, nil
@@ -947,7 +1440,7 @@ func fetchSummaryFromDB(uniqueID string) (string, bool, error) {
 	defer cancel()
 
 	var summaryText sql.NullString
-	query := "SELECT summary FROM transcripts WHERE uniqueid = $1 LIMIT 1"
+	query := "SELECT summary FROM transcripts WHERE uniqueid = $1 AND deleted_at IS NULL ORDER BY updated_at DESC, id DESC LIMIT 1"
 	err := database.QueryRowContext(queryCtx, query, uniqueID).Scan(&summaryText)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -963,6 +1456,48 @@ func fetchSummaryFromDB(uniqueID string) (string, bool, error) {
 	return summaryText.String, true, nil
 }
 
+// updateSummaryByID updates the summary of one specific transcript row,
+// identified by its id, only if the requester is a party of that conversation.
+// Used to edit a single transfer leg without overwriting the other.
+func updateSummaryByID(id int64, summaryText string, phoneNumbers []string, bypassParty bool) (bool, error) {
+	database := db.GetSatelliteDB()
+	if database == nil {
+		return false, sql.ErrConnDone
+	}
+	if !bypassParty && len(phoneNumbers) == 0 {
+		return false, nil
+	}
+
+	queryCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var query string
+	args := make([]interface{}, 0, 2+len(phoneNumbers))
+	args = append(args, summaryText, id)
+	if bypassParty {
+		// Switchboard supervisor: edit the exact row regardless of participant.
+		query = `UPDATE transcripts SET summary = $1 WHERE id = $2 AND deleted_at IS NULL`
+	} else {
+		phonePlaceholders := buildPostgresPlaceholders(len(phoneNumbers), 3)
+		query = fmt.Sprintf(`UPDATE transcripts SET summary = $1
+			WHERE id = $2 AND deleted_at IS NULL
+			AND (src_number IN (%s) OR dst_number IN (%s))`, phonePlaceholders, phonePlaceholders)
+		for _, p := range phoneNumbers {
+			args = append(args, p)
+		}
+	}
+
+	result, err := database.ExecContext(queryCtx, query, args...)
+	if err != nil {
+		return false, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return affected > 0, nil
+}
+
 func updateSummaryInDB(uniqueID, summaryText string) (bool, error) {
 	database := db.GetSatelliteDB()
 	if database == nil {
@@ -972,31 +1507,12 @@ func updateSummaryInDB(uniqueID, summaryText string) (bool, error) {
 	queryCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	query := "UPDATE transcripts SET summary = $1 WHERE uniqueid = $2"
+	query := `
+		WITH canonical AS (
+			SELECT id FROM transcripts WHERE uniqueid = $2 AND deleted_at IS NULL ORDER BY updated_at DESC, id DESC LIMIT 1
+		)
+		UPDATE transcripts SET summary = $1 WHERE id IN (SELECT id FROM canonical)`
 	result, err := database.ExecContext(queryCtx, query, summaryText, uniqueID)
-	if err != nil {
-		return false, err
-	}
-
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return false, err
-	}
-
-	return affected > 0, nil
-}
-
-func deleteSummaryInDB(uniqueID string) (bool, error) {
-	database := db.GetSatelliteDB()
-	if database == nil {
-		return false, sql.ErrConnDone
-	}
-
-	queryCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	query := "UPDATE transcripts SET deleted_at = NOW() WHERE uniqueid = $1"
-	result, err := database.ExecContext(queryCtx, query, uniqueID)
 	if err != nil {
 		return false, err
 	}
@@ -1036,10 +1552,10 @@ func fetchCallMetadataFromCDR(queryCtx context.Context, database *sql.DB, unique
 		callDate   sql.NullTime
 	)
 
-	query := "SELECT src, dst, cnam, company, dst_company, dst_cnam, calldate FROM cdr WHERE uniqueid = ? LIMIT 1"
+	query := "SELECT src, dst, cnam, company, dst_company, dst_cnam, calldate FROM cdr WHERE uniqueid = ? ORDER BY calldate DESC LIMIT 1"
 	err := database.QueryRowContext(queryCtx, query, uniqueID).Scan(&src, &dst, &cnam, &company, &dstCompany, &dstCNam, &callDate)
 	if err != nil && isMissingColumnError(err) {
-		query = "SELECT src, dst, cnam, dst_cnam, calldate FROM cdr WHERE uniqueid = ? LIMIT 1"
+		query = "SELECT src, dst, cnam, dst_cnam, calldate FROM cdr WHERE uniqueid = ? ORDER BY calldate DESC LIMIT 1"
 		err = database.QueryRowContext(queryCtx, query, uniqueID).Scan(&src, &dst, &cnam, &dstCNam, &callDate)
 	}
 	if err != nil {

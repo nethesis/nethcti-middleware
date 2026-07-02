@@ -22,6 +22,28 @@ import (
 	"github.com/nethesis/nethcti-middleware/store"
 )
 
+func TestHistorySummaryLookupKey_PrefersUniqueID(t *testing.T) {
+	cases := []struct {
+		name     string
+		linkedID string
+		uniqueID string
+		want     string
+	}{
+		{name: "both present prefers uniqueid (per-leg)", linkedID: "L-1", uniqueID: "U-2", want: "U-2"},
+		{name: "uniqueid only", linkedID: "", uniqueID: "U-2", want: "U-2"},
+		{name: "linkedid fallback when uniqueid missing", linkedID: "L-1", uniqueID: "", want: "L-1"},
+		{name: "both empty", linkedID: "", uniqueID: "", want: ""},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := historySummaryLookupKey(tc.linkedID, tc.uniqueID); got != tc.want {
+				t.Fatalf("historySummaryLookupKey(%q, %q) = %q, want %q", tc.linkedID, tc.uniqueID, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestGetFilteredHistory_ReturnsServiceUnavailableWhenTranscriptsTableIsMissing(t *testing.T) {
 	router, cleanup := setupHistoryArtifactTest(t, func([]string) ([]SummaryListItem, error) {
 		return nil, &pgconn.PgError{Code: "42P01", Message: `relation "transcripts" does not exist`}
@@ -104,12 +126,22 @@ func setupHistoryArtifactTest(t *testing.T, fetchList func([]string) ([]SummaryL
 	originalGetUserInfo := getUserInfoFunc
 	originalCheck := checkUserParticipationFunc
 	originalFetchList := fetchSummaryListFunc
+	originalResolveLinkedID := resolveLinkedIDToUniqueIDFunc
+	originalFindSatelliteUIDs := findSatelliteUniqueIDsByLinkedIDFunc
 
 	getUserInfoFunc = func(string) (*UserInfo, error) {
 		return &UserInfo{PhoneNumbers: []string{"100"}}, nil
 	}
 	checkUserParticipationFunc = func(string, []string) (bool, error) {
 		return true, nil
+	}
+	// Resolve the requested leg to a known uniqueid without touching the DB so
+	// the artifact lookup reaches fetchSummaryListFunc (the seam under test).
+	resolveLinkedIDToUniqueIDFunc = func(string, []string) (string, error) {
+		return "uid-1", nil
+	}
+	findSatelliteUniqueIDsByLinkedIDFunc = func(string) ([]string, error) {
+		return nil, nil
 	}
 	fetchSummaryListFunc = fetchList
 
@@ -126,7 +158,63 @@ func setupHistoryArtifactTest(t *testing.T, fetchList func([]string) ([]SummaryL
 		getUserInfoFunc = originalGetUserInfo
 		checkUserParticipationFunc = originalCheck
 		fetchSummaryListFunc = originalFetchList
+		resolveLinkedIDToUniqueIDFunc = originalResolveLinkedID
+		findSatelliteUniqueIDsByLinkedIDFunc = originalFindSatelliteUIDs
 	}
 
 	return router, cleanup
+}
+
+func TestHistoryArtifactRowMatches(t *testing.T) {
+	cases := []struct {
+		name     string
+		artifact string
+		item     SummaryListItem
+		want     bool
+	}{
+		{
+			name:     "transcription filter keeps transcription-only call",
+			artifact: historyArtifactTranscription,
+			item:     SummaryListItem{State: "done", HasTranscription: true},
+			want:     true,
+		},
+		{
+			name:     "transcription filter keeps call that also has a summary",
+			artifact: historyArtifactTranscription,
+			item:     SummaryListItem{State: "done", HasTranscription: true, HasSummary: true},
+			want:     true,
+		},
+		{
+			name:     "transcription filter drops call without transcription",
+			artifact: historyArtifactTranscription,
+			item:     SummaryListItem{State: "done", HasSummary: true},
+			want:     false,
+		},
+		{
+			name:     "summary filter keeps call with summary and transcription",
+			artifact: historyArtifactSummary,
+			item:     SummaryListItem{State: "done", HasTranscription: true, HasSummary: true},
+			want:     true,
+		},
+		{
+			name:     "summary filter drops transcription-only call",
+			artifact: historyArtifactSummary,
+			item:     SummaryListItem{State: "done", HasTranscription: true},
+			want:     false,
+		},
+		{
+			name:     "non-done state is never matched",
+			artifact: historyArtifactTranscription,
+			item:     SummaryListItem{State: "processing", HasTranscription: true},
+			want:     false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := historyArtifactRowMatches(tc.artifact, tc.item); got != tc.want {
+				t.Fatalf("historyArtifactRowMatches(%q, %+v) = %v, want %v", tc.artifact, tc.item, got, tc.want)
+			}
+		})
+	}
 }
