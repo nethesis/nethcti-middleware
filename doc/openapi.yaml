@@ -535,12 +535,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
-  /summary/statuses:
+  /history/statuses:
     post:
       summary: List summary/transcription status for provided unique IDs
-      operationId: listSummaryStatus
+      operationId: listHistoryStatuses
       tags:
-        - Summary
+        - History
       security:
         - bearerAuth: []
       requestBody:

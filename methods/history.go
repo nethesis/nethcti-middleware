@@ -326,16 +326,11 @@ func filterHistoryRowsByArtifact(c *gin.Context, artifact string, rows []map[str
 			}
 
 			item, ok := statusMap[lookupKey]
-			if !ok || strings.TrimSpace(item.State) != "done" {
+			if !ok {
 				continue
 			}
 
-			if artifact == historyArtifactSummary && item.HasSummary {
-				filtered = append(filtered, row)
-				continue
-			}
-
-			if artifact == historyArtifactTranscription && item.HasTranscription && !item.HasSummary {
+			if historyArtifactRowMatches(artifact, item) {
 				filtered = append(filtered, row)
 			}
 		}
@@ -346,11 +341,37 @@ func filterHistoryRowsByArtifact(c *gin.Context, artifact string, rows []map[str
 	}
 }
 
-func historySummaryLookupKey(linkedID string, uniqueID string) string {
-	if linkedID != "" {
-		return linkedID
+// historyArtifactRowMatches reports whether a history row carrying the given
+// summary/transcription status should be kept for the requested artifact filter.
+// The Summary and Transcription filters are allowed to overlap: a call that has
+// both a summary and a transcription matches both filters, consistent with the
+// UI where the "View transcription" action is available whenever the call has a
+// transcription regardless of an accompanying summary.
+func historyArtifactRowMatches(artifact string, item SummaryListItem) bool {
+	if strings.TrimSpace(item.State) != "done" {
+		return false
 	}
-	return uniqueID
+
+	switch artifact {
+	case historyArtifactSummary:
+		return item.HasSummary
+	case historyArtifactTranscription:
+		return item.HasTranscription
+	default:
+		return false
+	}
+}
+
+// historySummaryLookupKey identifies a history row for transcript/summary
+// status correlation. It prefers the per-leg uniqueid so that each leg of a
+// transfer (several rows share one linkedid, one row per uniqueid) is correlated
+// to its own transcript, instead of collapsing the whole call onto a single
+// linkedid-keyed status. Falls back to linkedid when the uniqueid is absent.
+func historySummaryLookupKey(linkedID string, uniqueID string) string {
+	if uniqueID != "" {
+		return uniqueID
+	}
+	return linkedID
 }
 
 func collectHistorySummaryLookups(rows []map[string]interface{}) []SummaryStatusLookup {

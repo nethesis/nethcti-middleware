@@ -104,15 +104,20 @@ func parsePhonebookCSV(file io.Reader) ([]*store.PhonebookEntry, *PhonebookImpor
 			continue
 		}
 
-		// Extract type and validate (must be 'private' or 'public', default to 'private')
+		// Extract type and validate (private/public or shared-group syntax, default to private)
 		entryType := getField("type")
 		if entryType == "" {
 			entryType = "private"
 		} else {
-			entryType = strings.ToLower(entryType)
-			if entryType != "private" && entryType != "public" {
+			entryTypeLower := strings.ToLower(entryType)
+			switch {
+			case entryTypeLower == "private" || entryTypeLower == "public":
+				entryType = entryTypeLower
+			case store.IsValidGroupContactType(entryType):
+				entryType = store.EncodeSharedGroupsType(store.GetSharedGroupsFromType(entryType))
+			default:
 				skippedRows++
-				errorMessages = append(errorMessages, fmt.Sprintf("Row %d: invalid type '%s' (must be 'private' or 'public')", totalRows+1, getField("type")))
+				errorMessages = append(errorMessages, fmt.Sprintf("Row %d: invalid type '%s' (must be 'private', 'public', or 'group:<group1,group2>')", totalRows+1, getField("type")))
 				continue
 			}
 		}

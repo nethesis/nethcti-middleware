@@ -70,6 +70,11 @@ type SummaryListItem struct {
 	HasSummary       bool       `json:"has_summary"`
 	SrcNumber        string     `json:"src_number,omitempty"`
 	DstNumber        string     `json:"dst_number,omitempty"`
+	// DurationSeconds is the wall-clock length of this conversation segment, set by
+	// the satellite for transfer sub-legs (consultation / post-transfer) that have
+	// no CDR row of their own for every participant. Lets the UI render a real
+	// duration instead of 00:00:00. Nil when unknown.
+	DurationSeconds  *int       `json:"duration_seconds,omitempty"`
 	// Extra marks a conversation surfaced in addition to the requested history
 	// row (e.g. the consultation leg of a transfer). The frontend renders these
 	// as their own conversation rows, keyed by id (not uniqueid, which they may
@@ -88,7 +93,6 @@ var (
 	fetchSummaryFunc                           = fetchSummaryFromDB
 	updateSummaryFunc                          = updateSummaryInDB
 	updateSummaryByIDFunc                      = updateSummaryByID
-	deleteSummaryFunc                          = deleteSummaryInDB
 	startSummaryWatchFunc = summary.StartSummaryWatchWithLinkedID
 )
 
@@ -402,96 +406,6 @@ func GetSummaryByUniqueID(c *gin.Context) {
 		Message: "success",
 		Data:    details,
 	})
-}
-
-// DeleteSummaryByUniqueID removes the summary for the given uniqueid.
-func DeleteSummaryByUniqueID(c *gin.Context) {
-	uniqueIDHint := getUniqueIDFromPath(c)
-	linkedID := getLinkedIDFromQuery(c)
-	if uniqueIDHint == "" {
-		c.JSON(http.StatusBadRequest, structs.Map(models.StatusBadRequest{
-			Code:    http.StatusBadRequest,
-			Message: "uniqueid is required",
-			Data:    nil,
-		}))
-		return
-	}
-
-	if !summary.IsSatelliteDBConfigured() {
-		c.JSON(http.StatusServiceUnavailable, structs.Map(models.StatusServiceUnavailable{
-			Code:    http.StatusServiceUnavailable,
-			Message: "satellite database not configured",
-			Data:    nil,
-		}))
-		return
-	}
-
-	uniqueID, _, _, ok, err := ensureUserParticipatedInCall(c, uniqueIDHint, linkedID)
-	if err != nil {
-		if errors.Is(err, errUnauthorized) {
-			c.JSON(http.StatusUnauthorized, structs.Map(models.StatusUnauthorized{
-				Code:    http.StatusUnauthorized,
-				Message: "unauthorized",
-				Data:    nil,
-			}))
-			return
-		}
-		logs.Log("[ERROR][SUMMARY] Failed to validate CDR participation for uniqueid " + uniqueIDHint + ": " + err.Error())
-		c.JSON(http.StatusServiceUnavailable, structs.Map(models.StatusServiceUnavailable{
-			Code:    http.StatusServiceUnavailable,
-			Message: "cdr database unavailable",
-			Data:    nil,
-		}))
-		return
-	}
-	if !ok {
-		logForbiddenParticipation(c, uniqueIDHint)
-		c.JSON(http.StatusForbidden, structs.Map(models.StatusForbidden{
-			Code:    http.StatusForbidden,
-			Message: "forbidden: user not part of call",
-			Data:    nil,
-		}))
-		return
-	}
-
-	deleted, err := deleteSummaryFunc(uniqueID)
-	if err != nil {
-		if isSatelliteSchemaMissingError(err) {
-			logs.Log("[WARNING][SUMMARY] Satellite schema is not initialized while deleting summary for uniqueid " + uniqueID + ": " + err.Error())
-			writeSatelliteSchemaMissingResponse(c)
-			return
-		}
-		if isSatelliteDBUnavailableError(err) {
-			logs.Log("[WARNING][SUMMARY] Satellite database is unavailable while deleting summary for uniqueid " + uniqueID + ": " + err.Error())
-			writeSatelliteDBUnavailableResponse(c)
-			return
-		}
-
-		logs.Log("[ERROR][SUMMARY] Failed to delete summary for uniqueid " + uniqueID + ": " + err.Error())
-		c.JSON(http.StatusInternalServerError, structs.Map(models.StatusInternalServerError{
-			Code:    http.StatusInternalServerError,
-			Message: "failed to delete summary",
-			Data:    nil,
-		}))
-		return
-	}
-
-	if !deleted {
-		c.JSON(http.StatusNotFound, structs.Map(models.StatusNotFound{
-			Code:    http.StatusNotFound,
-			Message: "summary not found",
-			Data:    nil,
-		}))
-		return
-	}
-
-	c.JSON(http.StatusOK, structs.Map(models.StatusOK{
-		Code:    http.StatusOK,
-		Message: "summary deleted",
-		Data: gin.H{
-			"uniqueid": uniqueID,
-		},
-	}))
 }
 
 // UpdateSummaryByUniqueID updates the summary for the given uniqueid.
@@ -1199,7 +1113,7 @@ func fetchParticipatedConversationsFromDB(linkedIDs []string, phoneNumbers []str
 
 	query := fmt.Sprintf(`
 		SELECT DISTINCT ON (uniqueid, src_number, dst_number)
-			id, uniqueid, linkedid, cleaned_transcription, raw_transcription, summary, state, src_number, dst_number, updated_at
+			id, uniqueid, linkedid, cleaned_transcription, raw_transcription, summary, state, src_number, dst_number, duration_seconds, updated_at
 		FROM transcripts
 		WHERE deleted_at IS NULL
 			AND linkedid IN (%s)
@@ -1236,10 +1150,11 @@ func fetchParticipatedConversationsFromDB(linkedIDs []string, phoneNumbers []str
 			dbState     string
 			dbSrc       sql.NullString
 			dbDst       sql.NullString
+			dbDuration  sql.NullInt64
 			dbUpdatedAt time.Time
 		)
 
-		if err := rows.Scan(&dbID, &dbUniqueID, &dbLinkedID, &dbCleaned, &dbRaw, &dbSummary, &dbState, &dbSrc, &dbDst, &dbUpdatedAt); err != nil {
+		if err := rows.Scan(&dbID, &dbUniqueID, &dbLinkedID, &dbCleaned, &dbRaw, &dbSummary, &dbState, &dbSrc, &dbDst, &dbDuration, &dbUpdatedAt); err != nil {
 			return nil, err
 		}
 
@@ -1248,7 +1163,7 @@ func fetchParticipatedConversationsFromDB(linkedIDs []string, phoneNumbers []str
 		hasSummary := dbSummary.Valid && strings.TrimSpace(dbSummary.String) != ""
 
 		updatedAt := dbUpdatedAt
-		items = append(items, SummaryListItem{
+		item := SummaryListItem{
 			ID:               dbID,
 			LinkedID:         strings.TrimSpace(dbLinkedID.String),
 			UniqueID:         dbUniqueID,
@@ -1258,7 +1173,12 @@ func fetchParticipatedConversationsFromDB(linkedIDs []string, phoneNumbers []str
 			SrcNumber:        strings.TrimSpace(dbSrc.String),
 			DstNumber:        strings.TrimSpace(dbDst.String),
 			UpdatedAt:        &updatedAt,
-		})
+		}
+		if dbDuration.Valid {
+			d := int(dbDuration.Int64)
+			item.DurationSeconds = &d
+		}
+		items = append(items, item)
 	}
 
 	if err := rows.Err(); err != nil {
@@ -1314,7 +1234,7 @@ func fetchAllConversationsByLinkedIDsFromDB(linkedIDs []string) ([]SummaryListIt
 	placeholders := buildPostgresPlaceholders(len(linkedIDs), 1)
 	query := fmt.Sprintf(`
 		SELECT DISTINCT ON (uniqueid, src_number, dst_number)
-			id, uniqueid, linkedid, cleaned_transcription, raw_transcription, summary, state, src_number, dst_number, updated_at
+			id, uniqueid, linkedid, cleaned_transcription, raw_transcription, summary, state, src_number, dst_number, duration_seconds, updated_at
 		FROM transcripts
 		WHERE deleted_at IS NULL AND linkedid IN (%s)
 		ORDER BY uniqueid, src_number, dst_number, updated_at DESC, id DESC`, placeholders)
@@ -1342,16 +1262,17 @@ func fetchAllConversationsByLinkedIDsFromDB(linkedIDs []string) ([]SummaryListIt
 			dbState     string
 			dbSrc       sql.NullString
 			dbDst       sql.NullString
+			dbDuration  sql.NullInt64
 			dbUpdatedAt time.Time
 		)
-		if err := rows.Scan(&dbID, &dbUniqueID, &dbLinkedID, &dbCleaned, &dbRaw, &dbSummary, &dbState, &dbSrc, &dbDst, &dbUpdatedAt); err != nil {
+		if err := rows.Scan(&dbID, &dbUniqueID, &dbLinkedID, &dbCleaned, &dbRaw, &dbSummary, &dbState, &dbSrc, &dbDst, &dbDuration, &dbUpdatedAt); err != nil {
 			return nil, err
 		}
 		hasTranscription := (dbCleaned.Valid && strings.TrimSpace(dbCleaned.String) != "") ||
 			(dbRaw.Valid && strings.TrimSpace(dbRaw.String) != "")
 		hasSummary := dbSummary.Valid && strings.TrimSpace(dbSummary.String) != ""
 		updatedAt := dbUpdatedAt
-		items = append(items, SummaryListItem{
+		item := SummaryListItem{
 			ID:               dbID,
 			LinkedID:         strings.TrimSpace(dbLinkedID.String),
 			UniqueID:         dbUniqueID,
@@ -1361,7 +1282,12 @@ func fetchAllConversationsByLinkedIDsFromDB(linkedIDs []string) ([]SummaryListIt
 			SrcNumber:        strings.TrimSpace(dbSrc.String),
 			DstNumber:        strings.TrimSpace(dbDst.String),
 			UpdatedAt:        &updatedAt,
-		})
+		}
+		if dbDuration.Valid {
+			d := int(dbDuration.Int64)
+			item.DurationSeconds = &d
+		}
+		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -1587,29 +1513,6 @@ func updateSummaryInDB(uniqueID, summaryText string) (bool, error) {
 		)
 		UPDATE transcripts SET summary = $1 WHERE id IN (SELECT id FROM canonical)`
 	result, err := database.ExecContext(queryCtx, query, summaryText, uniqueID)
-	if err != nil {
-		return false, err
-	}
-
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return false, err
-	}
-
-	return affected > 0, nil
-}
-
-func deleteSummaryInDB(uniqueID string) (bool, error) {
-	database := db.GetSatelliteDB()
-	if database == nil {
-		return false, sql.ErrConnDone
-	}
-
-	queryCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	query := "UPDATE transcripts SET deleted_at = NOW() WHERE uniqueid = $1 AND deleted_at IS NULL"
-	result, err := database.ExecContext(queryCtx, query, uniqueID)
 	if err != nil {
 		return false, err
 	}
