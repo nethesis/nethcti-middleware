@@ -133,8 +133,19 @@ func ensureCentralizedPhonebookTable() error {
 			workpostalcode varchar(255) DEFAULT NULL,
 			workcountry varchar(255) DEFAULT NULL,
 			url varchar(255) DEFAULT NULL,
+			sid_imported varchar(255) DEFAULT NULL,
 			PRIMARY KEY (id)
 		) ENGINE=MyISAM DEFAULT CHARSET=utf8mb3;
+	`)
+	if err != nil {
+		return err
+	}
+
+	// The phonebook database is not dropped between runs (only nethcti3 is), so on a
+	// reused DB the CREATE TABLE IF NOT EXISTS above would keep an old schema without
+	// sid_imported. Add the column idempotently to mirror the production schema.
+	_, err = db.GetDB().Exec(`
+		ALTER TABLE phonebook.phonebook ADD COLUMN IF NOT EXISTS sid_imported varchar(255) DEFAULT NULL;
 	`)
 	return err
 }
@@ -200,6 +211,44 @@ func insertCentralizedPhonebookRow(t *testing.T, entry store.PhonebookEntry) {
 		entry.WorkCountry, entry.URL,
 	)
 	require.NoError(t, err)
+}
+
+// insertCentralizedPhonebookRowWithSid seeds a centralized row with an explicit
+// sid_imported value, used to assert that rows from other sync sources survive the
+// NethCTI republish.
+func insertCentralizedPhonebookRowWithSid(t *testing.T, entry store.PhonebookEntry, sidImported string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, err := db.GetDB().ExecContext(ctx, `
+		INSERT INTO phonebook.phonebook (
+			owner_id, type, homephone, workphone, cellphone, fax, company, name, sid_imported
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`,
+		entry.OwnerID, entry.Type, entry.HomePhone, entry.WorkPhone, entry.CellPhone, entry.Fax,
+		entry.Company, entry.Name, sidImported,
+	)
+	require.NoError(t, err)
+}
+
+// countCentralizedRows counts rows in phonebook.phonebook matching an optional
+// sid_imported filter (empty string means count all rows).
+func countCentralizedRows(t *testing.T, sidImported string) int {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var count int
+	var err error
+	if sidImported == "" {
+		err = db.GetDB().QueryRowContext(ctx, "SELECT COUNT(*) FROM phonebook.phonebook").Scan(&count)
+	} else {
+		err = db.GetDB().QueryRowContext(ctx,
+			"SELECT COUNT(*) FROM phonebook.phonebook WHERE sid_imported = ?", sidImported).Scan(&count)
+	}
+	require.NoError(t, err)
+	return count
 }
 
 func setCentralizedPhonebookLastSyncAt(t *testing.T, value time.Time) {
@@ -865,4 +914,69 @@ func TestBatchInsertPhonebookEntries_GroupTypePersists(t *testing.T) {
 	err = db.GetDB().QueryRowContext(ctx, "SELECT type FROM cti_phonebook WHERE name = ?", entry.Name).Scan(&storedType)
 	require.NoError(t, err, "Should be able to retrieve stored group type")
 	assert.Equal(t, entry.Type, storedType)
+}
+
+func TestSyncPublicContactsToCentralized(t *testing.T) {
+	clearPhonebookTable(t)
+	clearCentralizedPhonebookTable(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Seed cti_phonebook with a public and a private contact.
+	require.NoError(t, store.CreatePhonebookEntry(ctx, &store.PhonebookEntry{
+		OwnerID:   "alice",
+		Type:      "public",
+		Name:      "Alice Public",
+		Company:   "Acme",
+		WorkPhone: "0123456789",
+	}))
+	require.NoError(t, store.CreatePhonebookEntry(ctx, &store.PhonebookEntry{
+		OwnerID:   "bob",
+		Type:      "private",
+		Name:      "Bob Private",
+		Company:   "Personal",
+		WorkPhone: "0987654321",
+	}))
+
+	// Seed a centralized row coming from another sync source: it must survive.
+	insertCentralizedPhonebookRowWithSid(t, store.PhonebookEntry{
+		OwnerID:   "external",
+		Type:      "public",
+		Name:      "External Contact",
+		Company:   "Partner",
+		WorkPhone: "0555000111",
+	}, "mssql")
+
+	require.NoError(t, store.SyncPublicContactsToCentralized(ctx))
+
+	// The external row is preserved.
+	assert.Equal(t, 1, countCentralizedRows(t, "mssql"), "external (non-nethcti) row must be preserved")
+
+	// Exactly one nethcti row, mirroring the single public contact, marked with both
+	// type='nethcti' and sid_imported='nethcti'.
+	assert.Equal(t, 1, countCentralizedRows(t, "nethcti"), "public contact must be exported once")
+
+	var name, contactType, company string
+	require.NoError(t, db.GetDB().QueryRowContext(ctx,
+		"SELECT name, type, company FROM phonebook.phonebook WHERE sid_imported = 'nethcti'").
+		Scan(&name, &contactType, &company))
+	assert.Equal(t, "Alice Public", name)
+	assert.Equal(t, "nethcti", contactType)
+	assert.Equal(t, "Acme", company)
+
+	// The private contact must not be exported.
+	var privateCount int
+	require.NoError(t, db.GetDB().QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM phonebook.phonebook WHERE name = 'Bob Private'").Scan(&privateCount))
+	assert.Equal(t, 0, privateCount, "private contact must not be exported")
+
+	// Total = 1 nethcti + 1 external.
+	assert.Equal(t, 2, countCentralizedRows(t, ""))
+
+	// Idempotent: a second run does not duplicate the nethcti row nor touch the external one.
+	require.NoError(t, store.SyncPublicContactsToCentralized(ctx))
+	assert.Equal(t, 1, countCentralizedRows(t, "nethcti"), "second run must not duplicate nethcti rows")
+	assert.Equal(t, 1, countCentralizedRows(t, "mssql"), "external row must still be preserved")
+	assert.Equal(t, 2, countCentralizedRows(t, ""))
 }
