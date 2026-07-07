@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/nethesis/nethcti-middleware/db"
 	"github.com/nethesis/nethcti-middleware/logs"
@@ -448,6 +449,84 @@ func DeletePhonebookEntryByID(ctx context.Context, id int64) error {
 
 	_, err := database.ExecContext(ctx, "DELETE FROM `cti_phonebook` WHERE id = ?", id)
 	return err
+}
+
+// centralizedSyncColumns are the cti_phonebook columns copied verbatim into
+// phonebook.phonebook by SyncPublicContactsToCentralized. `type` and `sid_imported`
+// are intentionally NOT in this list: both are written as the literal 'nethcti' marker
+// (lockstep with nethcti_export.php). Keeping a single list, reused for both the INSERT
+// column clause and the SELECT projection, is the single source of truth for a schema
+// change and prevents the two halves from drifting out of column alignment.
+var centralizedSyncColumns = []string{
+	"owner_id", "homeemail", "workemail", "homephone", "workphone", "cellphone", "fax",
+	"title", "company", "notes", "name", "homestreet", "homepob", "homecity", "homeprovince",
+	"homepostalcode", "homecountry", "workstreet", "workpob", "workcity", "workprovince",
+	"workpostalcode", "workcountry", "url",
+}
+
+// SyncPublicContactsToCentralized republishes every public CTI contact into the
+// centralized phonebook used for call-time name resolution (Asterisk lookup.php and
+// the CTI customer-card "Identity" query both read phonebook.phonebook).
+//
+// It mirrors exactly the nightly nethcti_export.php job. NethCTI-exported rows are marked
+// with both type='nethcti' and sid_imported='nethcti': the middleware union search excludes
+// them via type != 'nethcti', while cleanup here keys on sid_imported='nethcti' to stay in
+// lockstep with the nightly export (which deletes by the same column). The function deletes
+// those rows and reinserts every cti_phonebook row with type='public', so new/changed public
+// contacts become immediately resolvable instead of waiting for the nightly export. Rows from
+// other sync sources (sid_imported != 'nethcti') are left untouched.
+//
+// phonebook.phonebook is a MyISAM table (no transactions), so the delete+reinsert is
+// wrapped in LOCK TABLES ... WRITE to avoid exposing an empty result set to concurrent
+// readers. LOCK TABLES is connection-scoped, hence the work runs on a single pinned
+// connection.
+func SyncPublicContactsToCentralized(ctx context.Context) error {
+	database := db.GetDB()
+	if database == nil {
+		return errors.New("database not initialized")
+	}
+
+	conn, err := database.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	if _, err := conn.ExecContext(ctx, "LOCK TABLES `phonebook`.`phonebook` WRITE, `cti_phonebook` READ"); err != nil {
+		return err
+	}
+	// Always release the lock with a fresh context. The original ctx may be expired by
+	// the time DELETE/INSERT finishes (large table or WRITE-lock contention), and
+	// conn.ExecContext with a cancelled ctx returns immediately without sending UNLOCK to
+	// MySQL, leaving the connection in LOCK TABLES state inside the pool. The next
+	// borrower would then inherit the lock and receive MySQL error 1100 on unrelated
+	// queries, poisoning up to MaxOpenConns connections until ConnMaxLifetime recycles them.
+	defer func() {
+		unlockCtx, unlockCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer unlockCancel()
+		if _, unlockErr := conn.ExecContext(unlockCtx, "UNLOCK TABLES"); unlockErr != nil {
+			logs.Log("[CRITICAL][PHONEBOOK] Failed to unlock tables after centralized sync: " + unlockErr.Error())
+		}
+	}()
+
+	if _, err := conn.ExecContext(ctx, "DELETE FROM `phonebook`.`phonebook` WHERE sid_imported = 'nethcti'"); err != nil {
+		return err
+	}
+
+	// Build the INSERT column clause and the SELECT projection from the same list so
+	// they cannot drift out of alignment (a mismatch would silently write a value into
+	// the wrong column). `type` and `sid_imported` are appended explicitly because both
+	// are written as the literal 'nethcti' marker rather than copied from the source row.
+	columns := strings.Join(centralizedSyncColumns, ", ")
+	insertSelect := "INSERT INTO `phonebook`.`phonebook` (" + columns + ", type, sid_imported)\n" +
+		"SELECT " + columns + ", 'nethcti', 'nethcti'\n" +
+		"FROM cti_phonebook\n" +
+		"WHERE type = 'public'"
+	if _, err := conn.ExecContext(ctx, insertSelect); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func scanPhonebookEntry(scanner interface{ Scan(dest ...any) error }) (*PhonebookEntry, error) {

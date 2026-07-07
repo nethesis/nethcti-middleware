@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       mariadb:
-        image: mariadb:12.2.2
+        image: mariadb:12.3.2
         env:
           MYSQL_ROOT_PASSWORD: root
           MYSQL_DATABASE: nethcti3
@@ -23,7 +23,7 @@ jobs:
           --health-retries=10
     steps:
       - name: 'Checkout source code'
-        uses: 'actions/checkout@v6'
+        uses: 'actions/checkout@v7'
         with:
           ref: ${{ github.ref }}
           persist-credentials: false
@@ -64,7 +64,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           
       - name: Generate SBOM (CycloneDX)
-        uses: aquasecurity/trivy-action@0.35.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: 'fs'
           scan-ref: '.'

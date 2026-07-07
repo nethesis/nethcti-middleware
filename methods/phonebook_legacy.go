@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -39,10 +40,47 @@ var (
 	createPhonebookEntryFunc             = store.CreatePhonebookEntry
 	updatePhonebookEntryFieldsFunc       = store.UpdatePhonebookEntryFields
 	deletePhonebookEntryByIDFunc         = store.DeletePhonebookEntryByID
+	syncCentralizedPublicContactsFunc    = store.SyncPublicContactsToCentralized
 	searchLegacyPhonebookFunc            = store.SearchLegacyPhonebook
 	listLegacyPhonebookFunc              = store.ListLegacyPhonebook
 	getUserCapabilitiesFunc              = store.GetUserCapabilities
 )
+
+var (
+	// centralizedSyncCh is a capacity-1 channel used to coalesce rapid sync triggers.
+	// The background worker drains it and calls syncCentralizedPublicContacts.
+	centralizedSyncCh   = make(chan struct{}, 1)
+	centralizedSyncOnce sync.Once
+
+	// scheduleSyncCentralizedPublicContactsFunc is the testable entry point for off-request
+	// sync scheduling. In production it enqueues a background republish; in tests it can be
+	// replaced to assert that the trigger fires without running real DB work.
+	scheduleSyncCentralizedPublicContactsFunc = scheduleSyncCentralizedPublicContacts
+)
+
+// isPublicContactType reports whether a contact type represents a public contact.
+// It is case-insensitive and trims whitespace to handle types from older writers.
+func isPublicContactType(t string) bool {
+	return strings.EqualFold(strings.TrimSpace(t), "public")
+}
+
+// scheduleSyncCentralizedPublicContacts enqueues a best-effort background republish of
+// public CTI contacts into the centralized phonebook. Multiple rapid calls are coalesced:
+// at most one run is pending at any time, so a burst of N edits produces at most two
+// sequential syncs (one in flight + one pending), never N parallel ones.
+func scheduleSyncCentralizedPublicContacts() {
+	centralizedSyncOnce.Do(func() {
+		go func() {
+			for range centralizedSyncCh {
+				syncCentralizedPublicContacts()
+			}
+		}()
+	})
+	select {
+	case centralizedSyncCh <- struct{}{}:
+	default: // already pending, coalesce
+	}
+}
 
 var legacyPhonebookWritableFields = []string{
 	"name",
@@ -229,6 +267,24 @@ func GetCentralizedPhonebookContact(c *gin.Context) {
 	c.JSON(http.StatusOK, legacyPhonebookEntryResponseWithSource(contact, "centralized"))
 }
 
+// syncCentralizedPublicContacts performs the actual centralized phonebook republish.
+// It is called exclusively from the background worker goroutine started by
+// scheduleSyncCentralizedPublicContacts, never directly in an HTTP handler.
+// A failure is logged but does not fail the originating CRUD request; the nightly
+// export remains a fallback.
+func syncCentralizedPublicContacts() {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if err := syncCentralizedPublicContactsFunc(ctx); err != nil {
+		// CRITICAL, not ERROR: the originating CTI write already returned success to the
+		// client, so this is a silent divergence — the centralized phonebook stays stale
+		// until the next successful republish or the nightly export. A distinguishable
+		// level lets monitoring alert on "cti OK / centralized republish failed".
+		logs.Log("[CRITICAL][PHONEBOOK] Centralized phonebook republish failed (CTI write already committed; centralized lookup stale until next sync or nightly export): " + err.Error())
+	}
+}
+
 // CreateLegacyCTIPhonebookContact creates a legacy CTI phonebook contact from middleware.
 func CreateLegacyCTIPhonebookContact(c *gin.Context) {
 	username, err := getUsernameFromContext(c)
@@ -292,6 +348,10 @@ func CreateLegacyCTIPhonebookContact(c *gin.Context) {
 		logs.Log("[ERROR][PHONEBOOK] Failed to create CTI phonebook contact: " + err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{"message": "failed to create phonebook contact"})
 		return
+	}
+
+	if isPublicContactType(contactType) {
+		scheduleSyncCentralizedPublicContactsFunc()
 	}
 
 	c.Status(http.StatusCreated)
@@ -371,6 +431,10 @@ func UpdateLegacyCTIPhonebookContact(c *gin.Context) {
 		return
 	}
 
+	if isPublicContactType(existingContact.Type) || isPublicContactType(nextType) {
+		scheduleSyncCentralizedPublicContactsFunc()
+	}
+
 	c.Status(http.StatusOK)
 	c.Writer.WriteHeaderNow()
 }
@@ -414,6 +478,10 @@ func DeleteLegacyCTIPhonebookContact(c *gin.Context) {
 		logs.Log("[ERROR][PHONEBOOK] Failed to delete CTI phonebook contact: " + err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{"message": "failed to delete phonebook contact"})
 		return
+	}
+
+	if isPublicContactType(existingContact.Type) {
+		scheduleSyncCentralizedPublicContactsFunc()
 	}
 
 	c.Status(http.StatusOK)
