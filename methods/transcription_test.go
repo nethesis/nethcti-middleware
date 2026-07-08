@@ -495,6 +495,7 @@ func saveAndRestoreResolveFuncs(t *testing.T) func() {
 	origExternalSrcs := getExternalSrcNumsFromCDRFunc
 	origAnswered := isCDRAnsweredFunc
 	origSrcEqDst := checkSrcEqualsDstFunc
+	origExists := cdrRecordExistsFunc
 
 	// Default: treat all CDR rows as ANSWERED unless overridden by a test.
 	isCDRAnsweredFunc = func(string) (bool, error) { return true, nil }
@@ -502,6 +503,8 @@ func saveAndRestoreResolveFuncs(t *testing.T) func() {
 	checkSrcEqualsDstFunc = func(string, []string) (bool, error) { return false, nil }
 	// Default: no external src nums.
 	getExternalSrcNumsFromCDRFunc = func(string, []string) ([]string, error) { return nil, nil }
+	// Default: the requested uniqueid is a real CDR row unless overridden.
+	cdrRecordExistsFunc = func(string) (bool, error) { return true, nil }
 
 	return func() {
 		checkUserParticipationFunc = origCheck
@@ -515,6 +518,7 @@ func saveAndRestoreResolveFuncs(t *testing.T) func() {
 		getExternalSrcNumsFromCDRFunc = origExternalSrcs
 		isCDRAnsweredFunc = origAnswered
 		checkSrcEqualsDstFunc = origSrcEqDst
+		cdrRecordExistsFunc = origExists
 	}
 }
 
@@ -1345,5 +1349,39 @@ func TestResolve_ZeroDuration_ReturnsNotAuthorized(t *testing.T) {
 	}
 	if ok || resolved != "" {
 		t.Fatalf("expected not authorized for zero-duration CDR, got %q (ok=%v)", resolved, ok)
+	}
+}
+
+// TestResolve_CalleeOwnChannelUniqueID_ResolvesViaLinkedID reproduces the callee-side
+// 403: the callee reports its OWN Asterisk channel uniqueid, which never appears in
+// CDR at all for a simple two-party call (CDR is keyed by the caller's channel).
+// This must fall through to the linkedid-based lookup instead of being rejected as
+// if the (nonexistent) row were NO ANSWER.
+func TestResolve_CalleeOwnChannelUniqueID_ResolvesViaLinkedID(t *testing.T) {
+	defer saveAndRestoreResolveFuncs(t)()
+
+	// The callee's own channel uniqueid has no CDR row of its own.
+	cdrRecordExistsFunc = func(uid string) (bool, error) {
+		return uid != "callee-own-leg", nil
+	}
+	checkSatelliteRecordExistsFunc = func(string) (bool, bool, error) {
+		return false, false, nil
+	}
+	findSatelliteUniqueIDsByLinkedIDFunc = func(string) ([]string, error) {
+		return nil, nil
+	}
+	resolveLinkedIDToUniqueIDFunc = func(linkedID string, _ []string) (string, error) {
+		if linkedID == "linked-1" {
+			return "master-uid", nil
+		}
+		return "", nil
+	}
+
+	resolved, ok, err := resolveAuthorizedUniqueID("callee-own-leg", "linked-1", []string{"202"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !ok || resolved != "master-uid" {
+		t.Fatalf("expected master-uid via linkedid fallback, got %q (ok=%v)", resolved, ok)
 	}
 }

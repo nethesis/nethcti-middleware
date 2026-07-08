@@ -41,6 +41,7 @@ var (
 	getExternalPartiesFromCDRFunc                                             = getExternalPartiesFromCDR
 	getExternalSrcNumsFromCDRFunc        func(string, []string) ([]string, error) = getExternalSrcNumsFromCDR
 	isCDRAnsweredFunc                                                         = isCDRAnswered
+	cdrRecordExistsFunc                                                       = cdrRecordExists
 	checkSrcEqualsDstFunc                func(string, []string) (bool, error) = checkSrcEqualsDstInCDR
 )
 
@@ -221,9 +222,27 @@ func resolveAuthorizedUniqueIDFull(uniqueID string, linkedID string, phoneNumber
 		return "", nil, false, nil
 	}
 
+	// A client reports the uniqueid of its OWN Asterisk channel leg (caller and
+	// callee each have a different one), which for a simple two-party call
+	// never appears in the CDR table at all — CDR is keyed by the call's
+	// originating/"master" channel only. uniqueIDExistsInCDR distinguishes
+	// that ambiguous "unknown" case from a CDR row that genuinely exists, so
+	// it isn't conflated with NO ANSWER below and in getRequestedExternals.
+	var uniqueIDExistsInCDR bool
+	if uniqueID != "" {
+		exists, err := cdrRecordExistsFunc(uniqueID)
+		if err != nil {
+			logs.Log("[WARNING][RESOLVE] CDR existence check failed for uniqueid " + uniqueID + ": " + err.Error())
+		}
+		uniqueIDExistsInCDR = exists
+	}
+
 	// Skip NO ANSWER rows — the user never actually talked on this leg
 	// (e.g., a queue ring that wasn't picked up). No transcription to show.
-	if uniqueID != "" {
+	// Only applies when the CDR row actually exists for this uniqueid; an
+	// unknown uniqueid must fall through to the linkedid-based resolution
+	// below instead of being rejected outright.
+	if uniqueID != "" && uniqueIDExistsInCDR {
 		answered, err := isCDRAnsweredFunc(uniqueID)
 		if err != nil {
 			logs.Log("[WARNING][RESOLVE] CDR disposition check failed for uniqueid " + uniqueID + ": " + err.Error())
@@ -288,7 +307,11 @@ func resolveAuthorizedUniqueIDFull(uniqueID string, linkedID string, phoneNumber
 	getRequestedExternals := func() map[string]struct{} {
 		if !externalsComputed {
 			externalsComputed = true
-			if uniqueID != "" {
+			// Only query when the uniqueid is a real CDR row: for an unknown
+			// uniqueid (see uniqueIDExistsInCDR above), leave this nil so
+			// matchesExternalParties treats it as "couldn't determine, allow"
+			// instead of "technical row with no external parties, reject".
+			if uniqueID != "" && uniqueIDExistsInCDR {
 				ext, err := getExternalPartiesFromCDRFunc(uniqueID, phoneNumbers)
 				if err == nil {
 					requestedExternals = ext
@@ -772,6 +795,35 @@ func isCDRAnswered(uniqueID string) (bool, error) {
 	err := database.QueryRowContext(queryCtx,
 		"SELECT disposition FROM cdr WHERE uniqueid = ? AND disposition = 'ANSWERED' AND duration > 0 LIMIT 1",
 		uniqueID).Scan(&disposition)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// cdrRecordExists reports whether any CDR row exists for uniqueID at all,
+// regardless of disposition. Callers report the uniqueid of their OWN
+// Asterisk channel leg, which for a simple two-party call never appears in
+// CDR (CDR is keyed by the call's originating/"master" channel) — that must
+// be treated as "unknown", not conflated with "found but NO ANSWER".
+func cdrRecordExists(uniqueID string) (bool, error) {
+	if uniqueID == "" {
+		return false, nil
+	}
+
+	database := db.GetCDRDB()
+	if database == nil {
+		return false, sql.ErrConnDone
+	}
+
+	queryCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var one int
+	err := database.QueryRowContext(queryCtx, "SELECT 1 FROM cdr WHERE uniqueid = ? LIMIT 1", uniqueID).Scan(&one)
 	if err == sql.ErrNoRows {
 		return false, nil
 	}
