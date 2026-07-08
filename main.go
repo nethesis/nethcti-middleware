@@ -59,7 +59,9 @@ func main() {
 	store.UserSessionInit()
 
 	// Init profiles and users
-	store.InitProfiles(configuration.Config.ProfilesConfigPath, configuration.Config.UsersConfigPath)
+	if err := store.InitProfiles(configuration.Config.ProfilesConfigPath, configuration.Config.UsersConfigPath); err != nil {
+		logs.Log("[ERROR][AUTH] Failed to initialize profiles/users: " + err.Error() + "; capability-gated routes will be denied until this is fixed")
+	}
 
 	store.InitPersistence(configuration.Config.SecretsDir)
 	if err := store.LoadSessions(); err != nil {
