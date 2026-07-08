@@ -51,10 +51,5 @@ CREATE TABLE IF NOT EXISTS cti_phonebook (
 	KEY cphone_idx (cellphone),
 	KEY extension_idx (extension),
 	KEY fax_idx (fax),
-	KEY company_idx (company),
-	KEY lastname_idx (lastname),
-	KEY wphone2_idx (workphone2),
-	KEY cphone2_idx (cellphone2),
-	KEY ophone_idx (otherphone),
-	KEY oemail_idx (otheremail)
+	KEY company_idx (company)
 ) ENGINE=MyISAM DEFAULT CHARSET=utf8mb3

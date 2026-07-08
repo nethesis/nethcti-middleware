@@ -542,6 +542,10 @@ const flatDisplayKey = "COALESCE(NULLIF(NULLIF(name, ''), '-'), company)"
 // firstname/lastname use a two-level ordering: contacts that have the new field
 // populated come first (A-Z by that field), then everyone else A-Z by the
 // display key (legacy single "name", company for company rows).
+//
+// With no (or unknown) sort the legacy ordering "company ASC, name ASC" is kept:
+// existing callers (nethvoice-cti, phone-island) do not send a sort param yet,
+// so the default must not silently change the live search order.
 func legacyFlatOrderByClause(sort string) string {
 	switch strings.ToLower(strings.TrimSpace(sort)) {
 	case "firstname":
@@ -552,8 +556,10 @@ func legacyFlatOrderByClause(sort string) string {
 			"COALESCE(NULLIF(lastname, ''), " + flatDisplayKey + ") ASC"
 	case "company":
 		return "ORDER BY COALESCE(NULLIF(company, ''), " + flatDisplayKey + ") ASC"
-	default: // "displayname", "name", empty
+	case "displayname", "name":
 		return "ORDER BY " + flatDisplayKey + " ASC"
+	default:
+		return "ORDER BY company ASC, name ASC"
 	}
 }
 
@@ -615,12 +621,20 @@ func buildLegacySearchClauses(view, rawTerm string) ([]any, []any, string, strin
 	centralizedArgs = append(centralizedArgs, term, term, term, term)
 
 	// The phone/notes OR-terms above match any contact with a populated phone,
-	// so "person" alone would still leak companies (which keep an empty/'-'
-	// placeholder name). Guard the whole clause to real-name contacts only.
-	if strings.EqualFold(strings.TrimSpace(view), "person") {
+	// so the base name/company match is not enough to keep the view clean:
+	// - "person" would still leak companies (empty/'-' placeholder name);
+	// - "company" would still leak persons without a company (empty company),
+	//   collapsing them into a bogus company="" bucket.
+	// Guard each view to rows that actually belong to it.
+	switch strings.ToLower(strings.TrimSpace(view)) {
+	case "person":
 		const personGuard = "name IS NOT NULL AND name != '' AND name != '-'"
 		ctiClause = personGuard + " AND (" + ctiClause + ")"
 		centralizedClause = personGuard + " AND (" + centralizedClause + ")"
+	case "company":
+		const companyGuard = "company IS NOT NULL AND company != '' AND company != '-'"
+		ctiClause = companyGuard + " AND (" + ctiClause + ")"
+		centralizedClause = companyGuard + " AND (" + centralizedClause + ")"
 	}
 
 	return ctiArgs, centralizedArgs, ctiClause, centralizedClause

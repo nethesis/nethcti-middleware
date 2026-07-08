@@ -65,6 +65,80 @@ func TestBuildLegacySearchClauses_EscapesLikeWildcards(t *testing.T) {
 	}, centralizedArgs)
 }
 
+func TestLegacyFlatOrderByClause(t *testing.T) {
+	// The empty/unknown sort MUST keep the legacy ordering: existing frontends
+	// (nethvoice-cti, phone-island) do not send a sort param yet, so changing
+	assert.Equal(t, "ORDER BY company ASC, name ASC", legacyFlatOrderByClause(""))
+	assert.Equal(t, "ORDER BY company ASC, name ASC", legacyFlatOrderByClause("bogus"))
+
+	assert.Equal(t,
+		"ORDER BY (firstname IS NULL OR firstname = '') ASC, "+
+			"COALESCE(NULLIF(firstname, ''), "+flatDisplayKey+") ASC",
+		legacyFlatOrderByClause("firstname"))
+
+	lastnameClause := "ORDER BY (lastname IS NULL OR lastname = '') ASC, " +
+		"COALESCE(NULLIF(lastname, ''), " + flatDisplayKey + ") ASC"
+	assert.Equal(t, lastnameClause, legacyFlatOrderByClause("lastname"))
+	assert.Equal(t, lastnameClause, legacyFlatOrderByClause("surname"))
+	assert.Equal(t, lastnameClause, legacyFlatOrderByClause("LASTNAME"))
+
+	assert.Equal(t,
+		"ORDER BY COALESCE(NULLIF(company, ''), "+flatDisplayKey+") ASC",
+		legacyFlatOrderByClause("company"))
+
+	assert.Equal(t, "ORDER BY "+flatDisplayKey+" ASC", legacyFlatOrderByClause("displayname"))
+	assert.Equal(t, "ORDER BY "+flatDisplayKey+" ASC", legacyFlatOrderByClause("name"))
+}
+
+func TestLegacyListOrderByClause(t *testing.T) {
+	assert.Equal(t, "ORDER BY sort_name ASC", legacyListOrderByClause(""))
+	assert.Equal(t, "ORDER BY sort_name ASC", legacyListOrderByClause("bogus"))
+	assert.Equal(t, "ORDER BY sort_name ASC", legacyListOrderByClause("displayname"))
+	assert.Equal(t, "ORDER BY sort_name ASC", legacyListOrderByClause("name"))
+
+	assert.Equal(t,
+		"ORDER BY (firstname IS NULL OR firstname = '') ASC, "+
+			"COALESCE(NULLIF(firstname, ''), sort_name) ASC",
+		legacyListOrderByClause("firstname"))
+
+	lastnameClause := "ORDER BY (lastname IS NULL OR lastname = '') ASC, " +
+		"COALESCE(NULLIF(lastname, ''), sort_name) ASC"
+	assert.Equal(t, lastnameClause, legacyListOrderByClause("lastname"))
+	assert.Equal(t, lastnameClause, legacyListOrderByClause("surname"))
+
+	assert.Equal(t, "ORDER BY company ASC, sort_name ASC", legacyListOrderByClause("company"))
+}
+
+func TestBuildLegacySearchClauses_ViewGuards(t *testing.T) {
+	const personGuard = "name IS NOT NULL AND name != '' AND name != '-'"
+	const companyGuard = "company IS NOT NULL AND company != '' AND company != '-'"
+
+	t.Run("person view guards out company rows", func(t *testing.T) {
+		_, _, ctiClause, centralizedClause := buildLegacySearchClauses("person", "acme")
+
+		assert.Contains(t, ctiClause, personGuard+" AND (")
+		assert.Contains(t, centralizedClause, personGuard+" AND (")
+		assert.NotContains(t, ctiClause, companyGuard)
+	})
+
+	t.Run("company view guards out person rows without company", func(t *testing.T) {
+		_, _, ctiClause, centralizedClause := buildLegacySearchClauses("company", "acme")
+
+		assert.Contains(t, ctiClause, companyGuard+" AND (")
+		assert.Contains(t, centralizedClause, companyGuard+" AND (")
+		assert.NotContains(t, ctiClause, personGuard)
+	})
+
+	t.Run("default view applies no guard", func(t *testing.T) {
+		_, _, ctiClause, centralizedClause := buildLegacySearchClauses("", "acme")
+
+		assert.NotContains(t, ctiClause, personGuard)
+		assert.NotContains(t, ctiClause, companyGuard)
+		assert.NotContains(t, centralizedClause, personGuard)
+		assert.NotContains(t, centralizedClause, companyGuard)
+	})
+}
+
 func TestBuildLegacyVisibilityClauses_CentralizedUsesItsOwnTaxonomy(t *testing.T) {
 	t.Run("all keeps centralized rows visible", func(t *testing.T) {
 		ctiClause, ctiArgs, centralizedClause, centralizedArgs := buildLegacyVisibilityClauses("all")

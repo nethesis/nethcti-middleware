@@ -51,3 +51,28 @@ func TestParsePhonebookCSV_TraditionalTypesStillAccepted(t *testing.T) {
 	assert.Equal(t, 2, response.TotalRows)
 	assert.Equal(t, 0, response.SkippedRows)
 }
+
+func TestParsePhonebookCSV_NewFieldsImported(t *testing.T) {
+	csvContent := strings.NewReader(
+		"name,firstname,lastname,job,facebook,instagram,linkedin,workphone2,cellphone2,otherphone,otheremail\n" +
+			"Alice Rossi,Alice,Rossi,Engineer,fb.me/alice,@alice,in/alice,+390111,+390222,+390333,alice.other@example.com\n",
+	)
+
+	entries, response, err := parsePhonebookCSV(csvContent)
+
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	entry := entries[0]
+	assert.Equal(t, "Alice", entry.FirstName)
+	assert.Equal(t, "Rossi", entry.LastName)
+	assert.Equal(t, "Engineer", entry.Job)
+	assert.Equal(t, "fb.me/alice", entry.Facebook)
+	assert.Equal(t, "@alice", entry.Instagram)
+	assert.Equal(t, "in/alice", entry.LinkedIn)
+	assert.Equal(t, "+390111", entry.WorkPhone2)
+	assert.Equal(t, "+390222", entry.CellPhone2)
+	assert.Equal(t, "+390333", entry.OtherPhone)
+	assert.Equal(t, "alice.other@example.com", entry.OtherEmail)
+	assert.Equal(t, 0, response.SkippedRows)
+	assert.Empty(t, response.ErrorMessages)
+}

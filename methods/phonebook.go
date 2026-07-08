@@ -150,6 +150,16 @@ func parsePhonebookCSV(file io.Reader) ([]*store.PhonebookEntry, *PhonebookImpor
 			URL:            getField("url"),
 			Extension:      getField("extension"),
 			SpeedDialNum:   getField("speeddial_num"),
+			FirstName:      getField("firstname"),
+			LastName:       getField("lastname"),
+			Job:            getField("job"),
+			Facebook:       getField("facebook"),
+			Instagram:      getField("instagram"),
+			LinkedIn:       getField("linkedin"),
+			WorkPhone2:     getField("workphone2"),
+			CellPhone2:     getField("cellphone2"),
+			OtherPhone:     getField("otherphone"),
+			OtherEmail:     getField("otheremail"),
 		}
 
 		entries = append(entries, entry)

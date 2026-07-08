@@ -2,8 +2,13 @@
 -- Idempotent upgrade scripts applied to pre-existing databases at startup.
 
 -- Issue #7124: phonebook structure redesign. Add split name, role, social and
--- extra phone columns to cti_phonebook. MariaDB supports IF NOT EXISTS on both
--- ADD COLUMN and ADD INDEX, keeping this script safe to re-run on every boot.
+-- extra phone columns to cti_phonebook. MariaDB supports IF NOT EXISTS on
+-- ADD COLUMN, keeping this script safe to re-run on every boot.
+--
+-- No indexes are added for these columns: the phone/social columns are only
+-- searched via leading-wildcard LIKE '%term%' (unusable by a B-tree) and the
+-- lastname ordering runs against the materialized UNION result, not a direct
+-- scan of cti_phonebook. Indexes here would be pure write-path overhead.
 USE nethcti3;
 
 ALTER TABLE cti_phonebook
@@ -17,10 +22,3 @@ ALTER TABLE cti_phonebook
 	ADD COLUMN IF NOT EXISTS cellphone2 varchar(25) DEFAULT NULL,
 	ADD COLUMN IF NOT EXISTS otherphone varchar(25) DEFAULT NULL,
 	ADD COLUMN IF NOT EXISTS otheremail varchar(255) DEFAULT NULL;
-
-ALTER TABLE cti_phonebook
-	ADD INDEX IF NOT EXISTS lastname_idx (lastname),
-	ADD INDEX IF NOT EXISTS wphone2_idx (workphone2),
-	ADD INDEX IF NOT EXISTS cphone2_idx (cellphone2),
-	ADD INDEX IF NOT EXISTS ophone_idx (otherphone),
-	ADD INDEX IF NOT EXISTS oemail_idx (otheremail);
