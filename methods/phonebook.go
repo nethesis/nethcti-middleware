@@ -89,15 +89,18 @@ func parsePhonebookCSV(file io.Reader) ([]*store.PhonebookEntry, *PhonebookImpor
 		}
 		lineNumber++
 		if err != nil {
-			// A wrong field count is a per-row problem: log, skip, keep going.
-			// Any other error comes from the underlying reader and would repeat
-			// forever on continue, so stop the import instead of hanging.
 			logs.Log("[ERROR][PHONEBOOK] CSV read error: " + err.Error())
 			errorMessages = append(errorMessages, fmt.Sprintf("Row %d: %s", lineNumber, err.Error()))
-			if errors.Is(err, csv.ErrFieldCount) {
+			// A csv parse error (wrong field count, bare/unescaped quote, ...) is
+			// a per-row problem: encoding/csv recovers on the next Read, so skip
+			// this row and keep importing the rest.
+			var parseErr *csv.ParseError
+			if errors.As(err, &parseErr) {
 				skippedRows++
 				continue
 			}
+			// A non-parse error comes from the underlying reader and may repeat
+			// forever on continue, so stop the import instead of hanging.
 			break
 		}
 

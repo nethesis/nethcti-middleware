@@ -130,3 +130,21 @@ func TestParsePhonebookCSV_MalformedRowSkippedNotFatal(t *testing.T) {
 	require.Len(t, response.ErrorMessages, 1)
 	assert.Contains(t, response.ErrorMessages[0], "Row 2")
 }
+
+func TestParsePhonebookCSV_BareQuoteRowSkippedNotFatal(t *testing.T) {
+	// A bare/unescaped quote yields csv.ErrBareQuote (a *csv.ParseError, not
+	// ErrFieldCount). encoding/csv recovers on the next Read, so the offending
+	// row must be skipped while every following valid row is still imported —
+	// it must NOT abort the whole import.
+	csvContent := strings.NewReader("name,workphone\nAli\"ce,123\nBob,456\nCarol,789\n")
+
+	entries, response, err := parsePhonebookCSV(csvContent)
+
+	require.NoError(t, err)
+	require.Len(t, entries, 2)
+	assert.Equal(t, "Bob", entries[0].Name)
+	assert.Equal(t, "Carol", entries[1].Name)
+	assert.Equal(t, 1, response.SkippedRows)
+	require.Len(t, response.ErrorMessages, 1)
+	assert.Contains(t, response.ErrorMessages[0], "Row 2")
+}
