@@ -76,3 +76,57 @@ func TestParsePhonebookCSV_NewFieldsImported(t *testing.T) {
 	assert.Equal(t, 0, response.SkippedRows)
 	assert.Empty(t, response.ErrorMessages)
 }
+
+func TestParsePhonebookCSV_MissingNameColumn(t *testing.T) {
+	csvContent := strings.NewReader("workphone,company\n+39123,ACME\n")
+
+	entries, response, err := parsePhonebookCSV(csvContent)
+
+	require.NoError(t, err)
+	assert.Empty(t, entries)
+	require.NotNil(t, response)
+	require.Len(t, response.ErrorMessages, 1)
+	assert.Contains(t, response.ErrorMessages[0], "'name'")
+}
+
+func TestParsePhonebookCSV_OnlyHeaderNoRows(t *testing.T) {
+	csvContent := strings.NewReader("name,workphone\n")
+
+	entries, response, err := parsePhonebookCSV(csvContent)
+
+	require.NoError(t, err)
+	assert.Empty(t, entries)
+	assert.Equal(t, 0, response.TotalRows)
+	assert.Equal(t, 0, response.SkippedRows)
+	assert.Empty(t, response.ErrorMessages)
+}
+
+func TestParsePhonebookCSV_EmptyNameRowSkippedWithLineNumber(t *testing.T) {
+	// header (line 1), empty-name row (line 2), valid row (line 3).
+	csvContent := strings.NewReader("name,workphone\n,+39123\nBob,+39456\n")
+
+	entries, response, err := parsePhonebookCSV(csvContent)
+
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	assert.Equal(t, "Bob", entries[0].Name)
+	assert.Equal(t, 1, response.SkippedRows)
+	require.Len(t, response.ErrorMessages, 1)
+	assert.Contains(t, response.ErrorMessages[0], "Row 2")
+	assert.Contains(t, response.ErrorMessages[0], "name is empty")
+}
+
+func TestParsePhonebookCSV_MalformedRowSkippedNotFatal(t *testing.T) {
+	// Row 2 has the wrong field count (csv.ErrFieldCount): it must be skipped,
+	// reported at its own line, and parsing must continue to the valid row 3.
+	csvContent := strings.NewReader("name,workphone\nAlice,+39123,extra\nBob,+39456\n")
+
+	entries, response, err := parsePhonebookCSV(csvContent)
+
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	assert.Equal(t, "Bob", entries[0].Name)
+	assert.Equal(t, 1, response.SkippedRows)
+	require.Len(t, response.ErrorMessages, 1)
+	assert.Contains(t, response.ErrorMessages[0], "Row 2")
+}

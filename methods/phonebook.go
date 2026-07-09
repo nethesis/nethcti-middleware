@@ -8,6 +8,7 @@ package methods
 import (
 	"context"
 	"encoding/csv"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -20,6 +21,11 @@ import (
 	"github.com/nethesis/nethcti-middleware/logs"
 	"github.com/nethesis/nethcti-middleware/store"
 )
+
+// maxImportRows caps how many CSV data rows a single import may contain. It
+// bounds memory use and the duration of the single insert transaction, and
+// stops a malformed/huge upload from hanging the endpoint.
+const maxImportRows = 20000
 
 // PhonebookImportResponse represents the response from a CSV import
 type PhonebookImportResponse struct {
@@ -67,23 +73,37 @@ func parsePhonebookCSV(file io.Reader) ([]*store.PhonebookEntry, *PhonebookImpor
 	}
 
 	// Parse and import records
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
 	var entries []*store.PhonebookEntry
 	var errorMessages []string
 	totalRows := 0
 	skippedRows := 0
+	// lineNumber tracks the physical CSV line (header is line 1) and is bumped on
+	// every read attempt, so error messages stay correct even across consecutive
+	// unreadable rows.
+	lineNumber := 1
 
 	for {
 		record, err := reader.Read()
 		if err == io.EOF {
 			break
 		}
+		lineNumber++
 		if err != nil {
+			// A wrong field count is a per-row problem: log, skip, keep going.
+			// Any other error comes from the underlying reader and would repeat
+			// forever on continue, so stop the import instead of hanging.
 			logs.Log("[ERROR][PHONEBOOK] CSV read error: " + err.Error())
-			errorMessages = append(errorMessages, fmt.Sprintf("Row %d: %s", totalRows+2, err.Error()))
-			continue
+			errorMessages = append(errorMessages, fmt.Sprintf("Row %d: %s", lineNumber, err.Error()))
+			if errors.Is(err, csv.ErrFieldCount) {
+				skippedRows++
+				continue
+			}
+			break
+		}
+
+		if totalRows >= maxImportRows {
+			errorMessages = append(errorMessages, fmt.Sprintf("import aborted: exceeded maximum of %d rows", maxImportRows))
+			break
 		}
 
 		totalRows++
@@ -100,7 +120,7 @@ func parsePhonebookCSV(file io.Reader) ([]*store.PhonebookEntry, *PhonebookImpor
 		name := getField("name")
 		if name == "" {
 			skippedRows++
-			errorMessages = append(errorMessages, fmt.Sprintf("Row %d: name is empty", totalRows+1))
+			errorMessages = append(errorMessages, fmt.Sprintf("Row %d: name is empty", lineNumber))
 			continue
 		}
 
@@ -117,7 +137,7 @@ func parsePhonebookCSV(file io.Reader) ([]*store.PhonebookEntry, *PhonebookImpor
 				entryType = store.EncodeSharedGroupsType(store.GetSharedGroupsFromType(entryType))
 			default:
 				skippedRows++
-				errorMessages = append(errorMessages, fmt.Sprintf("Row %d: invalid type '%s' (must be 'private', 'public', or 'group:<group1,group2>')", totalRows+1, getField("type")))
+				errorMessages = append(errorMessages, fmt.Sprintf("Row %d: invalid type '%s' (must be 'private', 'public', or 'group:<group1,group2>')", lineNumber, getField("type")))
 				continue
 			}
 		}
@@ -165,8 +185,6 @@ func parsePhonebookCSV(file io.Reader) ([]*store.PhonebookEntry, *PhonebookImpor
 		entries = append(entries, entry)
 	}
 
-	_ = ctx // context used above, keep reference
-
 	response := &PhonebookImportResponse{
 		Message:       "phonebook import completed",
 		TotalRows:     totalRows,
@@ -198,6 +216,14 @@ func AdminImportPhonebookCSV(c *gin.Context) {
 	targetUsername := strings.TrimSpace(c.Request.FormValue("username"))
 	if targetUsername == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"message": "username field is required"})
+		return
+	}
+
+	// Ensure the target user actually exists before importing contacts under its
+	// ownership, otherwise the rows would be orphaned. GetUserProfile returns an
+	// error when the username is unknown.
+	if _, err := store.GetUserProfile(targetUsername); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "unknown target username", "error": err.Error()})
 		return
 	}
 
