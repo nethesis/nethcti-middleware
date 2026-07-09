@@ -295,7 +295,13 @@ func filterHistoryRowsByArtifact(c *gin.Context, artifact string, rows []map[str
 
 		statusItems, err := fetchSummaryListFunc(collectResolvedUniqueIDs(resolvedLookups))
 		if err != nil {
-			return nil, err
+			if isSatelliteSchemaMissingError(err) {
+				// No schema yet means none of the rows have a summary/transcription
+				// artifact; fall through with an empty set instead of an outage.
+				statusItems = nil
+			} else {
+				return nil, err
+			}
 		}
 
 		itemByUniqueID := make(map[string]SummaryListItem, len(statusItems))

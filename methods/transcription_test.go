@@ -161,7 +161,7 @@ func TestGetTranscriptionByUniqueID_ReturnsExtendedData(t *testing.T) {
 	}
 }
 
-func TestGetTranscriptionByUniqueID_ReturnsServiceUnavailableWhenTranscriptsTableIsMissing(t *testing.T) {
+func TestGetTranscriptionByUniqueID_ReturnsNotFoundWhenTranscriptsTableIsMissing(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	store.UserSessionInit()
 	store.UserSessions["alice"] = &models.UserSession{Username: "alice", NethCTIToken: "token"}
@@ -201,22 +201,10 @@ func TestGetTranscriptionByUniqueID_ReturnsServiceUnavailableWhenTranscriptsTabl
 	req, _ := http.NewRequest("GET", "/transcripts/abc123", nil)
 	router.ServeHTTP(w, req)
 
-	if w.Code != http.StatusServiceUnavailable {
-		t.Fatalf("expected 503 service unavailable, got %d: %s", w.Code, w.Body.String())
-	}
-
-	var response struct {
-		Message string                 `json:"message"`
-		Data    map[string]interface{} `json:"data"`
-	}
-	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
-	if response.Message != "satellite database schema not initialized" {
-		t.Fatalf("unexpected message: %s", response.Message)
-	}
-	if response.Data["missing_table"] != "transcripts" {
-		t.Fatalf("unexpected missing_table: %v", response.Data["missing_table"])
+	// A missing schema means nothing was ever persisted, which is the same
+	// outcome as a normal not-found lookup, not an outage.
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 not found, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
@@ -420,7 +408,7 @@ func TestGetSummaryByUniqueID_ReturnsExtendedData(t *testing.T) {
 	}
 }
 
-func TestGetSummaryByUniqueID_ReturnsServiceUnavailableWhenTranscriptsTableIsMissing(t *testing.T) {
+func TestGetSummaryByUniqueID_ReturnsNotFoundWhenTranscriptsTableIsMissing(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	store.UserSessionInit()
 	store.UserSessions["alice"] = &models.UserSession{Username: "alice", NethCTIToken: "token"}
@@ -460,22 +448,10 @@ func TestGetSummaryByUniqueID_ReturnsServiceUnavailableWhenTranscriptsTableIsMis
 	req, _ := http.NewRequest("GET", "/summary/abc123", nil)
 	router.ServeHTTP(w, req)
 
-	if w.Code != http.StatusServiceUnavailable {
-		t.Fatalf("expected 503 service unavailable, got %d: %s", w.Code, w.Body.String())
-	}
-
-	var response struct {
-		Message string                 `json:"message"`
-		Data    map[string]interface{} `json:"data"`
-	}
-	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
-	if response.Message != "satellite database schema not initialized" {
-		t.Fatalf("unexpected message: %s", response.Message)
-	}
-	if response.Data["missing_table"] != "transcripts" {
-		t.Fatalf("unexpected missing_table: %v", response.Data["missing_table"])
+	// A missing schema means nothing was ever persisted, which is the same
+	// outcome as a normal not-found lookup, not an outage.
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 not found, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
