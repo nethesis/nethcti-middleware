@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/nethesis/nethcti-middleware/logs"
@@ -139,7 +140,7 @@ func GetUserCapabilities(username string) (map[string]bool, error) {
 	profileMutex.RLock()
 	defer profileMutex.RUnlock()
 
-	user, ok := users[username]
+	user, ok := users[strings.ToLower(username)]
 	if !ok {
 		return nil, fmt.Errorf("user %s not found", username)
 	}
@@ -157,7 +158,7 @@ func GetUserProfile(username string) (*ProfileData, error) {
 	profileMutex.RLock()
 	defer profileMutex.RUnlock()
 
-	user, ok := users[username]
+	user, ok := users[strings.ToLower(username)]
 	if !ok {
 		return nil, fmt.Errorf("user %s not found", username)
 	}
@@ -175,7 +176,7 @@ func GetUserDisplayInfo(username string) (string, []string, error) {
 	profileMutex.RLock()
 	defer profileMutex.RUnlock()
 
-	user, ok := users[username]
+	user, ok := users[strings.ToLower(username)]
 	if !ok {
 		return "", nil, fmt.Errorf("user %s not found", username)
 	}
@@ -336,7 +337,12 @@ func loadUsers(path string, profilesMap map[string]*ProfileData) (map[string]*Us
 		}
 		sort.Strings(phoneNumbers)
 
-		result[username] = &UserProfile{
+		// Login/JWT usernames are matched case-insensitively (Asterisk/AMI auth
+		// lowercases the login, while /etc/nethcti/users.json keys keep the
+		// original display-name casing from FreePBX). Index by the lowercased
+		// form so lookups from GetUserCapabilities/GetUserProfile/GetUserDisplayInfo
+		// succeed regardless of case, while preserving the original casing for display.
+		result[strings.ToLower(username)] = &UserProfile{
 			Username:  username,
 			Name:      ru.Name,
 			ProfileID: ru.ProfileID,

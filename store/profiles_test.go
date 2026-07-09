@@ -114,6 +114,36 @@ func TestMissingProfileFieldSkipsUser(t *testing.T) {
 	}
 }
 
+func TestUserLookupIsCaseInsensitive(t *testing.T) {
+	// /etc/nethcti/users.json keys preserve the FreePBX display-name casing
+	// (e.g. "ThomasSangalli"), while the JWT username from Asterisk/AMI login
+	// is lowercased (e.g. "thomassangalli"). Lookups must succeed regardless.
+	profilesJSON := `{ "1": {"id":"1","name":"Base","macro_permissions": {"phonebook": {"value": true, "permissions": []}}} }`
+	usersJSON := `{ "JonDoe": {"name":"Jon Doe","profile_id":"1"} }`
+
+	profFile := writeTempFile(t, "profiles.json", profilesJSON)
+	usersFile := writeTempFile(t, "users.json", usersJSON)
+
+	if err := InitProfiles(profFile, usersFile); err != nil {
+		t.Fatalf("InitProfiles failed: %v", err)
+	}
+
+	if _, err := GetUserCapabilities("jondoe"); err != nil {
+		t.Fatalf("expected case-insensitive lookup to succeed: %v", err)
+	}
+	if _, err := GetUserCapabilities("JONDOE"); err != nil {
+		t.Fatalf("expected case-insensitive lookup to succeed: %v", err)
+	}
+
+	displayName, _, err := GetUserDisplayInfo("jondoe")
+	if err != nil {
+		t.Fatalf("GetUserDisplayInfo failed: %v", err)
+	}
+	if displayName != "Jon Doe" {
+		t.Fatalf("unexpected display name: got %s want %s", displayName, "Jon Doe")
+	}
+}
+
 func TestReloadProfiles_PartialFailures(t *testing.T) {
 	// Start with valid profiles and users
 	profilesJSON := `{
