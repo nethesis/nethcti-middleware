@@ -219,14 +219,6 @@ func AdminImportPhonebookCSV(c *gin.Context) {
 		return
 	}
 
-	// Ensure the target user actually exists before importing contacts under its
-	// ownership, otherwise the rows would be orphaned. GetUserProfile returns an
-	// error when the username is unknown.
-	if _, err := store.GetUserProfile(targetUsername); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"message": "unknown target username", "error": err.Error()})
-		return
-	}
-
 	// Get the uploaded file
 	file, _, err := c.Request.FormFile("file")
 	if err != nil {
