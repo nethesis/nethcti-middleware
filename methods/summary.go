@@ -259,19 +259,23 @@ func CheckSummaryByUniqueID(c *gin.Context) {
 	state, hasSummary, _, exists, err := fetchSummaryStateFunc(uniqueID)
 	if err != nil {
 		if isSatelliteSchemaMissingError(err) {
+			// The satellite schema is not created until the first successful
+			// persisted call; on a fresh/idle instance this simply means no
+			// summary exists yet, same as a normal not-found lookup.
 			logs.Log("[WARNING][SUMMARY] Satellite schema is not initialized while checking summary for uniqueid " + uniqueID + ": " + err.Error())
-			c.Status(http.StatusServiceUnavailable)
-			return
-		}
-		if isSatelliteDBUnavailableError(err) {
+			exists = false
+			hasSummary = false
+			state = ""
+			err = nil
+		} else if isSatelliteDBUnavailableError(err) {
 			logs.Log("[WARNING][SUMMARY] Satellite database is unavailable while checking summary for uniqueid " + uniqueID + ": " + err.Error())
 			c.Status(http.StatusServiceUnavailable)
 			return
+		} else {
+			logs.Log("[ERROR][SUMMARY] Failed to fetch summary for uniqueid " + uniqueID + ": " + err.Error())
+			c.Status(http.StatusInternalServerError)
+			return
 		}
-
-		logs.Log("[ERROR][SUMMARY] Failed to fetch summary for uniqueid " + uniqueID + ": " + err.Error())
-		c.Status(http.StatusInternalServerError)
-		return
 	}
 
 	foundRecord := exists
@@ -373,23 +377,24 @@ func GetSummaryByUniqueID(c *gin.Context) {
 	}
 	if err != nil {
 		if isSatelliteSchemaMissingError(err) {
+			// No schema yet means nothing has ever been persisted; treat it
+			// the same as a normal not-found lookup instead of an outage.
 			logs.Log("[WARNING][SUMMARY] Satellite schema is not initialized while fetching summary for uniqueid " + uniqueID + ": " + err.Error())
-			writeSatelliteSchemaMissingResponse(c)
-			return
-		}
-		if isSatelliteDBUnavailableError(err) {
+			found = false
+			err = nil
+		} else if isSatelliteDBUnavailableError(err) {
 			logs.Log("[WARNING][SUMMARY] Satellite database is unavailable while fetching summary for uniqueid " + uniqueID + ": " + err.Error())
 			writeSatelliteDBUnavailableResponse(c)
 			return
+		} else {
+			logs.Log("[ERROR][SUMMARY] Failed to fetch summary for uniqueid " + uniqueID + ": " + err.Error())
+			c.JSON(http.StatusInternalServerError, structs.Map(models.StatusInternalServerError{
+				Code:    http.StatusInternalServerError,
+				Message: "failed to fetch summary",
+				Data:    nil,
+			}))
+			return
 		}
-
-		logs.Log("[ERROR][SUMMARY] Failed to fetch summary for uniqueid " + uniqueID + ": " + err.Error())
-		c.JSON(http.StatusInternalServerError, structs.Map(models.StatusInternalServerError{
-			Code:    http.StatusInternalServerError,
-			Message: "failed to fetch summary",
-			Data:    nil,
-		}))
-		return
 	}
 
 	if !found {
@@ -492,23 +497,24 @@ func UpdateSummaryByUniqueID(c *gin.Context) {
 	}
 	if err != nil {
 		if isSatelliteSchemaMissingError(err) {
+			// No schema yet means there is nothing to update; same outcome
+			// as a normal not-found update instead of an outage.
 			logs.Log("[WARNING][SUMMARY] Satellite schema is not initialized while updating summary for uniqueid " + uniqueID + ": " + err.Error())
-			writeSatelliteSchemaMissingResponse(c)
-			return
-		}
-		if isSatelliteDBUnavailableError(err) {
+			updated = false
+			err = nil
+		} else if isSatelliteDBUnavailableError(err) {
 			logs.Log("[WARNING][SUMMARY] Satellite database is unavailable while updating summary for uniqueid " + uniqueID + ": " + err.Error())
 			writeSatelliteDBUnavailableResponse(c)
 			return
+		} else {
+			logs.Log("[ERROR][SUMMARY] Failed to update summary for uniqueid " + uniqueID + ": " + err.Error())
+			c.JSON(http.StatusInternalServerError, structs.Map(models.StatusInternalServerError{
+				Code:    http.StatusInternalServerError,
+				Message: "failed to update summary",
+				Data:    nil,
+			}))
+			return
 		}
-
-		logs.Log("[ERROR][SUMMARY] Failed to update summary for uniqueid " + uniqueID + ": " + err.Error())
-		c.JSON(http.StatusInternalServerError, structs.Map(models.StatusInternalServerError{
-			Code:    http.StatusInternalServerError,
-			Message: "failed to update summary",
-			Data:    nil,
-		}))
-		return
 	}
 
 	if !updated {
@@ -584,23 +590,23 @@ func ListSummaryStatus(c *gin.Context) {
 	items, err := fetchSummaryListFunc(resolvedUniqueIDs)
 	if err != nil {
 		if isSatelliteSchemaMissingError(err) {
+			// No schema yet means none of the requested calls have a summary;
+			// fall through with an empty result instead of reporting an outage.
 			logs.Log("[WARNING][SUMMARY] Satellite schema is not initialized while listing summary statuses: " + err.Error())
-			writeSatelliteSchemaMissingResponse(c)
-			return
-		}
-		if isSatelliteDBUnavailableError(err) {
+			items = nil
+		} else if isSatelliteDBUnavailableError(err) {
 			logs.Log("[WARNING][SUMMARY] Satellite database is unavailable while listing summary statuses: " + err.Error())
 			writeSatelliteDBUnavailableResponse(c)
 			return
+		} else {
+			logs.Log("[ERROR][SUMMARY] Failed to list summaries: " + err.Error())
+			c.JSON(http.StatusInternalServerError, structs.Map(models.StatusInternalServerError{
+				Code:    http.StatusInternalServerError,
+				Message: "failed to list summaries",
+				Data:    nil,
+			}))
+			return
 		}
-
-		logs.Log("[ERROR][SUMMARY] Failed to list summaries: " + err.Error())
-		c.JSON(http.StatusInternalServerError, structs.Map(models.StatusInternalServerError{
-			Code:    http.StatusInternalServerError,
-			Message: "failed to list summaries",
-			Data:    nil,
-		}))
-		return
 	}
 
 	itemByUniqueID := make(map[string]SummaryListItem, len(items))

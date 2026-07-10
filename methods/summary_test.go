@@ -330,6 +330,58 @@ func TestCheckSummaryByUniqueID_NotFound(t *testing.T) {
 	}
 }
 
+func TestCheckSummaryByUniqueID_ReturnsNotFoundWhenTranscriptsTableIsMissing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store.UserSessionInit()
+	store.UserSessions["alice"] = &models.UserSession{Username: "alice", NethCTIToken: "token"}
+
+	configuration.Config.SatellitePgSQLHost = "test"
+	configuration.Config.SatellitePgSQLPort = "5432"
+	configuration.Config.SatellitePgSQLDB = "test"
+	configuration.Config.SatellitePgSQLUser = "test"
+
+	originalGetUserInfo := getUserInfoFunc
+	originalCheck := checkUserParticipationFunc
+	originalCheckByLinkedID := checkUserParticipationByLinkedIDFunc
+	originalFetch := fetchSummaryStateFunc
+	defer func() {
+		getUserInfoFunc = originalGetUserInfo
+		checkUserParticipationFunc = originalCheck
+		checkUserParticipationByLinkedIDFunc = originalCheckByLinkedID
+		fetchSummaryStateFunc = originalFetch
+	}()
+
+	getUserInfoFunc = func(string) (*UserInfo, error) {
+		return &UserInfo{PhoneNumbers: []string{"100"}}, nil
+	}
+	checkUserParticipationFunc = func(string, []string) (bool, error) {
+		return true, nil
+	}
+	checkUserParticipationByLinkedIDFunc = func(string, []string) (bool, error) {
+		return true, nil
+	}
+	fetchSummaryStateFunc = func(string) (string, bool, bool, bool, error) {
+		return "", false, false, false, &pgconn.PgError{Code: "42P01", Message: `relation "transcripts" does not exist`}
+	}
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("JWT_PAYLOAD", jwtv5.MapClaims{"id": "alice"})
+		c.Next()
+	})
+	router.HEAD("/summary/:uniqueid", CheckSummaryByUniqueID)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("HEAD", "/summary/abc123", nil)
+	router.ServeHTTP(w, req)
+
+	// A missing schema means nothing was ever persisted, which is the same
+	// outcome as a normal not-found lookup, not an outage.
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 not found, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
 func TestCheckSummaryByUniqueID_ReturnsNoContentWhenSummaryIsStillProcessing(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	store.UserSessionInit()
@@ -806,7 +858,7 @@ func TestListSummaryStatus_MixedResults(t *testing.T) {
 	}
 }
 
-func TestListSummaryStatus_ReturnsServiceUnavailableWhenTranscriptsTableIsMissing(t *testing.T) {
+func TestListSummaryStatus_ReturnsNotFoundItemsWhenTranscriptsTableIsMissing(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	store.UserSessionInit()
 	store.UserSessions["alice"] = &models.UserSession{Username: "alice", NethCTIToken: "token"}
@@ -848,22 +900,23 @@ func TestListSummaryStatus_ReturnsServiceUnavailableWhenTranscriptsTableIsMissin
 	req.Header.Set("Content-Type", "application/json")
 	router.ServeHTTP(w, req)
 
-	if w.Code != http.StatusServiceUnavailable {
-		t.Fatalf("expected 503 service unavailable, got %d: %s", w.Code, w.Body.String())
+	// A missing schema means none of the requested calls have a summary yet,
+	// which is the same outcome as a normal not-found lookup, not an outage.
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 ok, got %d: %s", w.Code, w.Body.String())
 	}
 
 	var response struct {
-		Message string                 `json:"message"`
-		Data    map[string]interface{} `json:"data"`
+		Data []map[string]interface{} `json:"data"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
-	if response.Message != "satellite database schema not initialized" {
-		t.Fatalf("unexpected message: %s", response.Message)
+	if len(response.Data) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(response.Data))
 	}
-	if response.Data["missing_table"] != "transcripts" {
-		t.Fatalf("unexpected missing_table: %v", response.Data["missing_table"])
+	if response.Data[0]["error"] != "not_found" {
+		t.Fatalf("expected not_found error, got %v", response.Data[0]["error"])
 	}
 }
 
@@ -1239,5 +1292,54 @@ func TestUpdateSummaryByUniqueID_TargetsCanonicalRow(t *testing.T) {
 	}
 	if updatedSummary != "manually edited summary" {
 		t.Fatalf("expected updated summary text, got %q", updatedSummary)
+	}
+}
+
+func TestUpdateSummaryByUniqueID_ReturnsNotFoundWhenTranscriptsTableIsMissing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store.UserSessionInit()
+	store.UserSessions["alice"] = &models.UserSession{Username: "alice", NethCTIToken: "token"}
+
+	configuration.Config.SatellitePgSQLHost = "test"
+	configuration.Config.SatellitePgSQLPort = "5432"
+	configuration.Config.SatellitePgSQLDB = "test"
+	configuration.Config.SatellitePgSQLUser = "test"
+
+	originalGetUserInfo := getUserInfoFunc
+	originalCheck := checkUserParticipationFunc
+	originalUpdate := updateSummaryFunc
+	defer func() {
+		getUserInfoFunc = originalGetUserInfo
+		checkUserParticipationFunc = originalCheck
+		updateSummaryFunc = originalUpdate
+	}()
+
+	getUserInfoFunc = func(string) (*UserInfo, error) {
+		return &UserInfo{PhoneNumbers: []string{"100"}}, nil
+	}
+	checkUserParticipationFunc = func(string, []string) (bool, error) {
+		return true, nil
+	}
+	updateSummaryFunc = func(string, string) (bool, error) {
+		return false, &pgconn.PgError{Code: "42P01", Message: `relation "transcripts" does not exist`}
+	}
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("JWT_PAYLOAD", jwtv5.MapClaims{"id": "alice"})
+		c.Next()
+	})
+	router.PUT("/summary/:uniqueid", UpdateSummaryByUniqueID)
+
+	body, _ := json.Marshal(map[string]string{"summary": "manually edited summary"})
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("PUT", "/summary/1234567890.99", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w, req)
+
+	// A missing schema means there is nothing to update, which is the same
+	// outcome as a normal not-found update, not an outage.
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 not found, got %d: %s", w.Code, w.Body.String())
 	}
 }

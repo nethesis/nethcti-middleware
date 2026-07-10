@@ -161,7 +161,7 @@ func TestGetTranscriptionByUniqueID_ReturnsExtendedData(t *testing.T) {
 	}
 }
 
-func TestGetTranscriptionByUniqueID_ReturnsServiceUnavailableWhenTranscriptsTableIsMissing(t *testing.T) {
+func TestGetTranscriptionByUniqueID_ReturnsNotFoundWhenTranscriptsTableIsMissing(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	store.UserSessionInit()
 	store.UserSessions["alice"] = &models.UserSession{Username: "alice", NethCTIToken: "token"}
@@ -201,22 +201,10 @@ func TestGetTranscriptionByUniqueID_ReturnsServiceUnavailableWhenTranscriptsTabl
 	req, _ := http.NewRequest("GET", "/transcripts/abc123", nil)
 	router.ServeHTTP(w, req)
 
-	if w.Code != http.StatusServiceUnavailable {
-		t.Fatalf("expected 503 service unavailable, got %d: %s", w.Code, w.Body.String())
-	}
-
-	var response struct {
-		Message string                 `json:"message"`
-		Data    map[string]interface{} `json:"data"`
-	}
-	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
-	if response.Message != "satellite database schema not initialized" {
-		t.Fatalf("unexpected message: %s", response.Message)
-	}
-	if response.Data["missing_table"] != "transcripts" {
-		t.Fatalf("unexpected missing_table: %v", response.Data["missing_table"])
+	// A missing schema means nothing was ever persisted, which is the same
+	// outcome as a normal not-found lookup, not an outage.
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 not found, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
@@ -420,7 +408,7 @@ func TestGetSummaryByUniqueID_ReturnsExtendedData(t *testing.T) {
 	}
 }
 
-func TestGetSummaryByUniqueID_ReturnsServiceUnavailableWhenTranscriptsTableIsMissing(t *testing.T) {
+func TestGetSummaryByUniqueID_ReturnsNotFoundWhenTranscriptsTableIsMissing(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	store.UserSessionInit()
 	store.UserSessions["alice"] = &models.UserSession{Username: "alice", NethCTIToken: "token"}
@@ -460,22 +448,10 @@ func TestGetSummaryByUniqueID_ReturnsServiceUnavailableWhenTranscriptsTableIsMis
 	req, _ := http.NewRequest("GET", "/summary/abc123", nil)
 	router.ServeHTTP(w, req)
 
-	if w.Code != http.StatusServiceUnavailable {
-		t.Fatalf("expected 503 service unavailable, got %d: %s", w.Code, w.Body.String())
-	}
-
-	var response struct {
-		Message string                 `json:"message"`
-		Data    map[string]interface{} `json:"data"`
-	}
-	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
-	if response.Message != "satellite database schema not initialized" {
-		t.Fatalf("unexpected message: %s", response.Message)
-	}
-	if response.Data["missing_table"] != "transcripts" {
-		t.Fatalf("unexpected missing_table: %v", response.Data["missing_table"])
+	// A missing schema means nothing was ever persisted, which is the same
+	// outcome as a normal not-found lookup, not an outage.
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 not found, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
@@ -495,6 +471,7 @@ func saveAndRestoreResolveFuncs(t *testing.T) func() {
 	origExternalSrcs := getExternalSrcNumsFromCDRFunc
 	origAnswered := isCDRAnsweredFunc
 	origSrcEqDst := checkSrcEqualsDstFunc
+	origExists := cdrRecordExistsFunc
 
 	// Default: treat all CDR rows as ANSWERED unless overridden by a test.
 	isCDRAnsweredFunc = func(string) (bool, error) { return true, nil }
@@ -502,6 +479,8 @@ func saveAndRestoreResolveFuncs(t *testing.T) func() {
 	checkSrcEqualsDstFunc = func(string, []string) (bool, error) { return false, nil }
 	// Default: no external src nums.
 	getExternalSrcNumsFromCDRFunc = func(string, []string) ([]string, error) { return nil, nil }
+	// Default: the requested uniqueid is a real CDR row unless overridden.
+	cdrRecordExistsFunc = func(string) (bool, error) { return true, nil }
 
 	return func() {
 		checkUserParticipationFunc = origCheck
@@ -515,6 +494,7 @@ func saveAndRestoreResolveFuncs(t *testing.T) func() {
 		getExternalSrcNumsFromCDRFunc = origExternalSrcs
 		isCDRAnsweredFunc = origAnswered
 		checkSrcEqualsDstFunc = origSrcEqDst
+		cdrRecordExistsFunc = origExists
 	}
 }
 
@@ -1345,5 +1325,39 @@ func TestResolve_ZeroDuration_ReturnsNotAuthorized(t *testing.T) {
 	}
 	if ok || resolved != "" {
 		t.Fatalf("expected not authorized for zero-duration CDR, got %q (ok=%v)", resolved, ok)
+	}
+}
+
+// TestResolve_CalleeOwnChannelUniqueID_ResolvesViaLinkedID reproduces the callee-side
+// 403: the callee reports its OWN Asterisk channel uniqueid, which never appears in
+// CDR at all for a simple two-party call (CDR is keyed by the caller's channel).
+// This must fall through to the linkedid-based lookup instead of being rejected as
+// if the (nonexistent) row were NO ANSWER.
+func TestResolve_CalleeOwnChannelUniqueID_ResolvesViaLinkedID(t *testing.T) {
+	defer saveAndRestoreResolveFuncs(t)()
+
+	// The callee's own channel uniqueid has no CDR row of its own.
+	cdrRecordExistsFunc = func(uid string) (bool, error) {
+		return uid != "callee-own-leg", nil
+	}
+	checkSatelliteRecordExistsFunc = func(string) (bool, bool, error) {
+		return false, false, nil
+	}
+	findSatelliteUniqueIDsByLinkedIDFunc = func(string) ([]string, error) {
+		return nil, nil
+	}
+	resolveLinkedIDToUniqueIDFunc = func(linkedID string, _ []string) (string, error) {
+		if linkedID == "linked-1" {
+			return "master-uid", nil
+		}
+		return "", nil
+	}
+
+	resolved, ok, err := resolveAuthorizedUniqueID("callee-own-leg", "linked-1", []string{"202"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !ok || resolved != "master-uid" {
+		t.Fatalf("expected master-uid via linkedid fallback, got %q (ok=%v)", resolved, ok)
 	}
 }
