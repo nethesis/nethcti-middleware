@@ -209,6 +209,9 @@ func createRouter() *gin.Engine {
 		// Voicemail
 		api.GET("/voicemail/list/:id", methods.ListVoicemailByID)
 
+		// NethLink heartbeat
+		api.POST("/user/nethlink", methods.NethlinkHeartbeat)
+
 		// Logout
 		api.POST("/logout", middleware.InstanceJWT().LogoutHandler)
 	}
