@@ -128,23 +128,24 @@ func GetTranscriptionByUniqueID(c *gin.Context) {
 	}
 	if err != nil {
 		if isSatelliteSchemaMissingError(err) {
+			// No schema yet means nothing has ever been persisted; treat it
+			// the same as a normal not-found lookup instead of an outage.
 			logs.Log("[WARNING][TRANSCRIPTS] Satellite schema is not initialized while fetching transcription for uniqueid " + uniqueID + ": " + err.Error())
-			writeSatelliteSchemaMissingResponse(c)
-			return
-		}
-		if isSatelliteDBUnavailableError(err) {
+			found = false
+			err = nil
+		} else if isSatelliteDBUnavailableError(err) {
 			logs.Log("[WARNING][TRANSCRIPTS] Satellite database is unavailable while fetching transcription for uniqueid " + uniqueID + ": " + err.Error())
 			writeSatelliteDBUnavailableResponse(c)
 			return
+		} else {
+			logs.Log("[ERROR][TRANSCRIPTS] Failed to fetch transcription for uniqueid " + uniqueID + ": " + err.Error())
+			c.JSON(http.StatusInternalServerError, structs.Map(models.StatusInternalServerError{
+				Code:    http.StatusInternalServerError,
+				Message: "failed to fetch transcription",
+				Data:    nil,
+			}))
+			return
 		}
-
-		logs.Log("[ERROR][TRANSCRIPTS] Failed to fetch transcription for uniqueid " + uniqueID + ": " + err.Error())
-		c.JSON(http.StatusInternalServerError, structs.Map(models.StatusInternalServerError{
-			Code:    http.StatusInternalServerError,
-			Message: "failed to fetch transcription",
-			Data:    nil,
-		}))
-		return
 	}
 
 	if !found {

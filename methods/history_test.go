@@ -44,7 +44,7 @@ func TestHistorySummaryLookupKey_PrefersUniqueID(t *testing.T) {
 	}
 }
 
-func TestGetFilteredHistory_ReturnsServiceUnavailableWhenTranscriptsTableIsMissing(t *testing.T) {
+func TestGetFilteredHistory_ReturnsEmptyRowsWhenTranscriptsTableIsMissing(t *testing.T) {
 	router, cleanup := setupHistoryArtifactTest(t, func([]string) ([]SummaryListItem, error) {
 		return nil, &pgconn.PgError{Code: "42P01", Message: `relation "transcripts" does not exist`}
 	})
@@ -54,22 +54,21 @@ func TestGetFilteredHistory_ReturnsServiceUnavailableWhenTranscriptsTableIsMissi
 	req, _ := http.NewRequest("GET", "/history/calls?callType=user&username=alice&from=20260430&to=20260507&artifact=summary", nil)
 	router.ServeHTTP(w, req)
 
-	if w.Code != http.StatusServiceUnavailable {
-		t.Fatalf("expected 503 service unavailable, got %d: %s", w.Code, w.Body.String())
+	// A missing schema means no row has a summary yet, which is the same
+	// outcome as a normal empty filter result, not an outage.
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 ok, got %d: %s", w.Code, w.Body.String())
 	}
 
 	var response struct {
-		Message string                 `json:"message"`
-		Data    map[string]interface{} `json:"data"`
+		Count int                      `json:"count"`
+		Rows  []map[string]interface{} `json:"rows"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
-	if response.Message != "satellite database schema not initialized" {
-		t.Fatalf("unexpected message: %s", response.Message)
-	}
-	if response.Data["missing_table"] != "transcripts" {
-		t.Fatalf("unexpected missing_table: %v", response.Data["missing_table"])
+	if response.Count != 0 || len(response.Rows) != 0 {
+		t.Fatalf("expected no rows, got %+v", response)
 	}
 }
 
