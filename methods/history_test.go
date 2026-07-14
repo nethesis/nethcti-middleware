@@ -262,3 +262,37 @@ func TestCollapseHistoryRowsByLinkedid(t *testing.T) {
 		t.Fatalf("single-leg count should be 1, got %v", got[2]["interactionsCount"])
 	}
 }
+
+// TestCollapseHistoryRowsByLinkedid_NoAnsweredLeg proves that when a linkedid
+// group has no ANSWERED leg, selectParentLegIndex falls back to 0 (the first
+// leg) and the parent's interactions are the remaining legs ordered by
+// ascending time.
+func TestCollapseHistoryRowsByLinkedid_NoAnsweredLeg(t *testing.T) {
+	rows := []map[string]interface{}{
+		{"linkedid": "L1", "uniqueid": "u1a", "time": float64(300), "disposition": "NO ANSWER", "dst": "121"},
+		{"linkedid": "L1", "uniqueid": "u1b", "time": float64(100), "disposition": "BUSY", "dst": "120"},
+		{"linkedid": "L1", "uniqueid": "u1c", "time": float64(200), "disposition": "NO ANSWER", "dst": "122"},
+	}
+
+	got := collapseHistoryRowsByLinkedid(rows)
+
+	if len(got) != 1 {
+		t.Fatalf("expected 1 parent row, got %d", len(got))
+	}
+	// No ANSWERED leg in the group: parent falls back to the first leg (u1a),
+	// matching selectParentLegIndex returning 0.
+	if got[0]["uniqueid"] != "u1a" {
+		t.Fatalf("expected first leg u1a as fallback parent, got %v", got[0]["uniqueid"])
+	}
+	if got[0]["interactionsCount"] != 3 {
+		t.Fatalf("expected interactionsCount 3, got %v", got[0]["interactionsCount"])
+	}
+	children, ok := got[0]["interactions"].([]map[string]interface{})
+	if !ok || len(children) != 2 {
+		t.Fatalf("expected 2 interaction children, got %v", got[0]["interactions"])
+	}
+	// Children exclude the parent and are ordered by ascending time (u1b@100, u1c@200).
+	if children[0]["uniqueid"] != "u1b" || children[1]["uniqueid"] != "u1c" {
+		t.Fatalf("children wrong/unsorted: %+v", children)
+	}
+}
