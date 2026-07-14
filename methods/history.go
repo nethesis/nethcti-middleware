@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -99,7 +100,8 @@ func GetFilteredHistory(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, paginateHistoryRows(filteredRows, req.PageNum, req.PageSize))
+	collapsedRows := collapseHistoryRowsByLinkedid(filteredRows)
+	c.JSON(http.StatusOK, paginateHistoryRows(collapsedRows, req.PageNum, req.PageSize))
 }
 
 func parseHistoryFilterRequest(c *gin.Context) (*historyFilterRequest, error) {
@@ -503,5 +505,93 @@ func paginateHistoryRows(rows []map[string]interface{}, pageNum int, pageSize in
 	return gin.H{
 		"count": count,
 		"rows":  rows[start:end],
+	}
+}
+
+// collapseHistoryRowsByLinkedid groups the (already filtered) history rows by
+// linkedid into one parent row per logical call. The parent is the first leg with
+// disposition "ANSWERED", or the first leg if none answered. The parent keeps its
+// group's first-occurrence position and gains an "interactions" slice (the group's
+// other legs, ordered by ascending time) plus an "interactionsCount" (total legs).
+// Rows with an empty linkedid are each their own group and are never merged.
+func collapseHistoryRowsByLinkedid(rows []map[string]interface{}) []map[string]interface{} {
+	type slot struct {
+		key        string                 // linkedid group key; "" for a standalone row
+		standalone map[string]interface{} // set when the row has no linkedid
+	}
+	legsByID := make(map[string][]map[string]interface{})
+	slots := make([]slot, 0, len(rows))
+
+	for _, row := range rows {
+		linkedID := getHistoryRowString(row, "linkedid")
+		if linkedID == "" {
+			slots = append(slots, slot{standalone: row})
+			continue
+		}
+		if _, seen := legsByID[linkedID]; !seen {
+			slots = append(slots, slot{key: linkedID})
+		}
+		legsByID[linkedID] = append(legsByID[linkedID], row)
+	}
+
+	result := make([]map[string]interface{}, 0, len(slots))
+	for _, s := range slots {
+		if s.standalone != nil {
+			s.standalone["interactionsCount"] = 1
+			result = append(result, s.standalone)
+			continue
+		}
+		legs := legsByID[s.key]
+		parentIdx := selectParentLegIndex(legs)
+		parent := legs[parentIdx]
+		if len(legs) > 1 {
+			children := make([]map[string]interface{}, 0, len(legs)-1)
+			for i, leg := range legs {
+				if i == parentIdx {
+					continue
+				}
+				children = append(children, leg)
+			}
+			sortLegsByTimeAsc(children)
+			parent["interactions"] = children
+		}
+		parent["interactionsCount"] = len(legs)
+		result = append(result, parent)
+	}
+	return result
+}
+
+// selectParentLegIndex returns the index of the first ANSWERED leg, or 0.
+func selectParentLegIndex(legs []map[string]interface{}) int {
+	for i, leg := range legs {
+		if getHistoryRowString(leg, "disposition") == "ANSWERED" {
+			return i
+		}
+	}
+	return 0
+}
+
+// sortLegsByTimeAsc sorts legs ascending by the numeric "time" field (UNIX ts).
+func sortLegsByTimeAsc(legs []map[string]interface{}) {
+	sort.SliceStable(legs, func(i, j int) bool {
+		return historyRowTime(legs[i]) < historyRowTime(legs[j])
+	})
+}
+
+// historyRowTime reads the numeric "time" field regardless of its JSON type.
+func historyRowTime(row map[string]interface{}) float64 {
+	switch v := row["time"].(type) {
+	case float64:
+		return v
+	case int:
+		return float64(v)
+	case json.Number:
+		f, _ := v.Float64()
+		return f
+	case string:
+		f, _ := strconv.ParseFloat(v, 64)
+		return f
+	default:
+		return 0
 	}
 }
