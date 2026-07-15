@@ -279,10 +279,10 @@ func TestCollapseHistoryRowsByLinkedid_NoAnsweredLeg(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("expected 1 parent row, got %d", len(got))
 	}
-	// No ANSWERED leg in the group: parent falls back to the first leg (u1a),
-	// matching selectParentLegIndex returning 0.
-	if got[0]["uniqueid"] != "u1a" {
-		t.Fatalf("expected first leg u1a as fallback parent, got %v", got[0]["uniqueid"])
+	// No ANSWERED leg in the group: parent falls back to the EARLIEST leg
+	// deterministically (u1b@100), independent of input order.
+	if got[0]["uniqueid"] != "u1b" {
+		t.Fatalf("expected earliest leg u1b as fallback parent, got %v", got[0]["uniqueid"])
 	}
 	if got[0]["interactionsCount"] != 3 {
 		t.Fatalf("expected interactionsCount 3, got %v", got[0]["interactionsCount"])
@@ -291,8 +291,30 @@ func TestCollapseHistoryRowsByLinkedid_NoAnsweredLeg(t *testing.T) {
 	if !ok || len(children) != 2 {
 		t.Fatalf("expected 2 interaction children, got %v", got[0]["interactions"])
 	}
-	// Children exclude the parent and are ordered by ascending time (u1b@100, u1c@200).
-	if children[0]["uniqueid"] != "u1b" || children[1]["uniqueid"] != "u1c" {
+	// Children exclude the parent and are ordered by ascending time (u1c@200, u1a@300).
+	if children[0]["uniqueid"] != "u1c" || children[1]["uniqueid"] != "u1a" {
 		t.Fatalf("children wrong/unsorted: %+v", children)
+	}
+}
+
+func TestCollapseHistoryRowsByLinkedid_StableParentAcrossSortOrder(t *testing.T) {
+	// A transferred call has multiple ANSWERED legs. The parent must be the
+	// earliest ANSWERED leg regardless of the order rows arrive in (which varies
+	// with the request sort), so the same call always exposes the same parent.
+	asc := []map[string]interface{}{
+		{"linkedid": "L1", "uniqueid": "uEarly", "time": float64(100), "disposition": "ANSWERED", "dst": "120"},
+		{"linkedid": "L1", "uniqueid": "uLate", "time": float64(200), "disposition": "ANSWERED", "dst": "121"},
+	}
+	desc := []map[string]interface{}{
+		{"linkedid": "L1", "uniqueid": "uLate", "time": float64(200), "disposition": "ANSWERED", "dst": "121"},
+		{"linkedid": "L1", "uniqueid": "uEarly", "time": float64(100), "disposition": "ANSWERED", "dst": "120"},
+	}
+
+	gotAsc := collapseHistoryRowsByLinkedid(asc)
+	gotDesc := collapseHistoryRowsByLinkedid(desc)
+
+	if gotAsc[0]["uniqueid"] != "uEarly" || gotDesc[0]["uniqueid"] != "uEarly" {
+		t.Fatalf("parent not stable/earliest across order: asc=%v desc=%v",
+			gotAsc[0]["uniqueid"], gotDesc[0]["uniqueid"])
 	}
 }

@@ -561,14 +561,41 @@ func collapseHistoryRowsByLinkedid(rows []map[string]interface{}) []map[string]i
 	return result
 }
 
-// selectParentLegIndex returns the index of the first ANSWERED leg, or 0.
+// selectParentLegIndex returns the index of the leg to use as the group parent,
+// chosen deterministically so the same call yields the same parent regardless of
+// the request sort order: the earliest ANSWERED leg (ties broken by uniqueid), or
+// the earliest leg overall when none answered.
 func selectParentLegIndex(legs []map[string]interface{}) int {
-	for i, leg := range legs {
-		if getHistoryRowString(leg, "disposition") == "ANSWERED" {
-			return i
+	best := -1
+	for i := range legs {
+		if getHistoryRowString(legs[i], "disposition") != "ANSWERED" {
+			continue
+		}
+		if best == -1 || legLess(legs[i], legs[best]) {
+			best = i
 		}
 	}
-	return 0
+	if best != -1 {
+		return best
+	}
+	// No answered leg: pick the earliest leg overall, still deterministically.
+	best = 0
+	for i := range legs {
+		if legLess(legs[i], legs[best]) {
+			best = i
+		}
+	}
+	return best
+}
+
+// legLess orders legs by ascending time, breaking ties by uniqueid, so parent
+// selection does not depend on the order the rows arrived in.
+func legLess(a, b map[string]interface{}) bool {
+	ta, tb := historyRowTime(a), historyRowTime(b)
+	if ta != tb {
+		return ta < tb
+	}
+	return getHistoryRowString(a, "uniqueid") < getHistoryRowString(b, "uniqueid")
 }
 
 // sortLegsByTimeAsc sorts legs ascending by the numeric "time" field (UNIX ts).
