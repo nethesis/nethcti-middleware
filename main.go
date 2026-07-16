@@ -15,6 +15,7 @@ import (
 	"github.com/gin-contrib/gzip"
 	"github.com/gin-gonic/gin"
 	"github.com/robfig/cron/v3"
+	"golang.org/x/time/rate"
 
 	"github.com/nethesis/nethcti-middleware/configuration"
 	"github.com/nethesis/nethcti-middleware/db"
@@ -139,6 +140,15 @@ func createRouter() *gin.Engine {
 		router.SetTrustedProxies([]string{configuration.Config.TrustedProxy})
 	}
 
+	// Generous global per-IP rate limit as a coarse safety net across all
+	// routes. Set NETHVOICE_MIDDLEWARE_GLOBAL_RATE_LIMIT_AVERAGE=0 to disable.
+	if configuration.Config.GlobalRateLimitAverage > 0 {
+		router.Use(middleware.RateLimiter(
+			rate.Limit(configuration.Config.GlobalRateLimitAverage),
+			configuration.Config.GlobalRateLimitBurst,
+		))
+	}
+
 	// Super admin endpoints (no JWT required) - must be registered on router, not api group
 	router.POST("/admin/phonebook/import", middleware.RequireSuperAdmin(), methods.AdminImportPhonebookCSV)
 	router.POST("/admin/reload/profiles", middleware.RequireSuperAdmin(), methods.AdminReloadProfiles)
@@ -146,8 +156,10 @@ func createRouter() *gin.Engine {
 	// Define api group
 	api := router.Group("")
 
-	// Define public endpoints
-	api.POST("/login", middleware.InstanceJWT().LoginHandler)
+	// Define public endpoints. BodyLimit caps each request's size; the global
+	// per-IP rate limiter (see above) bounds request frequency across every
+	// route, including this pre-authentication one.
+	api.POST("/login", middleware.BodyLimit(32<<10), middleware.InstanceJWT().LoginHandler)
 	api.GET("/ws/", socket.WsProxyHandler)
 
 	// Authentication required endpoints
@@ -164,7 +176,7 @@ func createRouter() *gin.Engine {
 
 		// 2FA
 		api.POST("/2fa/disable", methods.Disable2FA)
-		api.POST("/2fa/verify-otp", methods.VerifyOTP)
+		api.POST("/2fa/verify-otp", middleware.BodyLimit(32<<10), methods.VerifyOTP)
 		api.GET("/2fa/status", methods.Get2FAStatus)
 		api.POST("/2fa/recovery-codes", methods.Get2FARecoveryCodes)
 		api.GET("/2fa/qr-code", methods.QRCode)
@@ -210,7 +222,7 @@ func createRouter() *gin.Engine {
 		api.GET("/voicemail/list/:id", methods.ListVoicemailByID)
 
 		// Logout
-		api.POST("/logout", middleware.InstanceJWT().LogoutHandler)
+		api.POST("/logout", middleware.BodyLimit(1<<10), middleware.InstanceJWT().LogoutHandler)
 	}
 
 	// Handle missing endpoint

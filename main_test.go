@@ -70,6 +70,11 @@ func setupTestEnvironment() {
 	os.Setenv("NETHVOICE_MIDDLEWARE_SECRETS_DIR", "/tmp/test-secrets/nethcti")
 	os.Setenv("NETHVOICE_MIDDLEWARE_ISSUER_2FA", "NetCTI-Test")
 	os.Setenv("NETHVOICE_MIDDLEWARE_SENSITIVE_LIST", "password,secret")
+	// Disable the global rate limiter for tests: the suite reuses this
+	// singleton server and fires many requests from one client IP, which
+	// would otherwise trip the limiter and cause cross-test flakiness
+	// (RateLimiter logic itself is covered by TestRateLimiter).
+	os.Setenv("NETHVOICE_MIDDLEWARE_GLOBAL_RATE_LIMIT_AVERAGE", "0")
 
 	// Set database environment variables for testing
 	os.Setenv("NETHVOICE_MIDDLEWARE_MARIADB_HOST", "127.0.0.1")
