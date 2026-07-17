@@ -1496,6 +1496,61 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /user/nethlink:
+    post:
+      summary: Record a NethLink heartbeat (last-seen)
+      operationId: nethlinkHeartbeat
+      tags:
+        - NethLink
+      description: |
+        Upserts the NethLink last-seen row for the authenticated user (one row per user).
+        The username is taken from the JWT and the timestamp is generated server-side.
+        The optional body carries the client's extension and, additionally to the legacy
+        nethcti-server endpoint, the NethLink version and OS details.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                extension:
+                  type: string
+                  description: NethLink extension id (the JWT does not carry it)
+                nethlink_version:
+                  type: string
+                  description: NethLink application version
+                os_type:
+                  type: string
+                  description: OS family (win32, linux, darwin)
+                os_release:
+                  type: string
+                  description: OS release/kernel version
+                arch:
+                  type: string
+                  description: CPU architecture (x64, arm64, ...)
+      responses:
+        '200':
+          description: Heartbeat recorded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Failed to store the heartbeat
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
 tags:
   - name: Authentication
     description: Login and session management
@@ -1515,3 +1570,5 @@ tags:
     description: Voicemail retrieval and legacy proxy behavior
   - name: Administration
     description: Administrative operations requiring super admin authentication
+  - name: NethLink
+    description: NethLink desktop client endpoints (heartbeat / last-seen)
