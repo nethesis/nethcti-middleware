@@ -48,6 +48,7 @@ type historyFilterRequest struct {
 	PageNum     int
 	PageSize    int
 	Artifact    string
+	AudioTest   string
 	LegacyToken string
 }
 
@@ -100,7 +101,11 @@ func GetFilteredHistory(c *gin.Context) {
 		return
 	}
 
-	collapsedRows := collapseHistoryRowsByLinkedid(filteredRows)
+	// Drop audio-test (echo) calls server-side BEFORE collapse + pagination, so
+	// each page is filled to pageSize. The frontend used to hide these client-side
+	// after pagination, which left pages short (count included hidden rows).
+	visibleRows := filterAudioTestRows(filteredRows, req.AudioTest)
+	collapsedRows := collapseHistoryRowsByLinkedid(visibleRows)
 	c.JSON(http.StatusOK, paginateHistoryRows(collapsedRows, req.PageNum, req.PageSize))
 }
 
@@ -156,6 +161,7 @@ func parseHistoryFilterRequest(c *gin.Context) (*historyFilterRequest, error) {
 		PageNum:     pageNum,
 		PageSize:    pageSize,
 		Artifact:    artifact,
+		AudioTest:   strings.TrimSpace(c.Query("audioTest")),
 		LegacyToken: userSession.NethCTIToken,
 	}, nil
 }
@@ -488,6 +494,26 @@ func enrichLocalChannelArtifactRows(rows []map[string]interface{}) []map[string]
 	}
 
 	return rows
+}
+
+// filterAudioTestRows drops audio-test / echo calls whose src or dst contains the
+// audio-test feature code (e.g. "*41"). Mirrors the CTI client-side filter, but
+// done here before pagination so pages are not left short. An empty code is a
+// no-op (nothing is filtered).
+func filterAudioTestRows(rows []map[string]interface{}, audioTestCode string) []map[string]interface{} {
+	code := strings.TrimSpace(audioTestCode)
+	if code == "" {
+		return rows
+	}
+	out := make([]map[string]interface{}, 0, len(rows))
+	for _, row := range rows {
+		if strings.Contains(getHistoryRowString(row, "src"), code) ||
+			strings.Contains(getHistoryRowString(row, "dst"), code) {
+			continue
+		}
+		out = append(out, row)
+	}
+	return out
 }
 
 func paginateHistoryRows(rows []map[string]interface{}, pageNum int, pageSize int) gin.H {

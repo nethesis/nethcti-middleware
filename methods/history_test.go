@@ -297,6 +297,24 @@ func TestCollapseHistoryRowsByLinkedid_NoAnsweredLeg(t *testing.T) {
 	}
 }
 
+func TestFilterAudioTestRows(t *testing.T) {
+	rows := []map[string]interface{}{
+		{"src": "91234", "dst": "*41"},
+		{"src": "0541759779", "dst": "402"},
+		{"src": "*41", "dst": "201"},
+	}
+
+	got := filterAudioTestRows(rows, "*41")
+	if len(got) != 1 || got[0]["dst"] != "402" {
+		t.Fatalf("expected only the 402 row to survive, got %+v", got)
+	}
+
+	// Empty code is a no-op.
+	if n := len(filterAudioTestRows(rows, "")); n != 3 {
+		t.Fatalf("empty code should keep all rows, got %d", n)
+	}
+}
+
 func TestCollapseHistoryRowsByLinkedid_ParentIsAgentNotQueue(t *testing.T) {
 	// A queue call: caller 202 → queue 401, answered by agent 203. Both the
 	// queue-entry leg (lastapp=Queue, dst=401) and the agent Dial leg
