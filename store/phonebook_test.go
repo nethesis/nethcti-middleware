@@ -391,6 +391,53 @@ func TestSearchLegacyPhonebook_ReturnsUnionWithVisibilityFiltering(t *testing.T)
 	assert.Equal(t, lastSyncAt.Format(time.RFC3339), *result.LastSyncAt)
 }
 
+func TestSearchLegacyPhonebook_CentralizedGroupSharing(t *testing.T) {
+	clearPhonebookTable(t)
+	clearCentralizedPhonebookTable(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	insertCentralizedPhonebookRow(t, store.PhonebookEntry{
+		Type: "public", Name: "Central Public", Company: "Acme",
+	})
+	insertCentralizedPhonebookRow(t, store.PhonebookEntry{
+		// Legacy source-name type must remain visible (backward compatibility).
+		Type: "Leopard", Name: "Central Legacy", Company: "Acme",
+	})
+	insertCentralizedPhonebookRow(t, store.PhonebookEntry{
+		Type: "group:Sales", Name: "Central Sales", Company: "Acme",
+	})
+
+	namesFor := func(groups []string) []string {
+		result, err := store.SearchLegacyPhonebook(ctx, store.LegacyPhonebookQuery{
+			Username:   "someone",
+			UserGroups: groups,
+		})
+		require.NoError(t, err)
+		names := make([]string, 0, len(result.Rows))
+		for _, row := range result.Rows {
+			names = append(names, row.Name)
+		}
+		return names
+	}
+
+	member := namesFor([]string{"Sales"})
+	assert.Contains(t, member, "Central Public")
+	assert.Contains(t, member, "Central Legacy")
+	assert.Contains(t, member, "Central Sales")
+
+	nonMember := namesFor([]string{"Support"})
+	assert.Contains(t, nonMember, "Central Public")
+	assert.Contains(t, nonMember, "Central Legacy")
+	assert.NotContains(t, nonMember, "Central Sales")
+
+	noGroups := namesFor(nil)
+	assert.Contains(t, noGroups, "Central Public")
+	assert.Contains(t, noGroups, "Central Legacy")
+	assert.NotContains(t, noGroups, "Central Sales")
+}
+
 func TestSearchLegacyPhonebook_CompanyViewBuildsContactsPayload(t *testing.T) {
 	clearPhonebookTable(t)
 	clearCentralizedPhonebookTable(t)

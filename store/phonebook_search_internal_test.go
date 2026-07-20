@@ -139,6 +139,27 @@ func TestBuildLegacySearchClauses_ViewGuards(t *testing.T) {
 	})
 }
 
+func TestBuildVisibleCentralizedWhere_NoGroupsOnlyNonGroupScoped(t *testing.T) {
+	clause, args := buildVisibleCentralizedWhere(nil)
+
+	assert.Equal(t, `type NOT LIKE ? ESCAPE '\\'`, clause)
+	assert.Equal(t, []any{"group:%"}, args)
+}
+
+func TestBuildVisibleCentralizedWhere_WithGroupsAddsMembershipPatterns(t *testing.T) {
+	clause, args := buildVisibleCentralizedWhere([]string{`Sales%_\West`})
+
+	assert.Contains(t, clause, `type NOT LIKE ? ESCAPE '\\'`)
+	assert.Contains(t, clause, `type = ? OR type LIKE ? ESCAPE '\\'`)
+	assert.Equal(t, []any{
+		"group:%",
+		`group:Sales%_\West`,
+		`group:Sales\%\_\\West,%`,
+		`group:%,Sales\%\_\\West,%`,
+		`group:%,Sales\%\_\\West`,
+	}, args)
+}
+
 func TestBuildLegacyVisibilityClauses_CentralizedUsesItsOwnTaxonomy(t *testing.T) {
 	t.Run("all keeps centralized rows visible", func(t *testing.T) {
 		ctiClause, ctiArgs, centralizedClause, centralizedArgs := buildLegacyVisibilityClauses("all")
