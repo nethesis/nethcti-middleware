@@ -50,11 +50,11 @@ var legacyPhonebookSelectColumns = strings.Join([]string{
 	"url",
 }, ", ")
 
-// Columns added by issue #7124. They exist only in cti_phonebook, so the
-// centralized branch of every UNION must project empty literals to keep the
-// column count aligned with the scan order.
+// Columns added by issue #7124. Present in cti_phonebook and, since #7127, also in
+// the centralized phonebook (migrated via ns8 configure-module/86phonebook_schema_upgrade),
+// so both branches of every UNION project the real columns in the same scan order.
 const ctiPhonebookExtraColumns = "firstname, lastname, job, facebook, instagram, linkedin, workphone2, cellphone2, otherphone, otheremail"
-const centralizedPhonebookExtraColumns = "'' AS firstname, '' AS lastname, '' AS job, '' AS facebook, '' AS instagram, '' AS linkedin, '' AS workphone2, '' AS cellphone2, '' AS otherphone, '' AS otheremail"
+const centralizedPhonebookExtraColumns = "firstname, lastname, job, facebook, instagram, linkedin, workphone2, cellphone2, otherphone, otheremail"
 
 // LegacyPhonebookQuery describes legacy-compatible union search/list parameters.
 type LegacyPhonebookQuery struct {

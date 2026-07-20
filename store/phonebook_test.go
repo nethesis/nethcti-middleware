@@ -147,6 +147,23 @@ func ensureCentralizedPhonebookTable() error {
 	_, err = db.GetDB().Exec(`
 		ALTER TABLE phonebook.phonebook ADD COLUMN IF NOT EXISTS sid_imported varchar(255) DEFAULT NULL;
 	`)
+	if err != nil {
+		return err
+	}
+
+	_, err = db.GetDB().Exec(`
+		ALTER TABLE phonebook.phonebook
+			ADD COLUMN IF NOT EXISTS firstname varchar(255) DEFAULT NULL,
+			ADD COLUMN IF NOT EXISTS lastname varchar(255) DEFAULT NULL,
+			ADD COLUMN IF NOT EXISTS job varchar(255) DEFAULT NULL,
+			ADD COLUMN IF NOT EXISTS facebook varchar(255) DEFAULT NULL,
+			ADD COLUMN IF NOT EXISTS instagram varchar(255) DEFAULT NULL,
+			ADD COLUMN IF NOT EXISTS linkedin varchar(255) DEFAULT NULL,
+			ADD COLUMN IF NOT EXISTS workphone2 varchar(25) DEFAULT NULL,
+			ADD COLUMN IF NOT EXISTS cellphone2 varchar(25) DEFAULT NULL,
+			ADD COLUMN IF NOT EXISTS otherphone varchar(25) DEFAULT NULL,
+			ADD COLUMN IF NOT EXISTS otheremail varchar(255) DEFAULT NULL;
+	`)
 	return err
 }
 
@@ -436,6 +453,85 @@ func TestSearchLegacyPhonebook_CentralizedGroupSharing(t *testing.T) {
 	assert.Contains(t, noGroups, "Central Public")
 	assert.Contains(t, noGroups, "Central Legacy")
 	assert.NotContains(t, noGroups, "Central Sales")
+}
+
+// TestSearchLegacyPhonebook_CentralizedExtendedFields verifies issue #7124/#7127:
+// the extended contact fields stored on a centralized (imported) contact are returned
+// by the search, not blanked out.
+func TestSearchLegacyPhonebook_CentralizedExtendedFields(t *testing.T) {
+	clearPhonebookTable(t)
+	clearCentralizedPhonebookTable(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	_, err := db.GetDB().ExecContext(ctx, `
+		INSERT INTO phonebook.phonebook
+			(type, name, company, firstname, lastname, job, facebook, instagram, linkedin, workphone2, cellphone2, otherphone, otheremail, sid_imported)
+		VALUES
+			('public', 'Ext Contact', 'Acme', 'Ext', 'Contact', 'Dev', 'fb', 'ig', 'in', '0110000002', '3330000002', '0119999999', 'other@acme.test', 'custom_1')
+	`)
+	require.NoError(t, err)
+
+	result, err := store.SearchLegacyPhonebook(ctx, store.LegacyPhonebookQuery{
+		Username: "someone",
+		Term:     "Ext Contact",
+	})
+	require.NoError(t, err)
+
+	var found *store.LegacyPhonebookContact
+	for i := range result.Rows {
+		if result.Rows[i].Name == "Ext Contact" {
+			found = &result.Rows[i]
+			break
+		}
+	}
+	require.NotNil(t, found, "centralized contact not returned")
+	assert.Equal(t, "centralized", found.Source)
+	assert.Equal(t, "Ext", found.FirstName)
+	assert.Equal(t, "Contact", found.LastName)
+	assert.Equal(t, "Dev", found.Job)
+	assert.Equal(t, "fb", found.Facebook)
+	assert.Equal(t, "ig", found.Instagram)
+	assert.Equal(t, "in", found.LinkedIn)
+	assert.Equal(t, "0110000002", found.WorkPhone2)
+	assert.Equal(t, "3330000002", found.CellPhone2)
+	assert.Equal(t, "0119999999", found.OtherPhone)
+	assert.Equal(t, "other@acme.test", found.OtherEmail)
+}
+
+// TestGetCentralizedPhonebookEntryByID_ReturnsExtendedFields verifies issue #7124/#7127:
+// the contact-detail endpoint for a centralized (imported) contact returns the extended
+// fields (previously projected as empty literals).
+func TestGetCentralizedPhonebookEntryByID_ReturnsExtendedFields(t *testing.T) {
+	clearCentralizedPhonebookTable(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	res, err := db.GetDB().ExecContext(ctx, `
+		INSERT INTO phonebook.phonebook
+			(type, name, company, firstname, lastname, job, facebook, instagram, linkedin, workphone2, cellphone2, otherphone, otheremail, sid_imported)
+		VALUES
+			('public', 'Detail Contact', 'Acme', 'Det', 'Ail', 'QA', 'fb', 'ig', 'in', '0110000003', '3330000003', '0118888888', 'det@acme.test', 'custom_1')
+	`)
+	require.NoError(t, err)
+	id, err := res.LastInsertId()
+	require.NoError(t, err)
+
+	entry, err := store.GetCentralizedPhonebookEntryByID(ctx, id)
+	require.NoError(t, err)
+	require.NotNil(t, entry)
+	assert.Equal(t, "Det", entry.FirstName)
+	assert.Equal(t, "Ail", entry.LastName)
+	assert.Equal(t, "QA", entry.Job)
+	assert.Equal(t, "fb", entry.Facebook)
+	assert.Equal(t, "ig", entry.Instagram)
+	assert.Equal(t, "in", entry.LinkedIn)
+	assert.Equal(t, "0110000003", entry.WorkPhone2)
+	assert.Equal(t, "3330000003", entry.CellPhone2)
+	assert.Equal(t, "0118888888", entry.OtherPhone)
+	assert.Equal(t, "det@acme.test", entry.OtherEmail)
 }
 
 func TestSearchLegacyPhonebook_CompanyViewBuildsContactsPayload(t *testing.T) {

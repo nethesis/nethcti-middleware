@@ -387,8 +387,8 @@ func GetCentralizedPhonebookEntryByID(ctx context.Context, id int64) (*Phonebook
 			title, company, notes, name, homestreet, homepob, homecity, homeprovince,
 			homepostalcode, homecountry, workstreet, workpob, workcity, workprovince,
 			workpostalcode, workcountry, url, '' AS extension, '' AS speeddial_num,
-			'' AS firstname, '' AS lastname, '' AS job, '' AS facebook, '' AS instagram,
-			'' AS linkedin, '' AS workphone2, '' AS cellphone2, '' AS otherphone, '' AS otheremail
+			firstname, lastname, job, facebook, instagram,
+			linkedin, workphone2, cellphone2, otherphone, otheremail
 		FROM ` + centralizedPhonebookTable + `
 		WHERE id = ? AND type != 'nethcti'
 		LIMIT 1
