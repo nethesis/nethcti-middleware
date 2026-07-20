@@ -50,8 +50,7 @@ var legacyPhonebookSelectColumns = strings.Join([]string{
 	"url",
 }, ", ")
 
-// Columns added by issue #7124. Present in cti_phonebook and, since #7127, also in
-// the centralized phonebook (migrated via ns8 configure-module/86phonebook_schema_upgrade),
+// Extended contact fields, present in both cti_phonebook and the centralized phonebook,
 // so both branches of every UNION project the real columns in the same scan order.
 const ctiPhonebookExtraColumns = "firstname, lastname, job, facebook, instagram, linkedin, workphone2, cellphone2, otherphone, otheremail"
 const centralizedPhonebookExtraColumns = "firstname, lastname, job, facebook, instagram, linkedin, workphone2, cellphone2, otherphone, otheremail"

@@ -455,9 +455,9 @@ func TestSearchLegacyPhonebook_CentralizedGroupSharing(t *testing.T) {
 	assert.NotContains(t, noGroups, "Central Sales")
 }
 
-// TestSearchLegacyPhonebook_CentralizedExtendedFields verifies issue #7124/#7127:
-// the extended contact fields stored on a centralized (imported) contact are returned
-// by the search, not blanked out.
+// TestSearchLegacyPhonebook_CentralizedExtendedFields verifies the extended contact
+// fields stored on a centralized (imported) contact are returned by the search, not
+// blanked out.
 func TestSearchLegacyPhonebook_CentralizedExtendedFields(t *testing.T) {
 	clearPhonebookTable(t)
 	clearCentralizedPhonebookTable(t)
@@ -500,9 +500,9 @@ func TestSearchLegacyPhonebook_CentralizedExtendedFields(t *testing.T) {
 	assert.Equal(t, "other@acme.test", found.OtherEmail)
 }
 
-// TestGetCentralizedPhonebookEntryByID_ReturnsExtendedFields verifies issue #7124/#7127:
-// the contact-detail endpoint for a centralized (imported) contact returns the extended
-// fields (previously projected as empty literals).
+// TestGetCentralizedPhonebookEntryByID_ReturnsExtendedFields verifies the contact-detail
+// endpoint for a centralized (imported) contact returns the extended fields (previously
+// projected as empty literals).
 func TestGetCentralizedPhonebookEntryByID_ReturnsExtendedFields(t *testing.T) {
 	clearCentralizedPhonebookTable(t)
 
