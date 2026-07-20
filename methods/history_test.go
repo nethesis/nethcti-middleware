@@ -297,6 +297,33 @@ func TestCollapseHistoryRowsByLinkedid_NoAnsweredLeg(t *testing.T) {
 	}
 }
 
+func TestCollapseHistoryRowsByLinkedid_ParentIsAgentNotQueue(t *testing.T) {
+	// A queue call: caller 202 → queue 401, answered by agent 203. Both the
+	// queue-entry leg (lastapp=Queue, dst=401) and the agent Dial leg
+	// (dst=203) are ANSWERED. The parent must be the agent leg so the row's
+	// destination is WHO answered, not the queue number.
+	rows := []map[string]interface{}{
+		{"linkedid": "L1", "uniqueid": "uQueue", "time": float64(100), "disposition": "ANSWERED", "lastapp": "Queue", "src": "202", "dst": "401"},
+		{"linkedid": "L1", "uniqueid": "uRing201", "time": float64(101), "disposition": "ANSWERED_ELSEWHERE", "lastapp": "Dial", "src": "202", "dst": "201"},
+		{"linkedid": "L1", "uniqueid": "uAgent203", "time": float64(102), "disposition": "ANSWERED", "lastapp": "Dial", "src": "202", "dst": "203"},
+	}
+
+	got := collapseHistoryRowsByLinkedid(rows)
+
+	if len(got) != 1 {
+		t.Fatalf("expected 1 parent row, got %d", len(got))
+	}
+	if got[0]["uniqueid"] != "uAgent203" {
+		t.Fatalf("expected agent Dial leg uAgent203 as parent, got %v", got[0]["uniqueid"])
+	}
+	if got[0]["dst"] != "203" {
+		t.Fatalf("expected parent dst 203 (who answered), got %v", got[0]["dst"])
+	}
+	if got[0]["interactionsCount"] != 3 {
+		t.Fatalf("expected interactionsCount 3, got %v", got[0]["interactionsCount"])
+	}
+}
+
 func TestCollapseHistoryRowsByLinkedid_StableParentAcrossSortOrder(t *testing.T) {
 	// A transferred call has multiple ANSWERED legs. The parent must be the
 	// earliest ANSWERED leg regardless of the order rows arrive in (which varies

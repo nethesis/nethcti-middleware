@@ -563,25 +563,39 @@ func collapseHistoryRowsByLinkedid(rows []map[string]interface{}) []map[string]i
 
 // selectParentLegIndex returns the index of the leg to use as the group parent,
 // chosen deterministically so the same call yields the same parent regardless of
-// the request sort order: the earliest ANSWERED leg (ties broken by uniqueid), or
-// the earliest leg overall when none answered.
+// the request sort order. Preference tiers:
+//  1. the ANSWERED leg that is the actual answered conversation with the agent
+//     (a Dial leg, so its dst is WHO answered) rather than the queue-entry leg
+//     (lastapp == "Queue", whose dst is just the queue number);
+//  2. any ANSWERED leg;
+//  3. the earliest leg overall (nothing answered).
+//
+// Within each tier the earliest leg wins (ties broken by uniqueid), so the choice
+// never depends on the order the rows arrived in.
 func selectParentLegIndex(legs []map[string]interface{}) int {
+	if i := earliestLegMatching(legs, func(leg map[string]interface{}) bool {
+		return getHistoryRowString(leg, "disposition") == "ANSWERED" &&
+			getHistoryRowString(leg, "lastapp") != "Queue"
+	}); i != -1 {
+		return i
+	}
+	if i := earliestLegMatching(legs, func(leg map[string]interface{}) bool {
+		return getHistoryRowString(leg, "disposition") == "ANSWERED"
+	}); i != -1 {
+		return i
+	}
+	return earliestLegMatching(legs, func(map[string]interface{}) bool { return true })
+}
+
+// earliestLegMatching returns the index of the earliest leg (by legLess) that
+// satisfies pred, or -1 if none match.
+func earliestLegMatching(legs []map[string]interface{}, pred func(map[string]interface{}) bool) int {
 	best := -1
 	for i := range legs {
-		if getHistoryRowString(legs[i], "disposition") != "ANSWERED" {
+		if !pred(legs[i]) {
 			continue
 		}
 		if best == -1 || legLess(legs[i], legs[best]) {
-			best = i
-		}
-	}
-	if best != -1 {
-		return best
-	}
-	// No answered leg: pick the earliest leg overall, still deterministically.
-	best = 0
-	for i := range legs {
-		if legLess(legs[i], legs[best]) {
 			best = i
 		}
 	}
