@@ -42,8 +42,8 @@ func TestBuildLegacySearchClauses_EscapesLikeWildcards(t *testing.T) {
 	assert.Contains(t, centralizedClause, `LIKE ? ESCAPE '\\'`)
 	assert.Equal(t, []any{
 		// base name + company, then workphone, workphone2, homephone,
-		// cellphone, cellphone2, otherphone, extension, notes (issue #7124
-		// added the secondary phone columns and otherphone).
+		// cellphone, cellphone2, otherphone, extension, notes (the secondary
+		// phone columns and otherphone were added with the extended fields).
 		`%Sales\%\_\\West%`,
 		`%Sales\%\_\\West%`,
 		`%Sales\%\_\\West%`,
@@ -139,6 +139,27 @@ func TestBuildLegacySearchClauses_ViewGuards(t *testing.T) {
 	})
 }
 
+func TestBuildVisibleCentralizedWhere_NoGroupsOnlyNonGroupScoped(t *testing.T) {
+	clause, args := buildVisibleCentralizedWhere(nil)
+
+	assert.Equal(t, `type NOT LIKE ? ESCAPE '\\'`, clause)
+	assert.Equal(t, []any{"group:%"}, args)
+}
+
+func TestBuildVisibleCentralizedWhere_WithGroupsAddsMembershipPatterns(t *testing.T) {
+	clause, args := buildVisibleCentralizedWhere([]string{`Sales%_\West`})
+
+	assert.Contains(t, clause, `type NOT LIKE ? ESCAPE '\\'`)
+	assert.Contains(t, clause, `type = ? OR type LIKE ? ESCAPE '\\'`)
+	assert.Equal(t, []any{
+		"group:%",
+		`group:Sales%_\West`,
+		`group:Sales\%\_\\West,%`,
+		`group:%,Sales\%\_\\West,%`,
+		`group:%,Sales\%\_\\West`,
+	}, args)
+}
+
 func TestBuildLegacyVisibilityClauses_CentralizedUsesItsOwnTaxonomy(t *testing.T) {
 	t.Run("all keeps centralized rows visible", func(t *testing.T) {
 		ctiClause, ctiArgs, centralizedClause, centralizedArgs := buildLegacyVisibilityClauses("all")
@@ -158,13 +179,16 @@ func TestBuildLegacyVisibilityClauses_CentralizedUsesItsOwnTaxonomy(t *testing.T
 		assert.Nil(t, centralizedArgs)
 	})
 
-	t.Run("private and group exclude centralized rows", func(t *testing.T) {
+	t.Run("private excludes centralized rows, group gates them by scope", func(t *testing.T) {
 		_, _, centralizedPrivateClause, centralizedPrivateArgs := buildLegacyVisibilityClauses("private")
 		_, _, centralizedGroupClause, centralizedGroupArgs := buildLegacyVisibilityClauses("group")
 
+		// No private concept in the centralized phonebook.
 		assert.Equal(t, "1 = 0", centralizedPrivateClause)
 		assert.Nil(t, centralizedPrivateArgs)
-		assert.Equal(t, "1 = 0", centralizedGroupClause)
-		assert.Nil(t, centralizedGroupArgs)
+		// Group view keeps only group-scoped centralized rows (membership is enforced
+		// separately by buildVisibleCentralizedWhere).
+		assert.Equal(t, "type LIKE ?", centralizedGroupClause)
+		assert.Equal(t, []any{"group:%"}, centralizedGroupArgs)
 	})
 }

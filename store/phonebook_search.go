@@ -50,11 +50,10 @@ var legacyPhonebookSelectColumns = strings.Join([]string{
 	"url",
 }, ", ")
 
-// Columns added by issue #7124. They exist only in cti_phonebook, so the
-// centralized branch of every UNION must project empty literals to keep the
-// column count aligned with the scan order.
+// Extended contact fields, present in both cti_phonebook and the centralized phonebook,
+// so both branches of every UNION project the real columns in the same scan order.
 const ctiPhonebookExtraColumns = "firstname, lastname, job, facebook, instagram, linkedin, workphone2, cellphone2, otherphone, otheremail"
-const centralizedPhonebookExtraColumns = "'' AS firstname, '' AS lastname, '' AS job, '' AS facebook, '' AS instagram, '' AS linkedin, '' AS workphone2, '' AS cellphone2, '' AS otherphone, '' AS otheremail"
+const centralizedPhonebookExtraColumns = "firstname, lastname, job, facebook, instagram, linkedin, workphone2, cellphone2, otherphone, otheremail"
 
 // LegacyPhonebookQuery describes legacy-compatible union search/list parameters.
 type LegacyPhonebookQuery struct {
@@ -150,18 +149,23 @@ func ListLegacyPhonebook(ctx context.Context, query LegacyPhonebookQuery) (*Lega
 
 	visibleCTIWhere, visibleCTIArgs := buildVisibleCTIWhere(query.Username, query.UserGroups, query.IncludePrivateContacts)
 	ctiVisibilityWhere, ctiVisibilityArgs, centralizedVisibilityWhere, centralizedVisibilityArgs := buildLegacyVisibilityClauses(query.Visibility)
+	visibleCentralizedWhere, visibleCentralizedArgs := buildVisibleCentralizedWhere(query.UserGroups)
 
 	args := append([]any{}, visibleCTIArgs...)
 	args = append(args, ctiVisibilityArgs...)
+	args = append(args, visibleCentralizedArgs...)
 	args = append(args, centralizedVisibilityArgs...)
 	args = append(args, visibleCTIArgs...)
 	args = append(args, ctiVisibilityArgs...)
+	args = append(args, visibleCentralizedArgs...)
 	args = append(args, centralizedVisibilityArgs...)
 	countArgs := append([]any{}, visibleCTIArgs...)
 	countArgs = append(countArgs, ctiVisibilityArgs...)
+	countArgs = append(countArgs, visibleCentralizedArgs...)
 	countArgs = append(countArgs, centralizedVisibilityArgs...)
 	countArgs = append(countArgs, visibleCTIArgs...)
 	countArgs = append(countArgs, ctiVisibilityArgs...)
+	countArgs = append(countArgs, visibleCentralizedArgs...)
 	countArgs = append(countArgs, centralizedVisibilityArgs...)
 
 	listQuery := strings.Join([]string{
@@ -173,7 +177,7 @@ func ListLegacyPhonebook(ctx context.Context, query LegacyPhonebookQuery) (*Lega
 		"UNION",
 		"SELECT", legacyPhonebookSelectColumns, ", '' AS extension, '' AS speeddial_num, " + centralizedPhonebookExtraColumns + ", 'centralized' AS source, name AS sort_name",
 		"FROM", centralizedPhonebookTable,
-		"WHERE (name IS NOT NULL AND name != '') AND type != 'nethcti' AND", centralizedVisibilityWhere,
+		"WHERE (name IS NOT NULL AND name != '') AND type != 'nethcti' AND", visibleCentralizedWhere, "AND", centralizedVisibilityWhere,
 		"UNION",
 		"SELECT", legacyPhonebookSelectColumns, ", extension, speeddial_num, " + ctiPhonebookExtraColumns + ", 'cti' AS source, company AS sort_name",
 		"FROM cti_phonebook",
@@ -181,7 +185,7 @@ func ListLegacyPhonebook(ctx context.Context, query LegacyPhonebookQuery) (*Lega
 		"UNION",
 		"SELECT", legacyPhonebookSelectColumns, ", '' AS extension, '' AS speeddial_num, " + centralizedPhonebookExtraColumns + ", 'centralized' AS source, company AS sort_name",
 		"FROM", centralizedPhonebookTable,
-		"WHERE (name IS NULL OR name = '') AND (company IS NOT NULL AND company != '') AND type != 'nethcti' AND", centralizedVisibilityWhere,
+		"WHERE (name IS NULL OR name = '') AND (company IS NOT NULL AND company != '') AND type != 'nethcti' AND", visibleCentralizedWhere, "AND", centralizedVisibilityWhere,
 		") phonebook_union",
 		legacyListOrderByClause(query.Sort),
 	}, " ")
@@ -195,11 +199,11 @@ func ListLegacyPhonebook(ctx context.Context, query LegacyPhonebookQuery) (*Lega
 		"FROM (",
 		"SELECT id FROM cti_phonebook WHERE (name IS NOT NULL AND name != '') AND", visibleCTIWhere, "AND type != 'speeddial' AND", ctiVisibilityWhere,
 		"UNION ALL",
-		"SELECT id FROM", centralizedPhonebookTable, "WHERE (name IS NOT NULL AND name != '') AND type != 'nethcti' AND", centralizedVisibilityWhere,
+		"SELECT id FROM", centralizedPhonebookTable, "WHERE (name IS NOT NULL AND name != '') AND type != 'nethcti' AND", visibleCentralizedWhere, "AND", centralizedVisibilityWhere,
 		"UNION ALL",
 		"SELECT id FROM cti_phonebook WHERE (name IS NULL OR name = '') AND (company IS NOT NULL AND company != '') AND", visibleCTIWhere, "AND type != 'speeddial' AND", ctiVisibilityWhere,
 		"UNION ALL",
-		"SELECT id FROM", centralizedPhonebookTable, "WHERE (name IS NULL OR name = '') AND (company IS NOT NULL AND company != '') AND type != 'nethcti' AND", centralizedVisibilityWhere,
+		"SELECT id FROM", centralizedPhonebookTable, "WHERE (name IS NULL OR name = '') AND (company IS NOT NULL AND company != '') AND type != 'nethcti' AND", visibleCentralizedWhere, "AND", centralizedVisibilityWhere,
 		") phonebook_union",
 	}, " ")
 
@@ -238,17 +242,20 @@ func ListLegacyPhonebook(ctx context.Context, query LegacyPhonebookQuery) (*Lega
 func searchLegacyPhonebookFlat(ctx context.Context, database *sql.DB, query LegacyPhonebookQuery) (*LegacyPhonebookResult, error) {
 	visibleCTIWhere, visibleCTIArgs := buildVisibleCTIWhere(query.Username, query.UserGroups, query.IncludePrivateContacts)
 	ctiVisibilityWhere, ctiVisibilityArgs, centralizedVisibilityWhere, centralizedVisibilityArgs := buildLegacyVisibilityClauses(query.Visibility)
+	visibleCentralizedWhere, visibleCentralizedArgs := buildVisibleCentralizedWhere(query.UserGroups)
 	termArgsCTI, termArgsCentralized, ctiSearchClause, centralizedSearchClause := buildLegacySearchClauses(query.View, query.Term)
 
 	selectArgs := append([]any{}, visibleCTIArgs...)
 	selectArgs = append(selectArgs, ctiVisibilityArgs...)
 	selectArgs = append(selectArgs, termArgsCTI...)
+	selectArgs = append(selectArgs, visibleCentralizedArgs...)
 	selectArgs = append(selectArgs, centralizedVisibilityArgs...)
 	selectArgs = append(selectArgs, termArgsCentralized...)
 
 	countArgs := append([]any{}, visibleCTIArgs...)
 	countArgs = append(countArgs, ctiVisibilityArgs...)
 	countArgs = append(countArgs, termArgsCTI...)
+	countArgs = append(countArgs, visibleCentralizedArgs...)
 	countArgs = append(countArgs, centralizedVisibilityArgs...)
 	countArgs = append(countArgs, termArgsCentralized...)
 
@@ -260,7 +267,7 @@ func searchLegacyPhonebookFlat(ctx context.Context, database *sql.DB, query Lega
 		"UNION",
 		"SELECT", legacyPhonebookSelectColumns, ", '' AS extension, '' AS speeddial_num, " + centralizedPhonebookExtraColumns + ", 'centralized' AS source",
 		"FROM", centralizedPhonebookTable,
-		"WHERE type != 'nethcti' AND", centralizedVisibilityWhere, "AND (", centralizedSearchClause, ")",
+		"WHERE type != 'nethcti' AND", visibleCentralizedWhere, "AND", centralizedVisibilityWhere, "AND (", centralizedSearchClause, ")",
 		") phonebook_union " + legacyFlatOrderByClause(query.Sort),
 	}, " ")
 	if query.ApplyPagination {
@@ -273,7 +280,7 @@ func searchLegacyPhonebookFlat(ctx context.Context, database *sql.DB, query Lega
 		"FROM (",
 		"SELECT id FROM cti_phonebook WHERE", visibleCTIWhere, "AND type != 'speeddial' AND", ctiVisibilityWhere, "AND (", ctiSearchClause, ")",
 		"UNION ALL",
-		"SELECT id FROM", centralizedPhonebookTable, "WHERE type != 'nethcti' AND", centralizedVisibilityWhere, "AND (", centralizedSearchClause, ")",
+		"SELECT id FROM", centralizedPhonebookTable, "WHERE type != 'nethcti' AND", visibleCentralizedWhere, "AND", centralizedVisibilityWhere, "AND (", centralizedSearchClause, ")",
 		") phonebook_union",
 	}, " ")
 
@@ -312,11 +319,13 @@ func searchLegacyPhonebookFlat(ctx context.Context, database *sql.DB, query Lega
 func searchLegacyPhonebookByCompany(ctx context.Context, database *sql.DB, query LegacyPhonebookQuery) (*LegacyPhonebookResult, error) {
 	visibleCTIWhere, visibleCTIArgs := buildVisibleCTIWhere(query.Username, query.UserGroups, query.IncludePrivateContacts)
 	ctiVisibilityWhere, ctiVisibilityArgs, centralizedVisibilityWhere, centralizedVisibilityArgs := buildLegacyVisibilityClauses(query.Visibility)
+	visibleCentralizedWhere, visibleCentralizedArgs := buildVisibleCentralizedWhere(query.UserGroups)
 	termArgsCTI, termArgsCentralized, ctiSearchClause, centralizedSearchClause := buildLegacySearchClauses("company", query.Term)
 
 	companyQueryArgs := append([]any{}, visibleCTIArgs...)
 	companyQueryArgs = append(companyQueryArgs, ctiVisibilityArgs...)
 	companyQueryArgs = append(companyQueryArgs, termArgsCTI...)
+	companyQueryArgs = append(companyQueryArgs, visibleCentralizedArgs...)
 	companyQueryArgs = append(companyQueryArgs, centralizedVisibilityArgs...)
 	companyQueryArgs = append(companyQueryArgs, termArgsCentralized...)
 
@@ -324,7 +333,7 @@ func searchLegacyPhonebookByCompany(ctx context.Context, database *sql.DB, query
 		"SELECT company FROM (",
 		"SELECT company FROM cti_phonebook WHERE", visibleCTIWhere, "AND type != 'speeddial' AND", ctiVisibilityWhere, "AND (", ctiSearchClause, ")",
 		"UNION",
-		"SELECT company FROM", centralizedPhonebookTable, "WHERE type != 'nethcti' AND", centralizedVisibilityWhere, "AND (", centralizedSearchClause, ")",
+		"SELECT company FROM", centralizedPhonebookTable, "WHERE type != 'nethcti' AND", visibleCentralizedWhere, "AND", centralizedVisibilityWhere, "AND (", centralizedSearchClause, ")",
 		") phonebook_union ORDER BY company ASC",
 	}, " ")
 	if query.ApplyPagination {
@@ -336,13 +345,14 @@ func searchLegacyPhonebookByCompany(ctx context.Context, database *sql.DB, query
 		"SELECT COUNT(*) FROM (",
 		"SELECT company FROM cti_phonebook WHERE", visibleCTIWhere, "AND type != 'speeddial' AND", ctiVisibilityWhere, "AND (", ctiSearchClause, ")",
 		"UNION",
-		"SELECT company FROM", centralizedPhonebookTable, "WHERE type != 'nethcti' AND", centralizedVisibilityWhere, "AND (", centralizedSearchClause, ")",
+		"SELECT company FROM", centralizedPhonebookTable, "WHERE type != 'nethcti' AND", visibleCentralizedWhere, "AND", centralizedVisibilityWhere, "AND (", centralizedSearchClause, ")",
 		") phonebook_union",
 	}, " ")
 
 	countArgs := append([]any{}, visibleCTIArgs...)
 	countArgs = append(countArgs, ctiVisibilityArgs...)
 	countArgs = append(countArgs, termArgsCTI...)
+	countArgs = append(countArgs, visibleCentralizedArgs...)
 	countArgs = append(countArgs, centralizedVisibilityArgs...)
 	countArgs = append(countArgs, termArgsCentralized...)
 
@@ -383,6 +393,8 @@ func searchLegacyPhonebookByCompany(ctx context.Context, database *sql.DB, query
 			visibleCTIArgs,
 			ctiVisibilityWhere,
 			ctiVisibilityArgs,
+			visibleCentralizedWhere,
+			visibleCentralizedArgs,
 			centralizedVisibilityWhere,
 			centralizedVisibilityArgs,
 			company,
@@ -429,6 +441,8 @@ func loadLegacyCompanyResult(
 	visibleCTIArgs []any,
 	ctiVisibilityWhere string,
 	ctiVisibilityArgs []any,
+	visibleCentralizedWhere string,
+	visibleCentralizedArgs []any,
 	centralizedVisibilityWhere string,
 	centralizedVisibilityArgs []any,
 	company string,
@@ -443,13 +457,14 @@ func loadLegacyCompanyResult(
 		"UNION",
 		"SELECT", legacyPhonebookSelectColumns, ", '' AS extension, '' AS speeddial_num, " + centralizedPhonebookExtraColumns + ", 'centralized' AS source",
 		"FROM", centralizedPhonebookTable,
-		"WHERE company = ? AND (name IS NULL OR name = '') AND type != 'nethcti' AND", centralizedVisibilityWhere,
+		"WHERE company = ? AND (name IS NULL OR name = '') AND type != 'nethcti' AND", visibleCentralizedWhere, "AND", centralizedVisibilityWhere,
 		") company_info LIMIT 1",
 	}, " ")
 	infoArgs := append([]any{}, visibleCTIArgs...)
 	infoArgs = append(infoArgs, company)
 	infoArgs = append(infoArgs, ctiVisibilityArgs...)
 	infoArgs = append(infoArgs, company)
+	infoArgs = append(infoArgs, visibleCentralizedArgs...)
 	infoArgs = append(infoArgs, centralizedVisibilityArgs...)
 
 	infoRows, err := database.QueryContext(ctx, infoQuery, infoArgs...)
@@ -478,13 +493,14 @@ func loadLegacyCompanyResult(
 		"UNION",
 		"SELECT id, name, 'centralized' AS source",
 		"FROM", centralizedPhonebookTable,
-		"WHERE company = ? AND (name IS NOT NULL AND name != '') AND type != 'nethcti' AND", centralizedVisibilityWhere,
+		"WHERE company = ? AND (name IS NOT NULL AND name != '') AND type != 'nethcti' AND", visibleCentralizedWhere, "AND", centralizedVisibilityWhere,
 		") company_contacts ORDER BY name ASC",
 	}, " ")
 	contactsArgs := append([]any{}, visibleCTIArgs...)
 	contactsArgs = append(contactsArgs, company)
 	contactsArgs = append(contactsArgs, ctiVisibilityArgs...)
 	contactsArgs = append(contactsArgs, company)
+	contactsArgs = append(contactsArgs, visibleCentralizedArgs...)
 	contactsArgs = append(contactsArgs, centralizedVisibilityArgs...)
 
 	contactRows, err := database.QueryContext(ctx, contactsQuery, contactsArgs...)
@@ -649,11 +665,32 @@ func buildLegacyVisibilityClauses(rawVisibility string) (string, []any, string, 
 	case "private":
 		return "type = ?", []any{"private"}, "1 = 0", nil
 	case "group":
+		// Centralized rows can now be group-scoped (issue #7127), so the group view
+		// must gate them like the CTI side: only 'group:%' rows, then membership is
+		// enforced by the ANDed buildVisibleCentralizedWhere clause.
 		groupPattern := GroupTypePrefix + "%"
-		return "type LIKE ?", []any{groupPattern}, "1 = 0", nil
+		return "type LIKE ?", []any{groupPattern}, "type LIKE ?", []any{groupPattern}
 	default:
 		return "1 = 1", nil, "1 = 1", nil
 	}
+}
+
+func buildVisibleCentralizedWhere(userGroups []string) (string, []any) {
+	groups := NormalizeSharedGroups(userGroups)
+	notGroupScoped := "type NOT LIKE ? ESCAPE '\\\\'"
+	args := []any{GroupTypePrefix + "%"}
+	if len(groups) == 0 {
+		return notGroupScoped, args
+	}
+
+	clause := "(" + notGroupScoped
+	for _, groupName := range groups {
+		patterns := getSharedGroupPatterns(groupName)
+		clause += " OR (type = ? OR type LIKE ? ESCAPE '\\\\' OR type LIKE ? ESCAPE '\\\\' OR type LIKE ? ESCAPE '\\\\')"
+		args = append(args, patterns[0], patterns[1], patterns[2], patterns[3])
+	}
+	clause += ")"
+	return clause, args
 }
 
 func buildVisibleCTIWhere(username string, userGroups []string, includePrivateContacts bool) (string, []any) {
