@@ -179,13 +179,16 @@ func TestBuildLegacyVisibilityClauses_CentralizedUsesItsOwnTaxonomy(t *testing.T
 		assert.Nil(t, centralizedArgs)
 	})
 
-	t.Run("private and group exclude centralized rows", func(t *testing.T) {
+	t.Run("private excludes centralized rows, group gates them by scope", func(t *testing.T) {
 		_, _, centralizedPrivateClause, centralizedPrivateArgs := buildLegacyVisibilityClauses("private")
 		_, _, centralizedGroupClause, centralizedGroupArgs := buildLegacyVisibilityClauses("group")
 
+		// No private concept in the centralized phonebook.
 		assert.Equal(t, "1 = 0", centralizedPrivateClause)
 		assert.Nil(t, centralizedPrivateArgs)
-		assert.Equal(t, "1 = 0", centralizedGroupClause)
-		assert.Nil(t, centralizedGroupArgs)
+		// Group view keeps only group-scoped centralized rows (membership is enforced
+		// separately by buildVisibleCentralizedWhere).
+		assert.Equal(t, "type LIKE ?", centralizedGroupClause)
+		assert.Equal(t, []any{"group:%"}, centralizedGroupArgs)
 	})
 }

@@ -453,6 +453,30 @@ func TestSearchLegacyPhonebook_CentralizedGroupSharing(t *testing.T) {
 	assert.Contains(t, noGroups, "Central Public")
 	assert.Contains(t, noGroups, "Central Legacy")
 	assert.NotContains(t, noGroups, "Central Sales")
+
+	// visibility=group view: only group-scoped centralized rows, gated by membership.
+	// Public/legacy (non-group) rows must not leak into this view.
+	namesForGroupView := func(groups []string) []string {
+		result, err := store.SearchLegacyPhonebook(ctx, store.LegacyPhonebookQuery{
+			Username:   "someone",
+			UserGroups: groups,
+			Visibility: "group",
+		})
+		require.NoError(t, err)
+		names := make([]string, 0, len(result.Rows))
+		for _, row := range result.Rows {
+			names = append(names, row.Name)
+		}
+		return names
+	}
+
+	memberGroupView := namesForGroupView([]string{"Sales"})
+	assert.Contains(t, memberGroupView, "Central Sales")
+	assert.NotContains(t, memberGroupView, "Central Public")
+	assert.NotContains(t, memberGroupView, "Central Legacy")
+
+	nonMemberGroupView := namesForGroupView([]string{"Support"})
+	assert.NotContains(t, nonMemberGroupView, "Central Sales")
 }
 
 // TestSearchLegacyPhonebook_CentralizedExtendedFields verifies the extended contact

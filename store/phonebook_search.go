@@ -665,8 +665,11 @@ func buildLegacyVisibilityClauses(rawVisibility string) (string, []any, string, 
 	case "private":
 		return "type = ?", []any{"private"}, "1 = 0", nil
 	case "group":
+		// Centralized rows can now be group-scoped (issue #7127), so the group view
+		// must gate them like the CTI side: only 'group:%' rows, then membership is
+		// enforced by the ANDed buildVisibleCentralizedWhere clause.
 		groupPattern := GroupTypePrefix + "%"
-		return "type LIKE ?", []any{groupPattern}, "1 = 0", nil
+		return "type LIKE ?", []any{groupPattern}, "type LIKE ?", []any{groupPattern}
 	default:
 		return "1 = 1", nil, "1 = 1", nil
 	}
