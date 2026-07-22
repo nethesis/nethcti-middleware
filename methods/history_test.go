@@ -342,24 +342,47 @@ func TestCollapseHistoryRowsByLinkedid_ParentIsAgentNotQueue(t *testing.T) {
 	}
 }
 
-func TestCollapseHistoryRowsByLinkedid_StableParentAcrossSortOrder(t *testing.T) {
-	// A transferred call has multiple ANSWERED legs. The parent must be the
-	// earliest ANSWERED leg regardless of the order rows arrive in (which varies
-	// with the request sort), so the same call always exposes the same parent.
+func TestCollapseHistoryRowsByLinkedid_FinalRecipientAcrossSortOrder(t *testing.T) {
+	// A transferred call has multiple ANSWERED legs. The parent must be the LAST
+	// answered leg (the final recipient the call ended up with), and that choice
+	// must be stable regardless of the order rows arrive in (which varies with the
+	// request sort).
 	asc := []map[string]interface{}{
-		{"linkedid": "L1", "uniqueid": "uEarly", "time": float64(100), "disposition": "ANSWERED", "dst": "120"},
-		{"linkedid": "L1", "uniqueid": "uLate", "time": float64(200), "disposition": "ANSWERED", "dst": "121"},
+		{"linkedid": "L1", "uniqueid": "uEarly", "time": float64(100), "disposition": "ANSWERED", "lastapp": "Dial", "dst": "120"},
+		{"linkedid": "L1", "uniqueid": "uLate", "time": float64(200), "disposition": "ANSWERED", "lastapp": "Dial", "dst": "121"},
 	}
 	desc := []map[string]interface{}{
-		{"linkedid": "L1", "uniqueid": "uLate", "time": float64(200), "disposition": "ANSWERED", "dst": "121"},
-		{"linkedid": "L1", "uniqueid": "uEarly", "time": float64(100), "disposition": "ANSWERED", "dst": "120"},
+		{"linkedid": "L1", "uniqueid": "uLate", "time": float64(200), "disposition": "ANSWERED", "lastapp": "Dial", "dst": "121"},
+		{"linkedid": "L1", "uniqueid": "uEarly", "time": float64(100), "disposition": "ANSWERED", "lastapp": "Dial", "dst": "120"},
 	}
 
 	gotAsc := collapseHistoryRowsByLinkedid(asc)
 	gotDesc := collapseHistoryRowsByLinkedid(desc)
 
-	if gotAsc[0]["uniqueid"] != "uEarly" || gotDesc[0]["uniqueid"] != "uEarly" {
-		t.Fatalf("parent not stable/earliest across order: asc=%v desc=%v",
+	if gotAsc[0]["uniqueid"] != "uLate" || gotDesc[0]["uniqueid"] != "uLate" {
+		t.Fatalf("parent not the stable final recipient across order: asc=%v desc=%v",
 			gotAsc[0]["uniqueid"], gotDesc[0]["uniqueid"])
+	}
+	// The parent's destination is the final recipient (121), with that leg's data.
+	if gotAsc[0]["dst"] != "121" {
+		t.Fatalf("expected final recipient dst 121, got %v", gotAsc[0]["dst"])
+	}
+}
+
+func TestCollapseHistoryRowsByLinkedid_TransferShowsFinalRecipient(t *testing.T) {
+	// Caller answered by B, then transferred to C (both ANSWERED Dial legs).
+	// The parent must be C (the final recipient), not B.
+	rows := []map[string]interface{}{
+		{"linkedid": "L1", "uniqueid": "uB", "time": float64(100), "disposition": "ANSWERED", "lastapp": "Dial", "dst": "201", "billsec": float64(30)},
+		{"linkedid": "L1", "uniqueid": "uC", "time": float64(140), "disposition": "ANSWERED", "lastapp": "Dial", "dst": "202", "billsec": float64(75)},
+	}
+
+	got := collapseHistoryRowsByLinkedid(rows)
+
+	if got[0]["uniqueid"] != "uC" {
+		t.Fatalf("expected final recipient uC as parent, got %v", got[0]["uniqueid"])
+	}
+	if got[0]["dst"] != "202" || got[0]["billsec"] != float64(75) {
+		t.Fatalf("expected dst 202 with its talk time 75, got dst=%v billsec=%v", got[0]["dst"], got[0]["billsec"])
 	}
 }

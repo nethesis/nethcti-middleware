@@ -590,27 +590,54 @@ func collapseHistoryRowsByLinkedid(rows []map[string]interface{}) []map[string]i
 // selectParentLegIndex returns the index of the leg to use as the group parent,
 // chosen deterministically so the same call yields the same parent regardless of
 // the request sort order. Preference tiers:
-//  1. the ANSWERED leg that is the actual answered conversation with the agent
-//     (a Dial leg, so its dst is WHO answered) rather than the queue-entry leg
-//     (lastapp == "Queue", whose dst is just the queue number);
-//  2. any ANSWERED leg;
+//  1. the LAST ANSWERED leg that is a real answered conversation (a Dial leg, so
+//     its dst is WHO answered) rather than the queue-entry leg (lastapp="Queue").
+//     "Last" so a transferred call shows the party it ended up with — the final
+//     recipient — with that party's talk time;
+//  2. the last ANSWERED leg overall;
 //  3. the earliest leg overall (nothing answered).
 //
-// Within each tier the earliest leg wins (ties broken by uniqueid), so the choice
-// never depends on the order the rows arrived in.
+// Within the answered tiers the latest leg wins (ties broken by uniqueid); in the
+// fallback the earliest wins. Either way the choice never depends on the order the
+// rows arrived in.
 func selectParentLegIndex(legs []map[string]interface{}) int {
-	if i := earliestLegMatching(legs, func(leg map[string]interface{}) bool {
+	if i := lastLegMatching(legs, func(leg map[string]interface{}) bool {
 		return getHistoryRowString(leg, "disposition") == "ANSWERED" &&
 			getHistoryRowString(leg, "lastapp") != "Queue"
 	}); i != -1 {
 		return i
 	}
-	if i := earliestLegMatching(legs, func(leg map[string]interface{}) bool {
+	if i := lastLegMatching(legs, func(leg map[string]interface{}) bool {
 		return getHistoryRowString(leg, "disposition") == "ANSWERED"
 	}); i != -1 {
 		return i
 	}
 	return earliestLegMatching(legs, func(map[string]interface{}) bool { return true })
+}
+
+// lastLegMatching returns the index of the latest leg (by legAfter) that
+// satisfies pred, or -1 if none match.
+func lastLegMatching(legs []map[string]interface{}, pred func(map[string]interface{}) bool) int {
+	best := -1
+	for i := range legs {
+		if !pred(legs[i]) {
+			continue
+		}
+		if best == -1 || legAfter(legs[i], legs[best]) {
+			best = i
+		}
+	}
+	return best
+}
+
+// legAfter orders legs by descending time, breaking ties by uniqueid, so the
+// "final recipient" choice does not depend on the order the rows arrived in.
+func legAfter(a, b map[string]interface{}) bool {
+	ta, tb := historyRowTime(a), historyRowTime(b)
+	if ta != tb {
+		return ta > tb
+	}
+	return getHistoryRowString(a, "uniqueid") > getHistoryRowString(b, "uniqueid")
 }
 
 // earliestLegMatching returns the index of the earliest leg (by legLess) that
