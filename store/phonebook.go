@@ -517,9 +517,12 @@ func SyncPublicContactsToCentralized(ctx context.Context) error {
 	// they cannot drift out of alignment (a mismatch would silently write a value into
 	// the wrong column). `type` and `sid_imported` are appended explicitly because both
 	// are written as the literal 'nethcti' marker rather than copied from the source row.
+	// `type`/`sid_imported` are the literal 'nethcti' marker; `access` is set to
+	// 'public' so these republished public CTI contacts stay resolvable by the
+	// public-only inbound lookup (lookup.php filters access = 'public').
 	columns := strings.Join(centralizedSyncColumns, ", ")
-	insertSelect := "INSERT INTO `phonebook`.`phonebook` (" + columns + ", type, sid_imported)\n" +
-		"SELECT " + columns + ", 'nethcti', 'nethcti'\n" +
+	insertSelect := "INSERT INTO `phonebook`.`phonebook` (" + columns + ", type, access, sid_imported)\n" +
+		"SELECT " + columns + ", 'nethcti', 'public', 'nethcti'\n" +
 		"FROM cti_phonebook\n" +
 		"WHERE type = 'public'"
 	if _, err := conn.ExecContext(ctx, insertSelect); err != nil {

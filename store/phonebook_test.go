@@ -110,6 +110,7 @@ func ensureCentralizedPhonebookTable() error {
 			id int(11) NOT NULL AUTO_INCREMENT,
 			owner_id varchar(255) NOT NULL DEFAULT '',
 			type varchar(255) NOT NULL DEFAULT '',
+			access varchar(255) NOT NULL DEFAULT '',
 			homeemail varchar(255) DEFAULT NULL,
 			workemail varchar(255) DEFAULT NULL,
 			homephone varchar(25) DEFAULT NULL,
@@ -146,6 +147,15 @@ func ensureCentralizedPhonebookTable() error {
 	// sid_imported. Add the column idempotently to mirror the production schema.
 	_, err = db.GetDB().Exec(`
 		ALTER TABLE phonebook.phonebook ADD COLUMN IF NOT EXISTS sid_imported varchar(255) DEFAULT NULL;
+	`)
+	if err != nil {
+		return err
+	}
+
+	// Sharing on the centralized phonebook lives in its own `access` column, kept
+	// separate from the source-category `type`. Added idempotently for reused DBs.
+	_, err = db.GetDB().Exec(`
+		ALTER TABLE phonebook.phonebook ADD COLUMN IF NOT EXISTS access varchar(255) NOT NULL DEFAULT '';
 	`)
 	if err != nil {
 		return err
@@ -208,20 +218,28 @@ func entryExists(t *testing.T, name string) bool {
 	return err == nil
 }
 
-func insertCentralizedPhonebookRow(t *testing.T, entry store.PhonebookEntry) {
+// insertCentralizedPhonebookRow seeds a centralized row. The optional access argument
+// sets the sharing scope ('public'/'group:...') stored in the dedicated `access`
+// column; entry.Type keeps the source category, separate from sharing.
+func insertCentralizedPhonebookRow(t *testing.T, entry store.PhonebookEntry, access ...string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
+	accessValue := ""
+	if len(access) > 0 {
+		accessValue = access[0]
+	}
+
 	_, err := db.GetDB().ExecContext(ctx, `
 		INSERT INTO phonebook.phonebook (
-			owner_id, type, homeemail, workemail, homephone, workphone, cellphone, fax,
+			owner_id, type, access, homeemail, workemail, homephone, workphone, cellphone, fax,
 			title, company, notes, name, homestreet, homepob, homecity, homeprovince,
 			homepostalcode, homecountry, workstreet, workpob, workcity, workprovince,
 			workpostalcode, workcountry, url
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
-		entry.OwnerID, entry.Type, entry.HomeEmail, entry.WorkEmail, entry.HomePhone, entry.WorkPhone,
+		entry.OwnerID, entry.Type, accessValue, entry.HomeEmail, entry.WorkEmail, entry.HomePhone, entry.WorkPhone,
 		entry.CellPhone, entry.Fax, entry.Title, entry.Company, entry.Notes, entry.Name, entry.HomeStreet,
 		entry.HomePOB, entry.HomeCity, entry.HomeProvince, entry.HomePostalCode, entry.HomeCountry,
 		entry.WorkStreet, entry.WorkPOB, entry.WorkCity, entry.WorkProvince, entry.WorkPostalCode,
@@ -233,17 +251,22 @@ func insertCentralizedPhonebookRow(t *testing.T, entry store.PhonebookEntry) {
 // insertCentralizedPhonebookRowWithSid seeds a centralized row with an explicit
 // sid_imported value, used to assert that rows from other sync sources survive the
 // NethCTI republish.
-func insertCentralizedPhonebookRowWithSid(t *testing.T, entry store.PhonebookEntry, sidImported string) {
+func insertCentralizedPhonebookRowWithSid(t *testing.T, entry store.PhonebookEntry, sidImported string, access ...string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
+	accessValue := ""
+	if len(access) > 0 {
+		accessValue = access[0]
+	}
+
 	_, err := db.GetDB().ExecContext(ctx, `
 		INSERT INTO phonebook.phonebook (
-			owner_id, type, homephone, workphone, cellphone, fax, company, name, sid_imported
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+			owner_id, type, access, homephone, workphone, cellphone, fax, company, name, sid_imported
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
-		entry.OwnerID, entry.Type, entry.HomePhone, entry.WorkPhone, entry.CellPhone, entry.Fax,
+		entry.OwnerID, entry.Type, accessValue, entry.HomePhone, entry.WorkPhone, entry.CellPhone, entry.Fax,
 		entry.Company, entry.Name, sidImported,
 	)
 	require.NoError(t, err)
@@ -415,16 +438,17 @@ func TestSearchLegacyPhonebook_CentralizedGroupSharing(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
+	// Sharing lives in the `access` column; `type` holds the source category.
 	insertCentralizedPhonebookRow(t, store.PhonebookEntry{
-		Type: "public", Name: "Central Public", Company: "Acme",
-	})
+		Type: "custom", Name: "Central Public", Company: "Acme",
+	}, "public")
 	insertCentralizedPhonebookRow(t, store.PhonebookEntry{
-		// Legacy source-name type must remain visible (backward compatibility).
+		// Legacy row with empty access (as customer scripts write) must stay visible.
 		Type: "Leopard", Name: "Central Legacy", Company: "Acme",
 	})
 	insertCentralizedPhonebookRow(t, store.PhonebookEntry{
-		Type: "group:Sales", Name: "Central Sales", Company: "Acme",
-	})
+		Type: "custom", Name: "Central Sales", Company: "Acme",
+	}, "group:Sales")
 
 	namesFor := func(groups []string) []string {
 		result, err := store.SearchLegacyPhonebook(ctx, store.LegacyPhonebookQuery{
