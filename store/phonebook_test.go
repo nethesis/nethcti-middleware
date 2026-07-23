@@ -1148,13 +1148,16 @@ func TestSyncPublicContactsToCentralized(t *testing.T) {
 	// type='nethcti' and sid_imported='nethcti'.
 	assert.Equal(t, 1, countCentralizedRows(t, "nethcti"), "public contact must be exported once")
 
-	var name, contactType, company string
+	var name, contactType, company, access string
 	require.NoError(t, db.GetDB().QueryRowContext(ctx,
-		"SELECT name, type, company FROM phonebook.phonebook WHERE sid_imported = 'nethcti'").
-		Scan(&name, &contactType, &company))
+		"SELECT name, type, company, access FROM phonebook.phonebook WHERE sid_imported = 'nethcti'").
+		Scan(&name, &contactType, &company, &access))
 	assert.Equal(t, "Alice Public", name)
 	assert.Equal(t, "nethcti", contactType)
 	assert.Equal(t, "Acme", company)
+	// Republished public CTI contacts must be marked access='public' so the inbound
+	// lookup (which filters access = 'public') keeps resolving their names.
+	assert.Equal(t, "public", access)
 
 	// The private contact must not be exported.
 	var privateCount int
