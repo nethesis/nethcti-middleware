@@ -661,15 +661,18 @@ func buildLegacyVisibilityClauses(rawVisibility string) (string, []any, string, 
 	case "", "all":
 		return "1 = 1", nil, "1 = 1", nil
 	case "public":
-		return "type = ?", []any{"public"}, "1 = 1", nil
+		// CTI side matches its native public type; the centralized side is any
+		// non-group-scoped row (explicit 'public' plus legacy/empty access), so the
+		// public view excludes group-scoped centralized contacts.
+		return "type = ?", []any{"public"}, "access NOT LIKE ?", []any{GroupTypePrefix + "%"}
 	case "private":
 		return "type = ?", []any{"private"}, "1 = 0", nil
 	case "group":
-		// Centralized rows can now be group-scoped (issue #7127), so the group view
-		// must gate them like the CTI side: only 'group:%' rows, then membership is
-		// enforced by the ANDed buildVisibleCentralizedWhere clause.
+		// CTI side gates on its native `type`; the centralized side gates on the
+		// dedicated `access` column (sharing lives there, `type` is the source
+		// category). Membership is enforced by the ANDed buildVisibleCentralizedWhere.
 		groupPattern := GroupTypePrefix + "%"
-		return "type LIKE ?", []any{groupPattern}, "type LIKE ?", []any{groupPattern}
+		return "type LIKE ?", []any{groupPattern}, "access LIKE ?", []any{groupPattern}
 	default:
 		return "1 = 1", nil, "1 = 1", nil
 	}
@@ -677,7 +680,11 @@ func buildLegacyVisibilityClauses(rawVisibility string) (string, []any, string, 
 
 func buildVisibleCentralizedWhere(userGroups []string) (string, []any) {
 	groups := NormalizeSharedGroups(userGroups)
-	notGroupScoped := "type NOT LIKE ? ESCAPE '\\\\'"
+	// Sharing on the centralized phonebook lives in the dedicated `access` column
+	// ('public'/'group:...'), so `type` stays free for the source category used by
+	// the customer import scripts. Rows with empty access (legacy, scripts, nethcti
+	// republished) are non-group-scoped and therefore visible to everyone.
+	notGroupScoped := "access NOT LIKE ? ESCAPE '\\\\'"
 	args := []any{GroupTypePrefix + "%"}
 	if len(groups) == 0 {
 		return notGroupScoped, args
@@ -686,7 +693,7 @@ func buildVisibleCentralizedWhere(userGroups []string) (string, []any) {
 	clause := "(" + notGroupScoped
 	for _, groupName := range groups {
 		patterns := getSharedGroupPatterns(groupName)
-		clause += " OR (type = ? OR type LIKE ? ESCAPE '\\\\' OR type LIKE ? ESCAPE '\\\\' OR type LIKE ? ESCAPE '\\\\')"
+		clause += " OR (access = ? OR access LIKE ? ESCAPE '\\\\' OR access LIKE ? ESCAPE '\\\\' OR access LIKE ? ESCAPE '\\\\')"
 		args = append(args, patterns[0], patterns[1], patterns[2], patterns[3])
 	}
 	clause += ")"

@@ -142,15 +142,15 @@ func TestBuildLegacySearchClauses_ViewGuards(t *testing.T) {
 func TestBuildVisibleCentralizedWhere_NoGroupsOnlyNonGroupScoped(t *testing.T) {
 	clause, args := buildVisibleCentralizedWhere(nil)
 
-	assert.Equal(t, `type NOT LIKE ? ESCAPE '\\'`, clause)
+	assert.Equal(t, `access NOT LIKE ? ESCAPE '\\'`, clause)
 	assert.Equal(t, []any{"group:%"}, args)
 }
 
 func TestBuildVisibleCentralizedWhere_WithGroupsAddsMembershipPatterns(t *testing.T) {
 	clause, args := buildVisibleCentralizedWhere([]string{`Sales%_\West`})
 
-	assert.Contains(t, clause, `type NOT LIKE ? ESCAPE '\\'`)
-	assert.Contains(t, clause, `type = ? OR type LIKE ? ESCAPE '\\'`)
+	assert.Contains(t, clause, `access NOT LIKE ? ESCAPE '\\'`)
+	assert.Contains(t, clause, `access = ? OR access LIKE ? ESCAPE '\\'`)
 	assert.Equal(t, []any{
 		"group:%",
 		`group:Sales%_\West`,
@@ -170,13 +170,13 @@ func TestBuildLegacyVisibilityClauses_CentralizedUsesItsOwnTaxonomy(t *testing.T
 		assert.Nil(t, centralizedArgs)
 	})
 
-	t.Run("public still includes centralized rows", func(t *testing.T) {
+	t.Run("public includes non-group centralized rows, excludes group-scoped", func(t *testing.T) {
 		ctiClause, ctiArgs, centralizedClause, centralizedArgs := buildLegacyVisibilityClauses("public")
 
 		assert.Equal(t, "type = ?", ctiClause)
 		assert.Equal(t, []any{"public"}, ctiArgs)
-		assert.Equal(t, "1 = 1", centralizedClause)
-		assert.Nil(t, centralizedArgs)
+		assert.Equal(t, "access NOT LIKE ?", centralizedClause)
+		assert.Equal(t, []any{"group:%"}, centralizedArgs)
 	})
 
 	t.Run("private excludes centralized rows, group gates them by scope", func(t *testing.T) {
@@ -186,9 +186,9 @@ func TestBuildLegacyVisibilityClauses_CentralizedUsesItsOwnTaxonomy(t *testing.T
 		// No private concept in the centralized phonebook.
 		assert.Equal(t, "1 = 0", centralizedPrivateClause)
 		assert.Nil(t, centralizedPrivateArgs)
-		// Group view keeps only group-scoped centralized rows (membership is enforced
-		// separately by buildVisibleCentralizedWhere).
-		assert.Equal(t, "type LIKE ?", centralizedGroupClause)
+		// Group view keeps only group-scoped centralized rows via the access column
+		// (membership is enforced separately by buildVisibleCentralizedWhere).
+		assert.Equal(t, "access LIKE ?", centralizedGroupClause)
 		assert.Equal(t, []any{"group:%"}, centralizedGroupArgs)
 	})
 }
