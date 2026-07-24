@@ -217,3 +217,172 @@ func TestHistoryArtifactRowMatches(t *testing.T) {
 		})
 	}
 }
+
+func TestCollapseHistoryRowsByLinkedid(t *testing.T) {
+	rows := []map[string]interface{}{
+		{"linkedid": "L1", "uniqueid": "u1a", "time": float64(300), "disposition": "NO ANSWER", "dst": "121"},
+		{"linkedid": "L1", "uniqueid": "u1b", "time": float64(310), "disposition": "ANSWERED", "dst": "120"},
+		{"linkedid": "L1", "uniqueid": "u1c", "time": float64(305), "disposition": "NO ANSWER", "dst": "122"},
+		{"linkedid": "", "uniqueid": "u2", "time": float64(200), "disposition": "ANSWERED", "dst": "450"},
+		{"linkedid": "L3", "uniqueid": "u3", "time": float64(100), "disposition": "NO ANSWER", "dst": "453"},
+	}
+
+	got := collapseHistoryRowsByLinkedid(rows)
+
+	if len(got) != 3 {
+		t.Fatalf("expected 3 parent rows, got %d", len(got))
+	}
+	// Order preserved: L1 group first (first-occurrence index 0), then standalone, then L3.
+	if got[0]["linkedid"] != "L1" || got[1]["uniqueid"] != "u2" || got[2]["linkedid"] != "L3" {
+		t.Fatalf("order not preserved: %+v", got)
+	}
+	// Parent of L1 is the ANSWERED leg.
+	if got[0]["uniqueid"] != "u1b" {
+		t.Fatalf("expected ANSWERED leg u1b as parent, got %v", got[0]["uniqueid"])
+	}
+	if got[0]["interactionsCount"] != 3 {
+		t.Fatalf("expected interactionsCount 3, got %v", got[0]["interactionsCount"])
+	}
+	children, ok := got[0]["interactions"].([]map[string]interface{})
+	if !ok || len(children) != 2 {
+		t.Fatalf("expected 2 interaction children, got %v", got[0]["interactions"])
+	}
+	// Children exclude the parent and are ordered by ascending time (u1a@300, u1c@305).
+	if children[0]["uniqueid"] != "u1a" || children[1]["uniqueid"] != "u1c" {
+		t.Fatalf("children wrong/unsorted: %+v", children)
+	}
+	// Standalone (empty linkedid) and single-leg group have count 1 and no interactions.
+	if got[1]["interactionsCount"] != 1 {
+		t.Fatalf("standalone count should be 1, got %v", got[1]["interactionsCount"])
+	}
+	if _, has := got[2]["interactions"]; has {
+		t.Fatalf("single-leg group must not have interactions")
+	}
+	if got[2]["interactionsCount"] != 1 {
+		t.Fatalf("single-leg count should be 1, got %v", got[2]["interactionsCount"])
+	}
+}
+
+// TestCollapseHistoryRowsByLinkedid_NoAnsweredLeg proves that when a linkedid
+// group has no ANSWERED leg, selectParentLegIndex falls back to 0 (the first
+// leg) and the parent's interactions are the remaining legs ordered by
+// ascending time.
+func TestCollapseHistoryRowsByLinkedid_NoAnsweredLeg(t *testing.T) {
+	rows := []map[string]interface{}{
+		{"linkedid": "L1", "uniqueid": "u1a", "time": float64(300), "disposition": "NO ANSWER", "dst": "121"},
+		{"linkedid": "L1", "uniqueid": "u1b", "time": float64(100), "disposition": "BUSY", "dst": "120"},
+		{"linkedid": "L1", "uniqueid": "u1c", "time": float64(200), "disposition": "NO ANSWER", "dst": "122"},
+	}
+
+	got := collapseHistoryRowsByLinkedid(rows)
+
+	if len(got) != 1 {
+		t.Fatalf("expected 1 parent row, got %d", len(got))
+	}
+	// No ANSWERED leg in the group: parent falls back to the EARLIEST leg
+	// deterministically (u1b@100), independent of input order.
+	if got[0]["uniqueid"] != "u1b" {
+		t.Fatalf("expected earliest leg u1b as fallback parent, got %v", got[0]["uniqueid"])
+	}
+	if got[0]["interactionsCount"] != 3 {
+		t.Fatalf("expected interactionsCount 3, got %v", got[0]["interactionsCount"])
+	}
+	children, ok := got[0]["interactions"].([]map[string]interface{})
+	if !ok || len(children) != 2 {
+		t.Fatalf("expected 2 interaction children, got %v", got[0]["interactions"])
+	}
+	// Children exclude the parent and are ordered by ascending time (u1c@200, u1a@300).
+	if children[0]["uniqueid"] != "u1c" || children[1]["uniqueid"] != "u1a" {
+		t.Fatalf("children wrong/unsorted: %+v", children)
+	}
+}
+
+func TestFilterAudioTestRows(t *testing.T) {
+	rows := []map[string]interface{}{
+		{"src": "91234", "dst": "*41"},
+		{"src": "0541759779", "dst": "402"},
+		{"src": "*41", "dst": "201"},
+	}
+
+	got := filterAudioTestRows(rows, "*41")
+	if len(got) != 1 || got[0]["dst"] != "402" {
+		t.Fatalf("expected only the 402 row to survive, got %+v", got)
+	}
+
+	// Empty code is a no-op.
+	if n := len(filterAudioTestRows(rows, "")); n != 3 {
+		t.Fatalf("empty code should keep all rows, got %d", n)
+	}
+}
+
+func TestCollapseHistoryRowsByLinkedid_ParentIsAgentNotQueue(t *testing.T) {
+	// A queue call: caller 202 → queue 401, answered by agent 203. Both the
+	// queue-entry leg (lastapp=Queue, dst=401) and the agent Dial leg
+	// (dst=203) are ANSWERED. The parent must be the agent leg so the row's
+	// destination is WHO answered, not the queue number.
+	rows := []map[string]interface{}{
+		{"linkedid": "L1", "uniqueid": "uQueue", "time": float64(100), "disposition": "ANSWERED", "lastapp": "Queue", "src": "202", "dst": "401"},
+		{"linkedid": "L1", "uniqueid": "uRing201", "time": float64(101), "disposition": "ANSWERED_ELSEWHERE", "lastapp": "Dial", "src": "202", "dst": "201"},
+		{"linkedid": "L1", "uniqueid": "uAgent203", "time": float64(102), "disposition": "ANSWERED", "lastapp": "Dial", "src": "202", "dst": "203"},
+	}
+
+	got := collapseHistoryRowsByLinkedid(rows)
+
+	if len(got) != 1 {
+		t.Fatalf("expected 1 parent row, got %d", len(got))
+	}
+	if got[0]["uniqueid"] != "uAgent203" {
+		t.Fatalf("expected agent Dial leg uAgent203 as parent, got %v", got[0]["uniqueid"])
+	}
+	if got[0]["dst"] != "203" {
+		t.Fatalf("expected parent dst 203 (who answered), got %v", got[0]["dst"])
+	}
+	if got[0]["interactionsCount"] != 3 {
+		t.Fatalf("expected interactionsCount 3, got %v", got[0]["interactionsCount"])
+	}
+}
+
+func TestCollapseHistoryRowsByLinkedid_FinalRecipientAcrossSortOrder(t *testing.T) {
+	// A transferred call has multiple ANSWERED legs. The parent must be the LAST
+	// answered leg (the final recipient the call ended up with), and that choice
+	// must be stable regardless of the order rows arrive in (which varies with the
+	// request sort).
+	asc := []map[string]interface{}{
+		{"linkedid": "L1", "uniqueid": "uEarly", "time": float64(100), "disposition": "ANSWERED", "lastapp": "Dial", "dst": "120"},
+		{"linkedid": "L1", "uniqueid": "uLate", "time": float64(200), "disposition": "ANSWERED", "lastapp": "Dial", "dst": "121"},
+	}
+	desc := []map[string]interface{}{
+		{"linkedid": "L1", "uniqueid": "uLate", "time": float64(200), "disposition": "ANSWERED", "lastapp": "Dial", "dst": "121"},
+		{"linkedid": "L1", "uniqueid": "uEarly", "time": float64(100), "disposition": "ANSWERED", "lastapp": "Dial", "dst": "120"},
+	}
+
+	gotAsc := collapseHistoryRowsByLinkedid(asc)
+	gotDesc := collapseHistoryRowsByLinkedid(desc)
+
+	if gotAsc[0]["uniqueid"] != "uLate" || gotDesc[0]["uniqueid"] != "uLate" {
+		t.Fatalf("parent not the stable final recipient across order: asc=%v desc=%v",
+			gotAsc[0]["uniqueid"], gotDesc[0]["uniqueid"])
+	}
+	// The parent's destination is the final recipient (121), with that leg's data.
+	if gotAsc[0]["dst"] != "121" {
+		t.Fatalf("expected final recipient dst 121, got %v", gotAsc[0]["dst"])
+	}
+}
+
+func TestCollapseHistoryRowsByLinkedid_TransferShowsFinalRecipient(t *testing.T) {
+	// Caller answered by B, then transferred to C (both ANSWERED Dial legs).
+	// The parent must be C (the final recipient), not B.
+	rows := []map[string]interface{}{
+		{"linkedid": "L1", "uniqueid": "uB", "time": float64(100), "disposition": "ANSWERED", "lastapp": "Dial", "dst": "201", "billsec": float64(30)},
+		{"linkedid": "L1", "uniqueid": "uC", "time": float64(140), "disposition": "ANSWERED", "lastapp": "Dial", "dst": "202", "billsec": float64(75)},
+	}
+
+	got := collapseHistoryRowsByLinkedid(rows)
+
+	if got[0]["uniqueid"] != "uC" {
+		t.Fatalf("expected final recipient uC as parent, got %v", got[0]["uniqueid"])
+	}
+	if got[0]["dst"] != "202" || got[0]["billsec"] != float64(75) {
+		t.Fatalf("expected dst 202 with its talk time 75, got dst=%v billsec=%v", got[0]["dst"], got[0]["billsec"])
+	}
+}

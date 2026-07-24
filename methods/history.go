@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -47,6 +48,7 @@ type historyFilterRequest struct {
 	PageNum     int
 	PageSize    int
 	Artifact    string
+	AudioTest   string
 	LegacyToken string
 }
 
@@ -99,7 +101,12 @@ func GetFilteredHistory(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, paginateHistoryRows(filteredRows, req.PageNum, req.PageSize))
+	// Drop audio-test (echo) calls server-side BEFORE collapse + pagination, so
+	// each page is filled to pageSize. The frontend used to hide these client-side
+	// after pagination, which left pages short (count included hidden rows).
+	visibleRows := filterAudioTestRows(filteredRows, req.AudioTest)
+	collapsedRows := collapseHistoryRowsByLinkedid(visibleRows)
+	c.JSON(http.StatusOK, paginateHistoryRows(collapsedRows, req.PageNum, req.PageSize))
 }
 
 func parseHistoryFilterRequest(c *gin.Context) (*historyFilterRequest, error) {
@@ -154,6 +161,7 @@ func parseHistoryFilterRequest(c *gin.Context) (*historyFilterRequest, error) {
 		PageNum:     pageNum,
 		PageSize:    pageSize,
 		Artifact:    artifact,
+		AudioTest:   strings.TrimSpace(c.Query("audioTest")),
 		LegacyToken: userSession.NethCTIToken,
 	}, nil
 }
@@ -488,6 +496,26 @@ func enrichLocalChannelArtifactRows(rows []map[string]interface{}) []map[string]
 	return rows
 }
 
+// filterAudioTestRows drops audio-test / echo calls whose src or dst contains the
+// audio-test feature code (e.g. "*41"). Mirrors the CTI client-side filter, but
+// done here before pagination so pages are not left short. An empty code is a
+// no-op (nothing is filtered).
+func filterAudioTestRows(rows []map[string]interface{}, audioTestCode string) []map[string]interface{} {
+	code := strings.TrimSpace(audioTestCode)
+	if code == "" {
+		return rows
+	}
+	out := make([]map[string]interface{}, 0, len(rows))
+	for _, row := range rows {
+		if strings.Contains(getHistoryRowString(row, "src"), code) ||
+			strings.Contains(getHistoryRowString(row, "dst"), code) {
+			continue
+		}
+		out = append(out, row)
+	}
+	return out
+}
+
 func paginateHistoryRows(rows []map[string]interface{}, pageNum int, pageSize int) gin.H {
 	count := len(rows)
 	start := (pageNum - 1) * pageSize
@@ -503,5 +531,161 @@ func paginateHistoryRows(rows []map[string]interface{}, pageNum int, pageSize in
 	return gin.H{
 		"count": count,
 		"rows":  rows[start:end],
+	}
+}
+
+// collapseHistoryRowsByLinkedid groups the (already filtered) history rows by
+// linkedid into one parent row per logical call. The parent is the first leg with
+// disposition "ANSWERED", or the first leg if none answered. The parent keeps its
+// group's first-occurrence position and gains an "interactions" slice (the group's
+// other legs, ordered by ascending time) plus an "interactionsCount" (total legs).
+// Rows with an empty linkedid are each their own group and are never merged.
+func collapseHistoryRowsByLinkedid(rows []map[string]interface{}) []map[string]interface{} {
+	type slot struct {
+		key        string                 // linkedid group key; "" for a standalone row
+		standalone map[string]interface{} // set when the row has no linkedid
+	}
+	legsByID := make(map[string][]map[string]interface{})
+	slots := make([]slot, 0, len(rows))
+
+	for _, row := range rows {
+		linkedID := getHistoryRowString(row, "linkedid")
+		if linkedID == "" {
+			slots = append(slots, slot{standalone: row})
+			continue
+		}
+		if _, seen := legsByID[linkedID]; !seen {
+			slots = append(slots, slot{key: linkedID})
+		}
+		legsByID[linkedID] = append(legsByID[linkedID], row)
+	}
+
+	result := make([]map[string]interface{}, 0, len(slots))
+	for _, s := range slots {
+		if s.standalone != nil {
+			s.standalone["interactionsCount"] = 1
+			result = append(result, s.standalone)
+			continue
+		}
+		legs := legsByID[s.key]
+		parentIdx := selectParentLegIndex(legs)
+		parent := legs[parentIdx]
+		if len(legs) > 1 {
+			children := make([]map[string]interface{}, 0, len(legs)-1)
+			for i, leg := range legs {
+				if i == parentIdx {
+					continue
+				}
+				children = append(children, leg)
+			}
+			sortLegsByTimeAsc(children)
+			parent["interactions"] = children
+		}
+		parent["interactionsCount"] = len(legs)
+		result = append(result, parent)
+	}
+	return result
+}
+
+// selectParentLegIndex returns the index of the leg to use as the group parent,
+// chosen deterministically so the same call yields the same parent regardless of
+// the request sort order. Preference tiers:
+//  1. the LAST ANSWERED leg that is a real answered conversation (a Dial leg, so
+//     its dst is WHO answered) rather than the queue-entry leg (lastapp="Queue").
+//     "Last" so a transferred call shows the party it ended up with — the final
+//     recipient — with that party's talk time;
+//  2. the last ANSWERED leg overall;
+//  3. the earliest leg overall (nothing answered).
+//
+// Within the answered tiers the latest leg wins (ties broken by uniqueid); in the
+// fallback the earliest wins. Either way the choice never depends on the order the
+// rows arrived in.
+func selectParentLegIndex(legs []map[string]interface{}) int {
+	if i := lastLegMatching(legs, func(leg map[string]interface{}) bool {
+		return getHistoryRowString(leg, "disposition") == "ANSWERED" &&
+			getHistoryRowString(leg, "lastapp") != "Queue"
+	}); i != -1 {
+		return i
+	}
+	if i := lastLegMatching(legs, func(leg map[string]interface{}) bool {
+		return getHistoryRowString(leg, "disposition") == "ANSWERED"
+	}); i != -1 {
+		return i
+	}
+	return earliestLegMatching(legs, func(map[string]interface{}) bool { return true })
+}
+
+// lastLegMatching returns the index of the latest leg (by legAfter) that
+// satisfies pred, or -1 if none match.
+func lastLegMatching(legs []map[string]interface{}, pred func(map[string]interface{}) bool) int {
+	best := -1
+	for i := range legs {
+		if !pred(legs[i]) {
+			continue
+		}
+		if best == -1 || legAfter(legs[i], legs[best]) {
+			best = i
+		}
+	}
+	return best
+}
+
+// legAfter orders legs by descending time, breaking ties by uniqueid, so the
+// "final recipient" choice does not depend on the order the rows arrived in.
+func legAfter(a, b map[string]interface{}) bool {
+	ta, tb := historyRowTime(a), historyRowTime(b)
+	if ta != tb {
+		return ta > tb
+	}
+	return getHistoryRowString(a, "uniqueid") > getHistoryRowString(b, "uniqueid")
+}
+
+// earliestLegMatching returns the index of the earliest leg (by legLess) that
+// satisfies pred, or -1 if none match.
+func earliestLegMatching(legs []map[string]interface{}, pred func(map[string]interface{}) bool) int {
+	best := -1
+	for i := range legs {
+		if !pred(legs[i]) {
+			continue
+		}
+		if best == -1 || legLess(legs[i], legs[best]) {
+			best = i
+		}
+	}
+	return best
+}
+
+// legLess orders legs by ascending time, breaking ties by uniqueid, so parent
+// selection does not depend on the order the rows arrived in.
+func legLess(a, b map[string]interface{}) bool {
+	ta, tb := historyRowTime(a), historyRowTime(b)
+	if ta != tb {
+		return ta < tb
+	}
+	return getHistoryRowString(a, "uniqueid") < getHistoryRowString(b, "uniqueid")
+}
+
+// sortLegsByTimeAsc sorts legs ascending by the numeric "time" field (UNIX ts).
+func sortLegsByTimeAsc(legs []map[string]interface{}) {
+	sort.SliceStable(legs, func(i, j int) bool {
+		return historyRowTime(legs[i]) < historyRowTime(legs[j])
+	})
+}
+
+// historyRowTime reads the numeric "time" field regardless of its JSON type.
+func historyRowTime(row map[string]interface{}) float64 {
+	switch v := row["time"].(type) {
+	case float64:
+		return v
+	case int:
+		return float64(v)
+	case json.Number:
+		f, _ := v.Float64()
+		return f
+	case string:
+		f, _ := strconv.ParseFloat(v, 64)
+		return f
+	default:
+		return 0
 	}
 }
