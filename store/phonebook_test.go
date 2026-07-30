@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -501,6 +502,59 @@ func TestSearchLegacyPhonebook_CentralizedGroupSharing(t *testing.T) {
 
 	nonMemberGroupView := namesForGroupView([]string{"Support"})
 	assert.NotContains(t, nonMemberGroupView, "Central Sales")
+}
+
+func TestSearchLegacyPhonebook_TermIsOrderIndependent(t *testing.T) {
+	clearPhonebookTable(t)
+	clearCentralizedPhonebookTable(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	require.NoError(t, store.CreatePhonebookEntry(ctx, &store.PhonebookEntry{
+		OwnerID:   "alice",
+		Type:      "public",
+		Name:      "Mario Rossi",
+		FirstName: "Mario",
+		LastName:  "Rossi",
+		Company:   "Acme",
+	}))
+	_, err := db.GetDB().ExecContext(ctx, `
+		INSERT INTO phonebook.phonebook (type, access, name, firstname, lastname, company)
+		VALUES ('custom', 'public', '', 'Luigi', 'Verdi', 'Acme')
+	`)
+	require.NoError(t, err)
+
+	labelsFor := func(term, view string) []string {
+		result, err := store.SearchLegacyPhonebook(ctx, store.LegacyPhonebookQuery{
+			Username: "alice",
+			Term:     term,
+			View:     view,
+		})
+		require.NoError(t, err)
+		require.Equal(t, result.Count, len(result.Rows), "count must match the returned rows")
+		labels := make([]string, 0, len(result.Rows))
+		for _, row := range result.Rows {
+			label := row.Name
+			if label == "" {
+				label = strings.TrimSpace(row.FirstName + " " + row.LastName)
+			}
+			labels = append(labels, label)
+		}
+		return labels
+	}
+	for _, term := range []string{"Mario Rossi", "Rossi Mario", "rossi mario", "Rossi", "Mario"} {
+		assert.Contains(t, labelsFor(term, ""), "Mario Rossi", "CTI contact not found for term %q", term)
+	}
+	for _, term := range []string{"Luigi Verdi", "Verdi Luigi", "verdi   luigi"} {
+		assert.Contains(t, labelsFor(term, ""), "Luigi Verdi", "centralized contact not found for term %q", term)
+	}
+
+	assert.NotContains(t, labelsFor("Rossi Bianchi", ""), "Mario Rossi")
+
+	assert.Contains(t, labelsFor("Rossi Mario", "person"), "Mario Rossi")
+	assert.Empty(t, labelsFor("Rossi Mario", "company"))
+	assert.Len(t, labelsFor("Acme", "company"), 1)
 }
 
 // TestSearchLegacyPhonebook_CentralizedExtendedFields verifies the extended contact

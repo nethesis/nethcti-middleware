@@ -1,6 +1,7 @@
 package store
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -40,29 +41,80 @@ func TestBuildLegacySearchClauses_EscapesLikeWildcards(t *testing.T) {
 
 	assert.Contains(t, ctiClause, `LIKE ? ESCAPE '\\'`)
 	assert.Contains(t, centralizedClause, `LIKE ? ESCAPE '\\'`)
+	assert.Len(t, ctiArgs, 12)
+	assert.Len(t, centralizedArgs, 8)
+	for _, arg := range append(append([]any{}, ctiArgs...), centralizedArgs...) {
+		assert.Equal(t, `%Sales\%\_\\West%`, arg)
+	}
+}
+
+func TestBuildLegacySearchClauses_SingleTokenKeepsFlatOrGroup(t *testing.T) {
+	ctiArgs, centralizedArgs, ctiClause, centralizedClause := buildLegacySearchClauses("", "rossi")
+
+	assert.NotContains(t, ctiClause, " AND ")
+	assert.NotContains(t, centralizedClause, " AND ")
+	assert.Len(t, ctiArgs, 12)
+	assert.Len(t, centralizedArgs, 8)
+}
+
+func TestBuildLegacySearchClauses_TokenizesTermOnWhitespace(t *testing.T) {
+	ctiArgs, centralizedArgs, ctiClause, centralizedClause := buildLegacySearchClauses("", "  Rossi   Mario ")
+
+	assert.Equal(t, 1, strings.Count(ctiClause, ") AND ("))
+	assert.Equal(t, 1, strings.Count(centralizedClause, ") AND ("))
 	assert.Equal(t, []any{
-		// base name + company, then workphone, workphone2, homephone,
-		// cellphone, cellphone2, otherphone, extension, notes (the secondary
-		// phone columns and otherphone were added with the extended fields).
-		`%Sales\%\_\\West%`,
-		`%Sales\%\_\\West%`,
-		`%Sales\%\_\\West%`,
-		`%Sales\%\_\\West%`,
-		`%Sales\%\_\\West%`,
-		`%Sales\%\_\\West%`,
-		`%Sales\%\_\\West%`,
-		`%Sales\%\_\\West%`,
-		`%Sales\%\_\\West%`,
-		`%Sales\%\_\\West%`,
+		"%Rossi%", "%Rossi%", "%Rossi%", "%Rossi%", "%Rossi%", "%Rossi%",
+		"%Rossi%", "%Rossi%", "%Rossi%", "%Rossi%", "%Rossi%", "%Rossi%",
+		"%Mario%", "%Mario%", "%Mario%", "%Mario%", "%Mario%", "%Mario%",
+		"%Mario%", "%Mario%", "%Mario%", "%Mario%", "%Mario%", "%Mario%",
 	}, ctiArgs)
-	assert.Equal(t, []any{
-		`%Sales\%\_\\West%`,
-		`%Sales\%\_\\West%`,
-		`%Sales\%\_\\West%`,
-		`%Sales\%\_\\West%`,
-		`%Sales\%\_\\West%`,
-		`%Sales\%\_\\West%`,
-	}, centralizedArgs)
+	assert.Len(t, centralizedArgs, 16)
+}
+
+func TestBuildLegacySearchClauses_SearchesSplitNameColumns(t *testing.T) {
+	t.Run("default view searches name, company and the split columns", func(t *testing.T) {
+		_, _, ctiClause, centralizedClause := buildLegacySearchClauses("", "rossi")
+
+		for _, clause := range []string{ctiClause, centralizedClause} {
+			assert.Contains(t, clause, `name LIKE ?`)
+			assert.Contains(t, clause, `company LIKE ?`)
+			assert.Contains(t, clause, `firstname LIKE ?`)
+			assert.Contains(t, clause, `lastname LIKE ?`)
+		}
+	})
+
+	t.Run("person view searches the split columns but not company", func(t *testing.T) {
+		_, _, ctiClause, centralizedClause := buildLegacySearchClauses("person", "rossi")
+
+		for _, clause := range []string{ctiClause, centralizedClause} {
+			assert.Contains(t, clause, `firstname LIKE ?`)
+			assert.Contains(t, clause, `lastname LIKE ?`)
+			assert.NotContains(t, clause, `company LIKE ?`)
+		}
+	})
+
+	t.Run("company view keeps matching company only", func(t *testing.T) {
+		_, _, ctiClause, centralizedClause := buildLegacySearchClauses("company", "acme")
+
+		for _, clause := range []string{ctiClause, centralizedClause} {
+			assert.Contains(t, clause, `company LIKE ?`)
+			assert.NotContains(t, clause, `firstname LIKE ?`)
+			assert.NotContains(t, clause, `lastname LIKE ?`)
+			assert.NotContains(t, clause, `name LIKE ?`)
+		}
+	})
+}
+
+func TestLegacySearchTokens(t *testing.T) {
+	assert.Equal(t, []string{""}, legacySearchTokens(""))
+	assert.Equal(t, []string{""}, legacySearchTokens("   \t "))
+
+	assert.Equal(t, []string{"Mario", "Rossi"}, legacySearchTokens(" Mario  Rossi "))
+	assert.Equal(t, []string{"Rossi"}, legacySearchTokens("Rossi rossi ROSSI"))
+
+	capped := legacySearchTokens("a b c d e f g h")
+	assert.Len(t, capped, legacySearchTokenLimit)
+	assert.Equal(t, []string{"a", "b", "c", "d", "e", "f"}, capped)
 }
 
 func TestLegacyFlatOrderByClause(t *testing.T) {
