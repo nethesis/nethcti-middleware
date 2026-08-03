@@ -595,11 +595,16 @@ func collapseHistoryRowsByLinkedid(rows []map[string]interface{}) []map[string]i
 //     "Last" so a transferred call shows the party it ended up with — the final
 //     recipient — with that party's talk time;
 //  2. the last ANSWERED leg overall;
-//  3. the earliest leg overall (nothing answered).
+//  3. nothing answered: the queue-entry leg (lastapp="Queue"), so an unanswered
+//     queue call shows the QUEUE as the destination (its dst is the queue number,
+//     which the frontend resolves to the queue name) with a "no answer" outcome,
+//     rather than a random member extension or the "s" context leg;
+//  4. the earliest leg overall (nothing answered, no queue leg — e.g. a ring group,
+//     whose group-entry leg has no reliable CDR marker; handled separately).
 //
-// Within the answered tiers the latest leg wins (ties broken by uniqueid); in the
-// fallback the earliest wins. Either way the choice never depends on the order the
-// rows arrived in.
+// Within the answered/queue tiers the latest leg wins (ties broken by uniqueid); in
+// the final fallback the earliest wins. Either way the choice never depends on the
+// order the rows arrived in.
 func selectParentLegIndex(legs []map[string]interface{}) int {
 	if i := lastLegMatching(legs, func(leg map[string]interface{}) bool {
 		return getHistoryRowString(leg, "disposition") == "ANSWERED" &&
@@ -609,6 +614,11 @@ func selectParentLegIndex(legs []map[string]interface{}) int {
 	}
 	if i := lastLegMatching(legs, func(leg map[string]interface{}) bool {
 		return getHistoryRowString(leg, "disposition") == "ANSWERED"
+	}); i != -1 {
+		return i
+	}
+	if i := lastLegMatching(legs, func(leg map[string]interface{}) bool {
+		return getHistoryRowString(leg, "lastapp") == "Queue"
 	}); i != -1 {
 		return i
 	}

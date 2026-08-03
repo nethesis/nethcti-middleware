@@ -386,3 +386,33 @@ func TestCollapseHistoryRowsByLinkedid_TransferShowsFinalRecipient(t *testing.T)
 		t.Fatalf("expected dst 202 with its talk time 75, got dst=%v billsec=%v", got[0]["dst"], got[0]["billsec"])
 	}
 }
+
+func TestCollapseHistoryRowsByLinkedid_UnansweredQueueShowsQueue(t *testing.T) {
+	// Caller 202 → queue 401, NOBODY answers: the queue-entry leg and the member
+	// Dial attempts are all unanswered. The parent must be the queue-entry leg so
+	// the row's destination is the QUEUE (dst=401 → resolved to the queue name)
+	// with a "no answer" outcome, not a random member extension or the "s" leg.
+	rows := []map[string]interface{}{
+		{"linkedid": "L1", "uniqueid": "uQueue", "time": float64(100), "disposition": "NO ANSWER", "lastapp": "Queue", "src": "202", "dst": "401"},
+		{"linkedid": "L1", "uniqueid": "uMember203", "time": float64(101), "disposition": "NO ANSWER", "lastapp": "Dial", "src": "202", "dst": "203"},
+		{"linkedid": "L1", "uniqueid": "uMemberS", "time": float64(102), "disposition": "NO ANSWER", "lastapp": "Dial", "src": "202", "dst": "s"},
+	}
+
+	got := collapseHistoryRowsByLinkedid(rows)
+
+	if len(got) != 1 {
+		t.Fatalf("expected 1 parent row, got %d", len(got))
+	}
+	if got[0]["uniqueid"] != "uQueue" {
+		t.Fatalf("expected queue-entry leg uQueue as parent, got %v", got[0]["uniqueid"])
+	}
+	if got[0]["dst"] != "401" {
+		t.Fatalf("expected parent dst 401 (the queue), got %v", got[0]["dst"])
+	}
+	if got[0]["disposition"] != "NO ANSWER" {
+		t.Fatalf("expected parent disposition NO ANSWER, got %v", got[0]["disposition"])
+	}
+	if got[0]["interactionsCount"] != 3 {
+		t.Fatalf("expected interactionsCount 3, got %v", got[0]["interactionsCount"])
+	}
+}
