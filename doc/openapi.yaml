@@ -1498,7 +1498,13 @@ paths:
         - name: term
           in: path
           required: false
-          description: Free-text search term. May be empty to match all visible contacts.
+          description: >
+            Free-text search term, tokenized on whitespace: every token must
+            match at least one searched column (display name, first name, last
+            name, company, phone numbers, notes), so the word order is
+            irrelevant and "Rossi Mario" matches a contact named "Mario Rossi".
+            Only the first 6 distinct tokens are used. May be empty to match all
+            visible contacts.
           schema:
             type: string
         - name: view

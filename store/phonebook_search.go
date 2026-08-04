@@ -597,44 +597,83 @@ func legacyListOrderByClause(sort string) string {
 	}
 }
 
-func buildLegacySearchClauses(view, rawTerm string) ([]any, []any, string, string) {
-	term := "%" + escapeLikeValue(rawTerm) + "%"
-	baseClause := "(name LIKE ? ESCAPE '\\\\' OR company LIKE ? ESCAPE '\\\\')"
-	ctiArgs := []any{term, term}
-	centralizedArgs := []any{term, term}
+const legacySearchTokenLimit = 6
 
-	switch strings.ToLower(strings.TrimSpace(view)) {
-	case "person":
-		baseClause = "name LIKE ? ESCAPE '\\\\'"
-		ctiArgs = []any{term}
-		centralizedArgs = []any{term}
-	case "company":
-		baseClause = "company LIKE ? ESCAPE '\\\\'"
-		ctiArgs = []any{term}
-		centralizedArgs = []any{term}
+func legacySearchTokens(rawTerm string) []string {
+	fields := strings.Fields(rawTerm)
+	if len(fields) == 0 {
+		return []string{""}
 	}
 
-	ctiClause := strings.Join([]string{
-		baseClause,
-		"OR workphone LIKE ? ESCAPE '\\\\'",
-		"OR workphone2 LIKE ? ESCAPE '\\\\'",
-		"OR homephone LIKE ? ESCAPE '\\\\'",
-		"OR cellphone LIKE ? ESCAPE '\\\\'",
-		"OR cellphone2 LIKE ? ESCAPE '\\\\'",
-		"OR otherphone LIKE ? ESCAPE '\\\\'",
-		"OR extension LIKE ? ESCAPE '\\\\'",
-		"OR notes LIKE ? ESCAPE '\\\\'",
-	}, " ")
-	centralizedClause := strings.Join([]string{
-		baseClause,
-		"OR workphone LIKE ? ESCAPE '\\\\'",
-		"OR homephone LIKE ? ESCAPE '\\\\'",
-		"OR cellphone LIKE ? ESCAPE '\\\\'",
-		"OR notes LIKE ? ESCAPE '\\\\'",
-	}, " ")
+	tokens := make([]string, 0, len(fields))
+	seen := make(map[string]struct{}, len(fields))
+	for _, field := range fields {
+		key := strings.ToLower(field)
+		if _, duplicate := seen[key]; duplicate {
+			continue
+		}
+		seen[key] = struct{}{}
+		tokens = append(tokens, field)
+		if len(tokens) == legacySearchTokenLimit {
+			break
+		}
+	}
 
-	ctiArgs = append(ctiArgs, term, term, term, term, term, term, term, term)
-	centralizedArgs = append(centralizedArgs, term, term, term, term)
+	return tokens
+}
+
+func legacySearchFields(view string) ([]string, []string) {
+	var base []string
+	switch strings.ToLower(strings.TrimSpace(view)) {
+	case "person":
+		base = []string{"name", "firstname", "lastname"}
+	case "company":
+		base = []string{"company"}
+	default:
+		base = []string{"name", "company", "firstname", "lastname"}
+	}
+
+	ctiFields := append(append([]string{}, base...),
+		"workphone", "workphone2", "homephone", "cellphone", "cellphone2", "otherphone", "extension", "notes")
+	centralizedFields := append(append([]string{}, base...),
+		"workphone", "homephone", "cellphone", "notes")
+
+	return ctiFields, centralizedFields
+}
+
+func legacySearchTokenClause(fields []string, token string) (string, []any) {
+	pattern := "%" + escapeLikeValue(token) + "%"
+	predicates := make([]string, 0, len(fields))
+	args := make([]any, 0, len(fields))
+	for _, field := range fields {
+		predicates = append(predicates, field+" LIKE ? ESCAPE '\\\\'")
+		args = append(args, pattern)
+	}
+
+	return "(" + strings.Join(predicates, " OR ") + ")", args
+}
+
+func buildLegacySearchClauses(view, rawTerm string) ([]any, []any, string, string) {
+	ctiFields, centralizedFields := legacySearchFields(view)
+	tokens := legacySearchTokens(rawTerm)
+
+	ctiGroups := make([]string, 0, len(tokens))
+	centralizedGroups := make([]string, 0, len(tokens))
+	ctiArgs := make([]any, 0, len(tokens)*len(ctiFields))
+	centralizedArgs := make([]any, 0, len(tokens)*len(centralizedFields))
+
+	for _, token := range tokens {
+		ctiGroup, ctiTokenArgs := legacySearchTokenClause(ctiFields, token)
+		ctiGroups = append(ctiGroups, ctiGroup)
+		ctiArgs = append(ctiArgs, ctiTokenArgs...)
+
+		centralizedGroup, centralizedTokenArgs := legacySearchTokenClause(centralizedFields, token)
+		centralizedGroups = append(centralizedGroups, centralizedGroup)
+		centralizedArgs = append(centralizedArgs, centralizedTokenArgs...)
+	}
+
+	ctiClause := strings.Join(ctiGroups, " AND ")
+	centralizedClause := strings.Join(centralizedGroups, " AND ")
 
 	// The phone/notes OR-terms above match any contact with a populated phone,
 	// so the base name/company match is not enough to keep the view clean:
