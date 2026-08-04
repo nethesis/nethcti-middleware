@@ -105,6 +105,10 @@ func GetFilteredHistory(c *gin.Context) {
 	// each page is filled to pageSize. The frontend used to hide these client-side
 	// after pagination, which left pages short (count included hidden rows).
 	visibleRows := filterAudioTestRows(filteredRows, req.AudioTest)
+	// Ring-group calls are a single CDR row whose dst is the group number; rewrite
+	// their destination (group name when unanswered, who-answered when answered)
+	// before collapsing, since cti-server does not expose the ring-group directory.
+	enrichRingGroupRows(visibleRows, getRingGroupNames())
 	collapsedRows := collapseHistoryRowsByLinkedid(visibleRows)
 	c.JSON(http.StatusOK, paginateHistoryRows(collapsedRows, req.PageNum, req.PageSize))
 }
