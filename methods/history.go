@@ -109,6 +109,9 @@ func GetFilteredHistory(c *gin.Context) {
 	// their destination (group name when unanswered, who-answered when answered)
 	// before collapsing, since cti-server does not expose the ring-group directory.
 	enrichRingGroupRows(visibleRows, getRingGroupNames())
+	// Queue-entry legs carry the queue number as dst; inject the queue NAME so an
+	// unanswered queue call shows it without relying on the frontend queue store.
+	enrichQueueRows(visibleRows, getQueueNames())
 	collapsedRows := collapseHistoryRowsByLinkedid(visibleRows)
 	c.JSON(http.StatusOK, paginateHistoryRows(collapsedRows, req.PageNum, req.PageSize))
 }
@@ -241,11 +244,12 @@ func buildLegacyHistoryPath(req *historyFilterRequest) (string, url.Values, erro
 	}
 	queryValues.Set("sort", sortValue)
 
-	removeLostCalls := "false"
-	if req.Direction == "in" {
-		removeLostCalls = "true"
-	}
-	queryValues.Set("removeLostCalls", removeLostCalls)
+	// Never ask cti-server to drop "lost" (unanswered) legs, even on the incoming
+	// filter. With call grouping the unanswered legs of a call ARE its interactions
+	// (e.g. the members a queue/ring-group call rang before someone answered);
+	// removing them collapses a groupable call down to a single leg, which then
+	// shows as non-expandable. Keep every leg so grouping stays correct.
+	queryValues.Set("removeLostCalls", "false")
 
 	var path string
 	switch req.CallType {
