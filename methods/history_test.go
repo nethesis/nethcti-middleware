@@ -337,8 +337,10 @@ func TestCollapseHistoryRowsByLinkedid_ParentIsAgentNotQueue(t *testing.T) {
 	if got[0]["dst"] != "203" {
 		t.Fatalf("expected parent dst 203 (who answered), got %v", got[0]["dst"])
 	}
-	if got[0]["interactionsCount"] != 3 {
-		t.Fatalf("expected interactionsCount 3, got %v", got[0]["interactionsCount"])
+	// The queue leg is dropped once an agent answered (every member already has its
+	// own leg), leaving the two agent legs.
+	if got[0]["interactionsCount"] != 2 {
+		t.Fatalf("expected interactionsCount 2, got %v", got[0]["interactionsCount"])
 	}
 }
 
@@ -414,5 +416,75 @@ func TestCollapseHistoryRowsByLinkedid_UnansweredQueueShowsQueue(t *testing.T) {
 	}
 	if got[0]["interactionsCount"] != 3 {
 		t.Fatalf("expected interactionsCount 3, got %v", got[0]["interactionsCount"])
+	}
+}
+
+func TestCollapseHistoryRowsByLinkedid_AnsweredQueueDropsQueueLegs(t *testing.T) {
+	// A queue call an agent answered. The queue's own legs (one per member it rang,
+	// all sharing the queue-entry uniqueid) add nothing once every member has its
+	// own leg, so they are all dropped; the queue identity survives on the row.
+	rows := []map[string]interface{}{
+		{"linkedid": "L1", "uniqueid": "q", "time": float64(100), "dst": "401", "queueName": "Test", "lastapp": "Queue", "disposition": "ANSWERED", "dstchannel": "Local/201@from-queue-0;1"},
+		{"linkedid": "L1", "uniqueid": "m201", "time": float64(101), "dst": "201", "lastapp": "Dial", "disposition": "ANSWERED", "dstchannel": "PJSIP/201-1"},
+		{"linkedid": "L1", "uniqueid": "m202", "time": float64(101), "dst": "202", "lastapp": "Dial", "disposition": "NO ANSWER", "dstchannel": "PJSIP/202-1"},
+		{"linkedid": "L1", "uniqueid": "m203", "time": float64(101), "dst": "203", "lastapp": "Dial", "disposition": "NO ANSWER", "dstchannel": "PJSIP/203-1"},
+		{"linkedid": "L1", "uniqueid": "q", "time": float64(101), "dst": "401", "queueName": "Test", "lastapp": "Queue", "disposition": "NO ANSWER", "dstchannel": "Local/202@from-queue-1;1"},
+		{"linkedid": "L1", "uniqueid": "q", "time": float64(101), "dst": "401", "queueName": "Test", "lastapp": "Queue", "disposition": "NO ANSWER", "dstchannel": "Local/203@from-queue-2;1"},
+	}
+
+	got := collapseHistoryRowsByLinkedid(rows)
+
+	if len(got) != 1 {
+		t.Fatalf("expected 1 parent row, got %d", len(got))
+	}
+	parent := got[0]
+	if parent["dst"] != "201" {
+		t.Fatalf("expected parent to be the agent who answered (201), got %v", parent["dst"])
+	}
+	if parent["queueName"] != "Test" || parent["queueNum"] != "401" {
+		t.Fatalf("expected the queue identity kept on the row, got %v/%v", parent["queueName"], parent["queueNum"])
+	}
+	// Only the three member legs remain (agent + 2 unanswered), no queue leg.
+	if parent["interactionsCount"] != 3 {
+		t.Fatalf("expected interactionsCount 3, got %v", parent["interactionsCount"])
+	}
+	children, _ := parent["interactions"].([]map[string]interface{})
+	for _, c := range children {
+		if c["lastapp"] == "Queue" {
+			t.Fatalf("an answered queue call must not keep queue legs, got %v", c)
+		}
+	}
+}
+
+func TestCollapseHistoryRowsByLinkedid_UnansweredQueueKeepsOneQueueLeg(t *testing.T) {
+	// Nobody answered: the row must still show the queue, with the members it rang
+	// underneath, so exactly one queue leg survives and becomes the parent.
+	rows := []map[string]interface{}{
+		{"linkedid": "L1", "uniqueid": "q", "time": float64(100), "dst": "401", "queueName": "Test", "lastapp": "Queue", "disposition": "NO ANSWER", "dstchannel": "Local/202@from-queue-0;1"},
+		{"linkedid": "L1", "uniqueid": "q", "time": float64(101), "dst": "401", "queueName": "Test", "lastapp": "Queue", "disposition": "NO ANSWER", "dstchannel": "Local/203@from-queue-1;1"},
+		{"linkedid": "L1", "uniqueid": "m202", "time": float64(101), "dst": "202", "lastapp": "Dial", "disposition": "NO ANSWER", "dstchannel": "PJSIP/202-1"},
+		{"linkedid": "L1", "uniqueid": "m203", "time": float64(101), "dst": "203", "lastapp": "Dial", "disposition": "NO ANSWER", "dstchannel": "PJSIP/203-1"},
+	}
+
+	got := collapseHistoryRowsByLinkedid(rows)
+	parent := got[0]
+
+	if parent["dst"] != "401" || parent["lastapp"] != "Queue" {
+		t.Fatalf("expected the queue leg as parent, got dst=%v app=%v", parent["dst"], parent["lastapp"])
+	}
+	// 1 queue leg + the 2 member legs.
+	if parent["interactionsCount"] != 3 {
+		t.Fatalf("expected interactionsCount 3, got %v", parent["interactionsCount"])
+	}
+}
+
+func TestPruneQueueLegs_SingleQueueLegUntouched(t *testing.T) {
+	// Nothing to deduplicate: the legs must come back unchanged.
+	legs := []map[string]interface{}{
+		{"dst": "401", "lastapp": "Queue", "disposition": "NO ANSWER"},
+		{"dst": "201", "lastapp": "Dial", "disposition": "NO ANSWER"},
+	}
+	if got := pruneQueueLegs(legs); len(got) != 2 {
+		t.Fatalf("expected the 2 legs untouched, got %d", len(got))
 	}
 }

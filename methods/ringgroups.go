@@ -113,19 +113,21 @@ func enrichRingGroupRows(rows []map[string]interface{}, ringGroupNames map[strin
 		row["ringGroupNum"] = dst
 		row["ringGroupName"] = name
 
-		if getHistoryRowString(row, "disposition") == "ANSWERED" {
-			// Answered: show WHO answered, parsed from the answering channel.
-			if answerer := extensionFromChannel(getHistoryRowString(row, "dstchannel")); answerer != "" {
-				row["dst"] = answerer
-				// Let the frontend resolve the operator's display name from dst.
-				row["dst_cnam"] = ""
-			}
-			continue
+		// Every leg names the MEMBER it rang (from the channel that was dialled),
+		// answered or not: when a ring group rings several members Asterisk writes
+		// one CDR row per member, all sharing the call's linkedid, and each of them
+		// becomes an interaction of the collapsed row. Labelling them all with the
+		// group name would hide which member each attempt actually rang.
+		// The group name is restored afterwards, on the collapsed parent only, when
+		// nobody answered the call (see applyRingGroupParentNames).
+		if member := extensionFromChannel(getHistoryRowString(row, "dstchannel")); member != "" {
+			row["dst"] = member
+			// Let the frontend resolve the operator's display name from dst.
+			row["dst_cnam"] = ""
+		} else {
+			// No member channel to name (nobody was reachable): keep the group.
+			row["dst_cnam"] = name
 		}
-
-		// Nobody answered: show the ring-group NAME as the destination. dst stays
-		// the group number, so CallDestination renders name over number.
-		row["dst_cnam"] = name
 	}
 }
 
@@ -153,4 +155,24 @@ func extensionFromChannel(channel string) string {
 		}
 	}
 	return rest
+}
+
+// applyRingGroupParentNames restores the ring-group identity on collapsed parents
+// that nobody answered, so an unanswered group call shows the GROUP as its
+// destination (esito "Non risposta") instead of whichever member happened to be
+// picked as the parent leg. Answered parents keep the member who answered.
+// Runs after collapsing, since only then is it known which leg represents the call.
+func applyRingGroupParentNames(rows []map[string]interface{}) {
+	for _, row := range rows {
+		name := getHistoryRowString(row, "ringGroupName")
+		num := getHistoryRowString(row, "ringGroupNum")
+		if name == "" || num == "" {
+			continue
+		}
+		if getHistoryRowString(row, "disposition") == "ANSWERED" {
+			continue
+		}
+		row["dst"] = num
+		row["dst_cnam"] = name
+	}
 }

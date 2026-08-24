@@ -14,15 +14,64 @@ func TestEnrichRingGroupRows_UnansweredShowsGroupName(t *testing.T) {
 		{"linkedid": "L1", "uniqueid": "u1", "src": "202", "dst": "600", "dstchannel": "PJSIP/201-00000014", "disposition": "NO ANSWER", "dst_cnam": ""},
 	}
 	enrichRingGroupRows(rows, map[string]string{"600": "Test RG"})
+	// The leg itself names the member it rang; the group is restored on the parent.
+	if rows[0]["dst"] != "201" {
+		t.Fatalf("expected the leg to name the member it rang (201), got %v", rows[0]["dst"])
+	}
+	applyRingGroupParentNames(rows)
 
 	if rows[0]["dst"] != "600" {
-		t.Fatalf("expected dst to stay the group number 600, got %v", rows[0]["dst"])
+		t.Fatalf("expected unanswered parent to show the group number 600, got %v", rows[0]["dst"])
 	}
 	if rows[0]["dst_cnam"] != "Test RG" {
 		t.Fatalf("expected dst_cnam = group name, got %v", rows[0]["dst_cnam"])
 	}
 	if rows[0]["ringGroupName"] != "Test RG" {
 		t.Fatalf("expected ringGroupName marker, got %v", rows[0]["ringGroupName"])
+	}
+}
+
+func TestRingGroupMultiLeg_ParentAnsweredChildKeepsItsMember(t *testing.T) {
+	// A ring group that rang two members: 202 answered, 203 did not. Both rows share
+	// the call's linkedid, so they collapse into one row; each leg must keep naming
+	// the member it rang, and the answered parent must show who answered.
+	rows := []map[string]interface{}{
+		{"linkedid": "L1", "uniqueid": "u1", "time": float64(100), "src": "201", "dst": "600", "dstchannel": "PJSIP/202-00000003", "disposition": "ANSWERED", "lastapp": "Dial"},
+		{"linkedid": "L1", "uniqueid": "u1", "time": float64(103), "src": "201", "dst": "600", "dstchannel": "PJSIP/203-00000004", "disposition": "NO ANSWER", "lastapp": "Dial"},
+	}
+	enrichRingGroupRows(rows, map[string]string{"600": "Test RG"})
+	collapsed := collapseHistoryRowsByLinkedid(rows)
+	applyRingGroupParentNames(collapsed)
+
+	if len(collapsed) != 1 {
+		t.Fatalf("expected the two legs to collapse into 1 row, got %d", len(collapsed))
+	}
+	parent := collapsed[0]
+	if parent["dst"] != "202" {
+		t.Fatalf("expected parent to show who answered (202), got %v", parent["dst"])
+	}
+	if parent["interactionsCount"] != 2 {
+		t.Fatalf("expected interactionsCount 2, got %v", parent["interactionsCount"])
+	}
+	children, _ := parent["interactions"].([]map[string]interface{})
+	if len(children) != 1 || children[0]["dst"] != "203" {
+		t.Fatalf("expected the interaction to name the member it rang (203), got %v", children)
+	}
+}
+
+func TestRingGroupMultiLeg_NobodyAnsweredShowsGroup(t *testing.T) {
+	// Same shape, but no member answered: the parent must show the GROUP.
+	rows := []map[string]interface{}{
+		{"linkedid": "L1", "uniqueid": "u1", "time": float64(100), "dst": "600", "dstchannel": "PJSIP/202-1", "disposition": "NO ANSWER", "lastapp": "Dial"},
+		{"linkedid": "L1", "uniqueid": "u1", "time": float64(103), "dst": "600", "dstchannel": "PJSIP/203-1", "disposition": "NO ANSWER", "lastapp": "Dial"},
+	}
+	enrichRingGroupRows(rows, map[string]string{"600": "Test RG"})
+	collapsed := collapseHistoryRowsByLinkedid(rows)
+	applyRingGroupParentNames(collapsed)
+
+	if collapsed[0]["dst"] != "600" || collapsed[0]["dst_cnam"] != "Test RG" {
+		t.Fatalf("expected unanswered parent to show the group, got dst=%v cnam=%v",
+			collapsed[0]["dst"], collapsed[0]["dst_cnam"])
 	}
 }
 

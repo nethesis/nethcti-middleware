@@ -113,6 +113,9 @@ func GetFilteredHistory(c *gin.Context) {
 	// unanswered queue call shows it without relying on the frontend queue store.
 	enrichQueueRows(visibleRows, getQueueNames())
 	collapsedRows := collapseHistoryRowsByLinkedid(visibleRows)
+	// Ring-group rows name their member leg; put the GROUP back on a parent that
+	// nobody answered, now that collapsing has decided which leg represents the call.
+	applyRingGroupParentNames(collapsedRows)
 	c.JSON(http.StatusOK, paginateHistoryRows(collapsedRows, req.PageNum, req.PageSize))
 }
 
@@ -575,9 +578,19 @@ func collapseHistoryRowsByLinkedid(rows []map[string]interface{}) []map[string]i
 			result = append(result, s.standalone)
 			continue
 		}
-		legs := legsByID[s.key]
+		allLegs := legsByID[s.key]
+		queueName, queueNum := queueIdentityFromLegs(allLegs)
+		legs := pruneQueueLegs(allLegs)
 		parentIdx := selectParentLegIndex(legs)
 		parent := legs[parentIdx]
+		// Keep the queue identity on the row even when its legs were pruned, so the
+		// frontend can still tell (and name) the queue the call went through.
+		if queueName != "" {
+			parent["queueName"] = queueName
+		}
+		if queueNum != "" {
+			parent["queueNum"] = queueNum
+		}
 		if len(legs) > 1 {
 			children := make([]map[string]interface{}, 0, len(legs)-1)
 			for i, leg := range legs {
@@ -706,4 +719,70 @@ func historyRowTime(row map[string]interface{}) float64 {
 	default:
 		return 0
 	}
+}
+
+// queueIdentityFromLegs returns the queue name and number of a call that went
+// through a queue, taken from any of its queue legs, or empty strings when the
+// call never entered one.
+func queueIdentityFromLegs(legs []map[string]interface{}) (name string, num string) {
+	for _, leg := range legs {
+		if getHistoryRowString(leg, "lastapp") != "Queue" {
+			continue
+		}
+		if n := getHistoryRowString(leg, "queueName"); n != "" {
+			name = n
+		}
+		if d := getHistoryRowString(leg, "dst"); d != "" {
+			num = d
+		}
+		if name != "" && num != "" {
+			return name, num
+		}
+	}
+	return name, num
+}
+
+// pruneQueueLegs removes the queue's own bookkeeping legs from a call's legs.
+// A queue writes one lastapp="Queue" row per member it rings, all sharing the
+// queue-entry uniqueid: they duplicate the members' Dial legs (which are shown as
+// interactions and name the member, while the queue rows all name the queue).
+//
+//   - An agent answered: the call is already described by that agent and by each
+//     member's own leg, so ALL queue legs are dropped. The queue identity is not
+//     lost — it is carried on the collapsed row as queueName/queueNum.
+//   - Nobody answered: exactly one queue leg is kept (the earliest), so the call
+//     still shows the queue it went to, with the members it rang underneath.
+func pruneQueueLegs(legs []map[string]interface{}) []map[string]interface{} {
+	answeredByAgent := false
+	queueLegs := 0
+	keep := -1
+	for i := range legs {
+		isQueueLeg := getHistoryRowString(legs[i], "lastapp") == "Queue"
+		answered := getHistoryRowString(legs[i], "disposition") == "ANSWERED"
+		if !isQueueLeg {
+			if answered {
+				answeredByAgent = true
+			}
+			continue
+		}
+		queueLegs++
+		if keep == -1 || legLess(legs[i], legs[keep]) {
+			keep = i
+		}
+	}
+	if queueLegs == 0 || (queueLegs == 1 && !answeredByAgent) {
+		return legs
+	}
+	if answeredByAgent {
+		keep = -1
+	}
+
+	result := make([]map[string]interface{}, 0, len(legs))
+	for i := range legs {
+		if getHistoryRowString(legs[i], "lastapp") == "Queue" && i != keep {
+			continue
+		}
+		result = append(result, legs[i])
+	}
+	return result
 }
