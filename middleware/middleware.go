@@ -55,12 +55,25 @@ func InstanceJWT() *jwt.GinJWTMiddleware {
 	return jwtMiddleware
 }
 
+// proxyTrusted reports whether the SSO mint request actually came through the
+// Traefik forwardAuth chain: Traefik injects SsoProxySecret into SsoProxyHeader
+// after forwardAuth, so a direct local call (bypassing the SP check) lacks it.
+// When no proxy secret is configured the check is disabled (backward compatible).
+func proxyTrusted(c *gin.Context) bool {
+	want := configuration.Config.SsoProxySecret
+	if want == "" {
+		return true
+	}
+	got := c.GetHeader(configuration.Config.SsoProxyHeader)
+	return subtle.ConstantTimeCompare([]byte(got), []byte(want)) == 1
+}
+
 func InitJWT() *jwt.GinJWTMiddleware {
 	// define jwt middleware
 	authMiddleware, errDefine := jwt.New(&jwt.GinJWTMiddleware{
 		Realm:       "nethcti",
 		Key:         []byte(configuration.Config.Secret_jwt),
-		Timeout:     time.Hour * 24 * 14, // 2 weeks
+		Timeout:     time.Duration(configuration.Config.JwtTimeoutHours) * time.Hour, // default 2 weeks, configurable
 		IdentityKey: identityKey,
 		Authenticator: func(c *gin.Context) (interface{}, error) {
 			// Ensure jwtMiddleware is initialized before using it
@@ -68,16 +81,33 @@ func InitJWT() *jwt.GinJWTMiddleware {
 				jwtMiddleware = InitJWT()
 			}
 
-			// check login credentials exists
-			var loginVals login
-			if err := c.ShouldBind(&loginVals); err != nil {
-				logs.Log("[AUTH] Missing login values")
-				return "", jwt.ErrMissingLoginValues
+			// Trusted SSO login: the forwardAuth-guarded front-end injected the
+			// pre-authenticated username header, no user password is required.
+			var username, password, tokenPassword string
+			useSso := false
+			if configuration.Config.SsoTrustedSecret != "" && proxyTrusted(c) {
+				ssoUser := strings.TrimSpace(c.GetHeader(configuration.Config.SsoUserHeader))
+				if ssoUser != "" {
+					useSso = true
+					username = strings.ToLower(ssoUser)
+					// the mint secret authorizes the request on the V1 server; the
+					// token is derived from the separate HMAC key
+					password = configuration.Config.SsoTrustedSecret
+					tokenPassword = configuration.Config.SsoTokenKey
+					logs.Log("[INFO][AUTH] trusted SSO login for user " + username)
+				}
 			}
-
-			// set login credentials
-			username := loginVals.Username
-			password := loginVals.Password
+			if !useSso {
+				// check login credentials exists
+				var loginVals login
+				if err := c.ShouldBind(&loginVals); err != nil {
+					logs.Log("[AUTH] Missing login values")
+					return "", jwt.ErrMissingLoginValues
+				}
+				username = loginVals.Username
+				password = loginVals.Password
+				tokenPassword = loginVals.Password
+			}
 
 			// Perform login on the old NetCTI server
 			netCtiLoginURL := configuration.Config.V1Protocol + "://" + configuration.Config.V1ApiEndpoint + configuration.Config.V1ApiPath + "/authentication/login"
@@ -90,6 +120,10 @@ func InitJWT() *jwt.GinJWTMiddleware {
 				return nil, err
 			}
 			req.Header.Set("Content-Type", "application/json")
+			if useSso {
+				req.Header.Set("X-SSO-User", username)
+				req.Header.Set("X-SSO-Secret", configuration.Config.SsoTrustedSecret)
+			}
 
 			// Timeout avoids the client hanging indefinitely if the backend
 			// leaves the response unfinished (e.g. an unhandled exception
@@ -108,7 +142,7 @@ func InitJWT() *jwt.GinJWTMiddleware {
 				wwwAuth := resp.Header.Get("Www-Authenticate")
 				if wwwAuth != "" {
 					// Generate NethCTIToken using the www-authenticate header
-					NethCTIToken = utils.GenerateLegacyToken(resp, username, password)
+					NethCTIToken = utils.GenerateLegacyToken(resp, username, tokenPassword)
 					if NethCTIToken == "" {
 						logs.Log("[AUTH] Failed to generate NethCTIToken")
 						return nil, jwt.ErrFailedAuthentication
