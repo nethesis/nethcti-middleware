@@ -54,8 +54,12 @@ func TestRingGroupMultiLeg_ParentAnsweredChildKeepsItsMember(t *testing.T) {
 		t.Fatalf("expected interactionsCount 2, got %v", parent["interactionsCount"])
 	}
 	children, _ := parent["interactions"].([]map[string]interface{})
-	if len(children) != 1 || children[0]["dst"] != "203" {
-		t.Fatalf("expected the interaction to name the member it rang (203), got %v", children)
+	if len(children) != 2 {
+		t.Fatalf("expected both member legs listed, got %v", children)
+	}
+	// Each leg keeps naming the member it rang, the answered one included.
+	if children[0]["dst"] != "202" || children[1]["dst"] != "203" {
+		t.Fatalf("expected the members it rang (202, 203), got %v", children)
 	}
 }
 
