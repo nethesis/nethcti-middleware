@@ -160,6 +160,9 @@ func createRouter() *gin.Engine {
 	// per-IP rate limiter (see above) bounds request frequency across every
 	// route, including this pre-authentication one.
 	api.POST("/login", middleware.BodyLimit(32<<10), middleware.InstanceJWT().LoginHandler)
+	// SSO mint endpoint, on the full /api/sso-login path so a single Traefik
+	// set-route can guard it with forwardAuth (injects the verified Remote-User)
+	api.POST("/api/sso-login", middleware.BodyLimit(32<<10), middleware.InstanceJWT().LoginHandler)
 	api.GET("/ws/", socket.WsProxyHandler)
 
 	// Authentication required endpoints
