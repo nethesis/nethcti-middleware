@@ -613,6 +613,7 @@ func collapseHistoryRowsByLinkedid(rows []map[string]interface{}) []map[string]i
 		// dropped above: on a transferred call they are the only ones still carrying
 		// the trunk, and so the only evidence of which way the call went.
 		applyFinalPartiesToParent(parent, legs, parentIdx, callDirectionFromLegs(allLegs))
+		applyPersonalDirectionToParent(parent, allLegs)
 		if len(legs) > 1 {
 			sortLegsByCreation(children)
 			parent["interactions"] = children
@@ -940,10 +941,18 @@ func callDirectionFromLegs(legs []map[string]interface{}) string {
 	return direction
 }
 
-// isExternalNumber reports whether a number belongs outside the PBX. Extensions
-// are short; anything longer is a public number. Mirrors the same rule the
-// frontend applies when it decides whether to show a name or "Unknown".
+// isExternalNumber reports whether a number belongs outside the PBX, asking the
+// PBX configuration which numbers are extensions (see extensions.go). Falls back
+// to a digit count only when that list cannot be read, since a wrong answer here
+// swaps the two parties of a call around.
 func isExternalNumber(number string) bool {
+	if number == "" {
+		return false
+	}
+	if extensions := getExtensions(); len(extensions) > 0 {
+		_, isExtension := extensions[number]
+		return !isExtension
+	}
 	digits := 0
 	for _, r := range number {
 		if r >= '0' && r <= '9' {
@@ -990,65 +999,21 @@ func isBookkeepingLeg(leg map[string]interface{}) bool {
 	return dst == "" || dst == "s" || getHistoryRowString(leg, "lastapp") == ""
 }
 
-// isOutgoingLeg reports whether a leg belongs to a call placed towards the outside.
-// The switchboard view classifies calls in "type" and the personal view in
-// "direction"; either is enough.
-func isOutgoingLeg(leg map[string]interface{}) bool {
-	return getHistoryRowString(leg, "type") == "out" || getHistoryRowString(leg, "direction") == "out"
-}
-
-// applyOutgoingFinalParties composes the summary of a call placed towards the
-// outside. The destination is the number that was dialled — a transfer never
-// changes it — and the caller side names the internal party that ended up on the
-// line, which is the colleague the call was handed to, or whoever placed it when
-// there was no transfer.
-func applyOutgoingFinalParties(parent map[string]interface{}, legs []map[string]interface{}, firstIdx int) {
-	origin := legs[firstIdx]
-	dialled := getHistoryRowString(origin, "dst")
-	if dialled == "" {
-		return
-	}
-
-	// The leg that reached someone other than the number dialled is the transfer;
-	// legs naming the same party on both sides are Asterisk's own bridging.
-	conversation := lastLegMatching(legs, func(leg map[string]interface{}) bool {
-		dst := getHistoryRowString(leg, "dst")
-		return getHistoryRowString(leg, "disposition") == "ANSWERED" &&
-			dst != "" && dst != dialled &&
-			getHistoryRowString(leg, "src") != dst
-	})
-
-	party, name, company := "", "", ""
-	if conversation != -1 {
-		party = getHistoryRowString(legs[conversation], "dst")
-	} else {
-		// Nobody else took the call: it is still the extension that placed it.
-		conversation = firstIdx
-		party = getHistoryRowString(origin, "cnum")
-		name = getHistoryRowString(origin, "cnam")
-		company = getHistoryRowString(origin, "ccompany")
-	}
-	if party == "" {
-		return
-	}
-
-	parent["src"] = party
-	parent["cnum"] = party
-	parent["cnam"] = name
-	parent["ccompany"] = company
-	parent["dst"] = dialled
-	parent["dst_cnam"] = getHistoryRowString(origin, "dst_cnam")
-	parent["dst_ccompany"] = getHistoryRowString(origin, "dst_ccompany")
-	// The row is an outgoing call, whichever leg it was built from.
-	if value, ok := origin["type"]; ok {
-		parent["type"] = value
-	}
-	if value, ok := origin["direction"]; ok {
-		parent["direction"] = value
-	}
-	for _, field := range []string{"duration", "billsec"} {
-		if value, ok := legs[conversation][field]; ok {
-			parent[field] = value
+// applyPersonalDirectionToParent keeps the personal history's own notion of
+// direction on the collapsed row. cti-server computes "direction" per leg from
+// the requesting user's extensions ("out" when they placed the call, "in" when
+// they received it), and the personal view draws its arrow from that field alone.
+// The leg promoted to summary is not always the one that carries it — on a call
+// the user placed and then transferred away, only the first leg does — so the
+// row would otherwise report no direction at all and be drawn as incoming.
+func applyPersonalDirectionToParent(parent map[string]interface{}, legs []map[string]interface{}) {
+	ordered := make([]map[string]interface{}, len(legs))
+	copy(ordered, legs)
+	sortLegsByCreation(ordered)
+	for _, leg := range ordered {
+		if direction := getHistoryRowString(leg, "direction"); direction != "" {
+			parent["direction"] = direction
+			return
 		}
 	}
 }

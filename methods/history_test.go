@@ -755,3 +755,54 @@ func TestCollapseHistoryRowsByLinkedid_SummarisesTheCallWhicheverWayItWent(t *te
 		})
 	}
 }
+
+func TestCollapseHistoryRowsByLinkedid_KeepsThePersonalViewDirection(t *testing.T) {
+	// Personal history of extension 201, which placed a call outside and then
+	// transferred it to a colleague. cti-server computes "direction" per leg from
+	// the user's own extensions, and only the first leg carries it: the leg that
+	// becomes the summary has none, so the row used to report no direction and the
+	// personal view drew an outgoing call as incoming.
+	legs := []map[string]interface{}{
+		withDirection(historyLeg("1787914667.1511", "07211748905", "201", "Andrea Marchionni", "3391818709", "", "ANSWERED", "Dial", "internal", 8), "out"),
+		historyLeg("1787914675.1537", "203", "", "", "203", "", "ANSWERED", "", "out", 8),
+		historyLeg("1787914675.1539", "3391818709", "07211748905", "", "203", "Cristian Manoni", "ANSWERED", "Dial", "internal", 16),
+	}
+	got := collapseHistoryRowsByLinkedid(legs)
+	if len(got) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(got))
+	}
+	if got[0]["direction"] != "out" {
+		t.Fatalf("expected direction out, got %v", got[0]["direction"])
+	}
+
+	// The colleague's own history of the same call: their leg is the one carrying
+	// the direction, and it must survive too.
+	received := []map[string]interface{}{
+		historyLeg("1787914667.1511", "07211748905", "201", "Andrea Marchionni", "3391818709", "", "ANSWERED", "Dial", "internal", 8),
+		withDirection(historyLeg("1787914675.1539", "3391818709", "07211748905", "", "203", "Cristian Manoni", "ANSWERED", "Dial", "internal", 16), "in"),
+	}
+	if row := collapseHistoryRowsByLinkedid(received)[0]; row["direction"] != "in" {
+		t.Fatalf("expected direction in, got %v", row["direction"])
+	}
+}
+
+// withDirection adds the per-user direction cti-server computes for the personal
+// history view.
+func withDirection(leg map[string]interface{}, direction string) map[string]interface{} {
+	leg["direction"] = direction
+	return leg
+}
+
+func TestIsExternalNumber_FallsBackToDigitCount(t *testing.T) {
+	// With no database behind it the extension list is empty, so the digit-count
+	// rule decides — the behaviour a PBX whose users table cannot be read gets.
+	if isExternalNumber("203") {
+		t.Fatalf("a short number must not be treated as external")
+	}
+	if !isExternalNumber("3391818709") {
+		t.Fatalf("a public number must be treated as external")
+	}
+	if isExternalNumber("") {
+		t.Fatalf("an empty number is not a party at all")
+	}
+}
