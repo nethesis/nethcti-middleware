@@ -60,6 +60,8 @@ The application can be configured using the following environment variables:
 | `SATELLITE_PGSQL_PASSWORD` | Satellite PostgreSQL password | _(empty)_ |
 | `SATELLITE_PGSQL_DB` | Satellite PostgreSQL database name | `satellite` |
 | `NETHVOICE_MIDDLEWARE_TRUSTED_PROXY` | Trusted proxy IP or CIDR for Gin's [trusted proxies](https://gin-gonic.com/en/docs/deployment/#dont-trust-all-proxies) | `127.0.0.1` |
+| `NETHVOICE_MIDDLEWARE_GLOBAL_RATE_LIMIT_AVERAGE` | Max sustained requests/sec per client IP across all API routes; `0` disables rate limiting | `25` |
+| `NETHVOICE_MIDDLEWARE_GLOBAL_RATE_LIMIT_BURST` | Burst allowance above the average before requests are rejected with HTTP 429 | `100` |
 
 ## Testing
 

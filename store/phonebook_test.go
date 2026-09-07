@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -110,6 +111,7 @@ func ensureCentralizedPhonebookTable() error {
 			id int(11) NOT NULL AUTO_INCREMENT,
 			owner_id varchar(255) NOT NULL DEFAULT '',
 			type varchar(255) NOT NULL DEFAULT '',
+			access varchar(255) NOT NULL DEFAULT '',
 			homeemail varchar(255) DEFAULT NULL,
 			workemail varchar(255) DEFAULT NULL,
 			homephone varchar(25) DEFAULT NULL,
@@ -146,6 +148,32 @@ func ensureCentralizedPhonebookTable() error {
 	// sid_imported. Add the column idempotently to mirror the production schema.
 	_, err = db.GetDB().Exec(`
 		ALTER TABLE phonebook.phonebook ADD COLUMN IF NOT EXISTS sid_imported varchar(255) DEFAULT NULL;
+	`)
+	if err != nil {
+		return err
+	}
+
+	// Sharing on the centralized phonebook lives in its own `access` column, kept
+	// separate from the source-category `type`. Added idempotently for reused DBs.
+	_, err = db.GetDB().Exec(`
+		ALTER TABLE phonebook.phonebook ADD COLUMN IF NOT EXISTS access varchar(255) NOT NULL DEFAULT '';
+	`)
+	if err != nil {
+		return err
+	}
+
+	_, err = db.GetDB().Exec(`
+		ALTER TABLE phonebook.phonebook
+			ADD COLUMN IF NOT EXISTS firstname varchar(255) DEFAULT NULL,
+			ADD COLUMN IF NOT EXISTS lastname varchar(255) DEFAULT NULL,
+			ADD COLUMN IF NOT EXISTS job varchar(255) DEFAULT NULL,
+			ADD COLUMN IF NOT EXISTS facebook varchar(255) DEFAULT NULL,
+			ADD COLUMN IF NOT EXISTS instagram varchar(255) DEFAULT NULL,
+			ADD COLUMN IF NOT EXISTS linkedin varchar(255) DEFAULT NULL,
+			ADD COLUMN IF NOT EXISTS workphone2 varchar(25) DEFAULT NULL,
+			ADD COLUMN IF NOT EXISTS cellphone2 varchar(25) DEFAULT NULL,
+			ADD COLUMN IF NOT EXISTS otherphone varchar(25) DEFAULT NULL,
+			ADD COLUMN IF NOT EXISTS otheremail varchar(255) DEFAULT NULL;
 	`)
 	return err
 }
@@ -191,20 +219,28 @@ func entryExists(t *testing.T, name string) bool {
 	return err == nil
 }
 
-func insertCentralizedPhonebookRow(t *testing.T, entry store.PhonebookEntry) {
+// insertCentralizedPhonebookRow seeds a centralized row. The optional access argument
+// sets the sharing scope ('public'/'group:...') stored in the dedicated `access`
+// column; entry.Type keeps the source category, separate from sharing.
+func insertCentralizedPhonebookRow(t *testing.T, entry store.PhonebookEntry, access ...string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
+	accessValue := ""
+	if len(access) > 0 {
+		accessValue = access[0]
+	}
+
 	_, err := db.GetDB().ExecContext(ctx, `
 		INSERT INTO phonebook.phonebook (
-			owner_id, type, homeemail, workemail, homephone, workphone, cellphone, fax,
+			owner_id, type, access, homeemail, workemail, homephone, workphone, cellphone, fax,
 			title, company, notes, name, homestreet, homepob, homecity, homeprovince,
 			homepostalcode, homecountry, workstreet, workpob, workcity, workprovince,
 			workpostalcode, workcountry, url
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
-		entry.OwnerID, entry.Type, entry.HomeEmail, entry.WorkEmail, entry.HomePhone, entry.WorkPhone,
+		entry.OwnerID, entry.Type, accessValue, entry.HomeEmail, entry.WorkEmail, entry.HomePhone, entry.WorkPhone,
 		entry.CellPhone, entry.Fax, entry.Title, entry.Company, entry.Notes, entry.Name, entry.HomeStreet,
 		entry.HomePOB, entry.HomeCity, entry.HomeProvince, entry.HomePostalCode, entry.HomeCountry,
 		entry.WorkStreet, entry.WorkPOB, entry.WorkCity, entry.WorkProvince, entry.WorkPostalCode,
@@ -216,17 +252,22 @@ func insertCentralizedPhonebookRow(t *testing.T, entry store.PhonebookEntry) {
 // insertCentralizedPhonebookRowWithSid seeds a centralized row with an explicit
 // sid_imported value, used to assert that rows from other sync sources survive the
 // NethCTI republish.
-func insertCentralizedPhonebookRowWithSid(t *testing.T, entry store.PhonebookEntry, sidImported string) {
+func insertCentralizedPhonebookRowWithSid(t *testing.T, entry store.PhonebookEntry, sidImported string, access ...string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
+	accessValue := ""
+	if len(access) > 0 {
+		accessValue = access[0]
+	}
+
 	_, err := db.GetDB().ExecContext(ctx, `
 		INSERT INTO phonebook.phonebook (
-			owner_id, type, homephone, workphone, cellphone, fax, company, name, sid_imported
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+			owner_id, type, access, homephone, workphone, cellphone, fax, company, name, sid_imported
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
-		entry.OwnerID, entry.Type, entry.HomePhone, entry.WorkPhone, entry.CellPhone, entry.Fax,
+		entry.OwnerID, entry.Type, accessValue, entry.HomePhone, entry.WorkPhone, entry.CellPhone, entry.Fax,
 		entry.Company, entry.Name, sidImported,
 	)
 	require.NoError(t, err)
@@ -389,6 +430,210 @@ func TestSearchLegacyPhonebook_ReturnsUnionWithVisibilityFiltering(t *testing.T)
 	assert.NotContains(t, names, "Ignored Speeddial")
 	require.NotNil(t, result.LastSyncAt)
 	assert.Equal(t, lastSyncAt.Format(time.RFC3339), *result.LastSyncAt)
+}
+
+func TestSearchLegacyPhonebook_CentralizedGroupSharing(t *testing.T) {
+	clearPhonebookTable(t)
+	clearCentralizedPhonebookTable(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Sharing lives in the `access` column; `type` holds the source category.
+	insertCentralizedPhonebookRow(t, store.PhonebookEntry{
+		Type: "custom", Name: "Central Public", Company: "Acme",
+	}, "public")
+	insertCentralizedPhonebookRow(t, store.PhonebookEntry{
+		// Legacy row with empty access (as customer scripts write) must stay visible.
+		Type: "Leopard", Name: "Central Legacy", Company: "Acme",
+	})
+	insertCentralizedPhonebookRow(t, store.PhonebookEntry{
+		Type: "custom", Name: "Central Sales", Company: "Acme",
+	}, "group:Sales")
+
+	namesFor := func(groups []string) []string {
+		result, err := store.SearchLegacyPhonebook(ctx, store.LegacyPhonebookQuery{
+			Username:   "someone",
+			UserGroups: groups,
+		})
+		require.NoError(t, err)
+		names := make([]string, 0, len(result.Rows))
+		for _, row := range result.Rows {
+			names = append(names, row.Name)
+		}
+		return names
+	}
+
+	member := namesFor([]string{"Sales"})
+	assert.Contains(t, member, "Central Public")
+	assert.Contains(t, member, "Central Legacy")
+	assert.Contains(t, member, "Central Sales")
+
+	nonMember := namesFor([]string{"Support"})
+	assert.Contains(t, nonMember, "Central Public")
+	assert.Contains(t, nonMember, "Central Legacy")
+	assert.NotContains(t, nonMember, "Central Sales")
+
+	noGroups := namesFor(nil)
+	assert.Contains(t, noGroups, "Central Public")
+	assert.Contains(t, noGroups, "Central Legacy")
+	assert.NotContains(t, noGroups, "Central Sales")
+
+	// visibility=group view: only group-scoped centralized rows, gated by membership.
+	// Public/legacy (non-group) rows must not leak into this view.
+	namesForGroupView := func(groups []string) []string {
+		result, err := store.SearchLegacyPhonebook(ctx, store.LegacyPhonebookQuery{
+			Username:   "someone",
+			UserGroups: groups,
+			Visibility: "group",
+		})
+		require.NoError(t, err)
+		names := make([]string, 0, len(result.Rows))
+		for _, row := range result.Rows {
+			names = append(names, row.Name)
+		}
+		return names
+	}
+
+	memberGroupView := namesForGroupView([]string{"Sales"})
+	assert.Contains(t, memberGroupView, "Central Sales")
+	assert.NotContains(t, memberGroupView, "Central Public")
+	assert.NotContains(t, memberGroupView, "Central Legacy")
+
+	nonMemberGroupView := namesForGroupView([]string{"Support"})
+	assert.NotContains(t, nonMemberGroupView, "Central Sales")
+}
+
+func TestSearchLegacyPhonebook_TermIsOrderIndependent(t *testing.T) {
+	clearPhonebookTable(t)
+	clearCentralizedPhonebookTable(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	require.NoError(t, store.CreatePhonebookEntry(ctx, &store.PhonebookEntry{
+		OwnerID:   "alice",
+		Type:      "public",
+		Name:      "Mario Rossi",
+		FirstName: "Mario",
+		LastName:  "Rossi",
+		Company:   "Acme",
+	}))
+	_, err := db.GetDB().ExecContext(ctx, `
+		INSERT INTO phonebook.phonebook (type, access, name, firstname, lastname, company)
+		VALUES ('custom', 'public', '', 'Luigi', 'Verdi', 'Acme')
+	`)
+	require.NoError(t, err)
+
+	labelsFor := func(term, view string) []string {
+		result, err := store.SearchLegacyPhonebook(ctx, store.LegacyPhonebookQuery{
+			Username: "alice",
+			Term:     term,
+			View:     view,
+		})
+		require.NoError(t, err)
+		require.Equal(t, result.Count, len(result.Rows), "count must match the returned rows")
+		labels := make([]string, 0, len(result.Rows))
+		for _, row := range result.Rows {
+			label := row.Name
+			if label == "" {
+				label = strings.TrimSpace(row.FirstName + " " + row.LastName)
+			}
+			labels = append(labels, label)
+		}
+		return labels
+	}
+	for _, term := range []string{"Mario Rossi", "Rossi Mario", "rossi mario", "Rossi", "Mario"} {
+		assert.Contains(t, labelsFor(term, ""), "Mario Rossi", "CTI contact not found for term %q", term)
+	}
+	for _, term := range []string{"Luigi Verdi", "Verdi Luigi", "verdi   luigi"} {
+		assert.Contains(t, labelsFor(term, ""), "Luigi Verdi", "centralized contact not found for term %q", term)
+	}
+
+	assert.NotContains(t, labelsFor("Rossi Bianchi", ""), "Mario Rossi")
+
+	assert.Contains(t, labelsFor("Rossi Mario", "person"), "Mario Rossi")
+	assert.Empty(t, labelsFor("Rossi Mario", "company"))
+	assert.Len(t, labelsFor("Acme", "company"), 1)
+}
+
+// TestSearchLegacyPhonebook_CentralizedExtendedFields verifies the extended contact
+// fields stored on a centralized (imported) contact are returned by the search, not
+// blanked out.
+func TestSearchLegacyPhonebook_CentralizedExtendedFields(t *testing.T) {
+	clearPhonebookTable(t)
+	clearCentralizedPhonebookTable(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	_, err := db.GetDB().ExecContext(ctx, `
+		INSERT INTO phonebook.phonebook
+			(type, name, company, firstname, lastname, job, facebook, instagram, linkedin, workphone2, cellphone2, otherphone, otheremail, sid_imported)
+		VALUES
+			('public', 'Ext Contact', 'Acme', 'Ext', 'Contact', 'Dev', 'fb', 'ig', 'in', '0110000002', '3330000002', '0119999999', 'other@acme.test', 'custom_1')
+	`)
+	require.NoError(t, err)
+
+	result, err := store.SearchLegacyPhonebook(ctx, store.LegacyPhonebookQuery{
+		Username: "someone",
+		Term:     "Ext Contact",
+	})
+	require.NoError(t, err)
+
+	var found *store.LegacyPhonebookContact
+	for i := range result.Rows {
+		if result.Rows[i].Name == "Ext Contact" {
+			found = &result.Rows[i]
+			break
+		}
+	}
+	require.NotNil(t, found, "centralized contact not returned")
+	assert.Equal(t, "centralized", found.Source)
+	assert.Equal(t, "Ext", found.FirstName)
+	assert.Equal(t, "Contact", found.LastName)
+	assert.Equal(t, "Dev", found.Job)
+	assert.Equal(t, "fb", found.Facebook)
+	assert.Equal(t, "ig", found.Instagram)
+	assert.Equal(t, "in", found.LinkedIn)
+	assert.Equal(t, "0110000002", found.WorkPhone2)
+	assert.Equal(t, "3330000002", found.CellPhone2)
+	assert.Equal(t, "0119999999", found.OtherPhone)
+	assert.Equal(t, "other@acme.test", found.OtherEmail)
+}
+
+// TestGetCentralizedPhonebookEntryByID_ReturnsExtendedFields verifies the contact-detail
+// endpoint for a centralized (imported) contact returns the extended fields (previously
+// projected as empty literals).
+func TestGetCentralizedPhonebookEntryByID_ReturnsExtendedFields(t *testing.T) {
+	clearCentralizedPhonebookTable(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	res, err := db.GetDB().ExecContext(ctx, `
+		INSERT INTO phonebook.phonebook
+			(type, name, company, firstname, lastname, job, facebook, instagram, linkedin, workphone2, cellphone2, otherphone, otheremail, sid_imported)
+		VALUES
+			('public', 'Detail Contact', 'Acme', 'Det', 'Ail', 'QA', 'fb', 'ig', 'in', '0110000003', '3330000003', '0118888888', 'det@acme.test', 'custom_1')
+	`)
+	require.NoError(t, err)
+	id, err := res.LastInsertId()
+	require.NoError(t, err)
+
+	entry, err := store.GetCentralizedPhonebookEntryByID(ctx, id)
+	require.NoError(t, err)
+	require.NotNil(t, entry)
+	assert.Equal(t, "Det", entry.FirstName)
+	assert.Equal(t, "Ail", entry.LastName)
+	assert.Equal(t, "QA", entry.Job)
+	assert.Equal(t, "fb", entry.Facebook)
+	assert.Equal(t, "ig", entry.Instagram)
+	assert.Equal(t, "in", entry.LinkedIn)
+	assert.Equal(t, "0110000003", entry.WorkPhone2)
+	assert.Equal(t, "3330000003", entry.CellPhone2)
+	assert.Equal(t, "0118888888", entry.OtherPhone)
+	assert.Equal(t, "det@acme.test", entry.OtherEmail)
 }
 
 func TestSearchLegacyPhonebook_CompanyViewBuildsContactsPayload(t *testing.T) {
@@ -957,13 +1202,16 @@ func TestSyncPublicContactsToCentralized(t *testing.T) {
 	// type='nethcti' and sid_imported='nethcti'.
 	assert.Equal(t, 1, countCentralizedRows(t, "nethcti"), "public contact must be exported once")
 
-	var name, contactType, company string
+	var name, contactType, company, access string
 	require.NoError(t, db.GetDB().QueryRowContext(ctx,
-		"SELECT name, type, company FROM phonebook.phonebook WHERE sid_imported = 'nethcti'").
-		Scan(&name, &contactType, &company))
+		"SELECT name, type, company, access FROM phonebook.phonebook WHERE sid_imported = 'nethcti'").
+		Scan(&name, &contactType, &company, &access))
 	assert.Equal(t, "Alice Public", name)
 	assert.Equal(t, "nethcti", contactType)
 	assert.Equal(t, "Acme", company)
+	// Republished public CTI contacts must be marked access='public' so the inbound
+	// lookup (which filters access = 'public') keeps resolving their names.
+	assert.Equal(t, "public", access)
 
 	// The private contact must not be exported.
 	var privateCount int

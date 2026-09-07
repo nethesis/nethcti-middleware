@@ -51,3 +51,100 @@ func TestParsePhonebookCSV_TraditionalTypesStillAccepted(t *testing.T) {
 	assert.Equal(t, 2, response.TotalRows)
 	assert.Equal(t, 0, response.SkippedRows)
 }
+
+func TestParsePhonebookCSV_NewFieldsImported(t *testing.T) {
+	csvContent := strings.NewReader(
+		"name,firstname,lastname,job,facebook,instagram,linkedin,workphone2,cellphone2,otherphone,otheremail\n" +
+			"Alice Rossi,Alice,Rossi,Engineer,fb.me/alice,@alice,in/alice,+390111,+390222,+390333,alice.other@example.com\n",
+	)
+
+	entries, response, err := parsePhonebookCSV(csvContent)
+
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	entry := entries[0]
+	assert.Equal(t, "Alice", entry.FirstName)
+	assert.Equal(t, "Rossi", entry.LastName)
+	assert.Equal(t, "Engineer", entry.Job)
+	assert.Equal(t, "fb.me/alice", entry.Facebook)
+	assert.Equal(t, "@alice", entry.Instagram)
+	assert.Equal(t, "in/alice", entry.LinkedIn)
+	assert.Equal(t, "+390111", entry.WorkPhone2)
+	assert.Equal(t, "+390222", entry.CellPhone2)
+	assert.Equal(t, "+390333", entry.OtherPhone)
+	assert.Equal(t, "alice.other@example.com", entry.OtherEmail)
+	assert.Equal(t, 0, response.SkippedRows)
+	assert.Empty(t, response.ErrorMessages)
+}
+
+func TestParsePhonebookCSV_MissingNameColumn(t *testing.T) {
+	csvContent := strings.NewReader("workphone,company\n+39123,ACME\n")
+
+	entries, response, err := parsePhonebookCSV(csvContent)
+
+	require.NoError(t, err)
+	assert.Empty(t, entries)
+	require.NotNil(t, response)
+	require.Len(t, response.ErrorMessages, 1)
+	assert.Contains(t, response.ErrorMessages[0], "'name'")
+}
+
+func TestParsePhonebookCSV_OnlyHeaderNoRows(t *testing.T) {
+	csvContent := strings.NewReader("name,workphone\n")
+
+	entries, response, err := parsePhonebookCSV(csvContent)
+
+	require.NoError(t, err)
+	assert.Empty(t, entries)
+	assert.Equal(t, 0, response.TotalRows)
+	assert.Equal(t, 0, response.SkippedRows)
+	assert.Empty(t, response.ErrorMessages)
+}
+
+func TestParsePhonebookCSV_EmptyNameRowSkippedWithLineNumber(t *testing.T) {
+	// header (line 1), empty-name row (line 2), valid row (line 3).
+	csvContent := strings.NewReader("name,workphone\n,+39123\nBob,+39456\n")
+
+	entries, response, err := parsePhonebookCSV(csvContent)
+
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	assert.Equal(t, "Bob", entries[0].Name)
+	assert.Equal(t, 1, response.SkippedRows)
+	require.Len(t, response.ErrorMessages, 1)
+	assert.Contains(t, response.ErrorMessages[0], "Row 2")
+	assert.Contains(t, response.ErrorMessages[0], "name is empty")
+}
+
+func TestParsePhonebookCSV_MalformedRowSkippedNotFatal(t *testing.T) {
+	// Row 2 has the wrong field count (csv.ErrFieldCount): it must be skipped,
+	// reported at its own line, and parsing must continue to the valid row 3.
+	csvContent := strings.NewReader("name,workphone\nAlice,+39123,extra\nBob,+39456\n")
+
+	entries, response, err := parsePhonebookCSV(csvContent)
+
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	assert.Equal(t, "Bob", entries[0].Name)
+	assert.Equal(t, 1, response.SkippedRows)
+	require.Len(t, response.ErrorMessages, 1)
+	assert.Contains(t, response.ErrorMessages[0], "Row 2")
+}
+
+func TestParsePhonebookCSV_BareQuoteRowSkippedNotFatal(t *testing.T) {
+	// A bare/unescaped quote yields csv.ErrBareQuote (a *csv.ParseError, not
+	// ErrFieldCount). encoding/csv recovers on the next Read, so the offending
+	// row must be skipped while every following valid row is still imported —
+	// it must NOT abort the whole import.
+	csvContent := strings.NewReader("name,workphone\nAli\"ce,123\nBob,456\nCarol,789\n")
+
+	entries, response, err := parsePhonebookCSV(csvContent)
+
+	require.NoError(t, err)
+	require.Len(t, entries, 2)
+	assert.Equal(t, "Bob", entries[0].Name)
+	assert.Equal(t, "Carol", entries[1].Name)
+	assert.Equal(t, 1, response.SkippedRows)
+	require.Len(t, response.ErrorMessages, 1)
+	assert.Contains(t, response.ErrorMessages[0], "Row 2")
+}

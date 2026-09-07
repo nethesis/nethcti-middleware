@@ -48,6 +48,16 @@ var phonebookMutableColumns = []string{
 	"url",
 	"extension",
 	"speeddial_num",
+	"firstname",
+	"lastname",
+	"job",
+	"facebook",
+	"instagram",
+	"linkedin",
+	"workphone2",
+	"cellphone2",
+	"otherphone",
+	"otheremail",
 }
 
 // PhonebookEntry represents a phonebook contact from cti_phonebook table.
@@ -80,6 +90,16 @@ type PhonebookEntry struct {
 	URL            string
 	Extension      string
 	SpeedDialNum   string
+	FirstName      string
+	LastName       string
+	Job            string
+	Facebook       string
+	Instagram      string
+	LinkedIn       string
+	WorkPhone2     string
+	CellPhone2     string
+	OtherPhone     string
+	OtherEmail     string
 }
 
 // IsReservedContactType reports whether the contact type is one of the built-in visibilities.
@@ -278,8 +298,9 @@ func batchInsertPhonebookEntries(ctx context.Context, entries []*PhonebookEntry)
 			owner_id, type, homeemail, workemail, homephone, workphone, cellphone, fax,
 			title, company, notes, name, homestreet, homepob, homecity, homeprovince,
 			homepostalcode, homecountry, workstreet, workpob, workcity, workprovince,
-			workpostalcode, workcountry, url, extension, speeddial_num
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			workpostalcode, workcountry, url, extension, speeddial_num,
+			firstname, lastname, job, facebook, instagram, linkedin, workphone2, cellphone2, otherphone, otheremail
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	successful := 0
@@ -293,6 +314,8 @@ func batchInsertPhonebookEntries(ctx context.Context, entries []*PhonebookEntry)
 			entry.HomePostalCode, entry.HomeCountry, entry.WorkStreet, entry.WorkPOB,
 			entry.WorkCity, entry.WorkProvince, entry.WorkPostalCode, entry.WorkCountry,
 			entry.URL, entry.Extension, entry.SpeedDialNum,
+			entry.FirstName, entry.LastName, entry.Job, entry.Facebook, entry.Instagram,
+			entry.LinkedIn, entry.WorkPhone2, entry.CellPhone2, entry.OtherPhone, entry.OtherEmail,
 		)
 		if err != nil {
 			logs.Log("[ERROR][PHONEBOOK] Failed to insert entry for " + entry.Name + ": " + err.Error())
@@ -334,7 +357,8 @@ func GetPhonebookEntryByID(ctx context.Context, id int64) (*PhonebookEntry, erro
 		SELECT id, owner_id, type, homeemail, workemail, homephone, workphone, cellphone, fax,
 			title, company, notes, name, homestreet, homepob, homecity, homeprovince,
 			homepostalcode, homecountry, workstreet, workpob, workcity, workprovince,
-			workpostalcode, workcountry, url, extension, speeddial_num
+			workpostalcode, workcountry, url, extension, speeddial_num,
+			firstname, lastname, job, facebook, instagram, linkedin, workphone2, cellphone2, otherphone, otheremail
 		FROM cti_phonebook
 		WHERE id = ?
 		LIMIT 1
@@ -362,7 +386,9 @@ func GetCentralizedPhonebookEntryByID(ctx context.Context, id int64) (*Phonebook
 		SELECT id, owner_id, type, homeemail, workemail, homephone, workphone, cellphone, fax,
 			title, company, notes, name, homestreet, homepob, homecity, homeprovince,
 			homepostalcode, homecountry, workstreet, workpob, workcity, workprovince,
-			workpostalcode, workcountry, url, '' AS extension, '' AS speeddial_num
+			workpostalcode, workcountry, url, '' AS extension, '' AS speeddial_num,
+			firstname, lastname, job, facebook, instagram,
+			linkedin, workphone2, cellphone2, otherphone, otheremail
 		FROM ` + centralizedPhonebookTable + `
 		WHERE id = ? AND type != 'nethcti'
 		LIMIT 1
@@ -491,9 +517,12 @@ func SyncPublicContactsToCentralized(ctx context.Context) error {
 	// they cannot drift out of alignment (a mismatch would silently write a value into
 	// the wrong column). `type` and `sid_imported` are appended explicitly because both
 	// are written as the literal 'nethcti' marker rather than copied from the source row.
+	// `type`/`sid_imported` are the literal 'nethcti' marker; `access` is set to
+	// 'public' so these republished public CTI contacts stay resolvable by the
+	// public-only inbound lookup (lookup.php filters access = 'public').
 	columns := strings.Join(centralizedSyncColumns, ", ")
-	insertSelect := "INSERT INTO `phonebook`.`phonebook` (" + columns + ", type, sid_imported)\n" +
-		"SELECT " + columns + ", 'nethcti', 'nethcti'\n" +
+	insertSelect := "INSERT INTO `phonebook`.`phonebook` (" + columns + ", type, access, sid_imported)\n" +
+		"SELECT " + columns + ", 'nethcti', 'public', 'nethcti'\n" +
 		"FROM cti_phonebook\n" +
 		"WHERE type = 'public'"
 	if _, err := conn.ExecContext(ctx, insertSelect); err != nil {
@@ -533,6 +562,16 @@ func scanPhonebookEntry(scanner interface{ Scan(dest ...any) error }) (*Phoneboo
 		url             sql.NullString
 		extension       sql.NullString
 		speedDialNumber sql.NullString
+		firstName       sql.NullString
+		lastName        sql.NullString
+		job             sql.NullString
+		facebook        sql.NullString
+		instagram       sql.NullString
+		linkedIn        sql.NullString
+		workPhone2      sql.NullString
+		cellPhone2      sql.NullString
+		otherPhone      sql.NullString
+		otherEmail      sql.NullString
 	)
 
 	err := scanner.Scan(
@@ -564,6 +603,16 @@ func scanPhonebookEntry(scanner interface{ Scan(dest ...any) error }) (*Phoneboo
 		&url,
 		&extension,
 		&speedDialNumber,
+		&firstName,
+		&lastName,
+		&job,
+		&facebook,
+		&instagram,
+		&linkedIn,
+		&workPhone2,
+		&cellPhone2,
+		&otherPhone,
+		&otherEmail,
 	)
 	if err != nil {
 		return nil, err
@@ -596,6 +645,16 @@ func scanPhonebookEntry(scanner interface{ Scan(dest ...any) error }) (*Phoneboo
 	entry.URL = nullStringValue(url)
 	entry.Extension = nullStringValue(extension)
 	entry.SpeedDialNum = nullStringValue(speedDialNumber)
+	entry.FirstName = nullStringValue(firstName)
+	entry.LastName = nullStringValue(lastName)
+	entry.Job = nullStringValue(job)
+	entry.Facebook = nullStringValue(facebook)
+	entry.Instagram = nullStringValue(instagram)
+	entry.LinkedIn = nullStringValue(linkedIn)
+	entry.WorkPhone2 = nullStringValue(workPhone2)
+	entry.CellPhone2 = nullStringValue(cellPhone2)
+	entry.OtherPhone = nullStringValue(otherPhone)
+	entry.OtherEmail = nullStringValue(otherEmail)
 
 	return &entry, nil
 }

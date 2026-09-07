@@ -8,6 +8,7 @@ package configuration
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
@@ -58,6 +59,11 @@ type Configuration struct {
 	ProfilesConfigPath string `json:"profiles_config_path"`
 	UsersConfigPath    string `json:"users_config_path"`
 	TrustedProxy       string `json:"trusted_proxy"`
+
+	// Generous global per-IP rate limit applied to every API route as a coarse
+	// safety net; 0 disables it
+	GlobalRateLimitAverage int `json:"global_rate_limit_average"`
+	GlobalRateLimitBurst   int `json:"global_rate_limit_burst"`
 }
 
 var Config = Configuration{}
@@ -322,5 +328,18 @@ func Init() {
 		Config.TrustedProxy = os.Getenv("NETHVOICE_MIDDLEWARE_TRUSTED_PROXY")
 	} else {
 		Config.TrustedProxy = "127.0.0.1"
+	}
+
+	// Global per-IP rate limit (0 disables it)
+	if v, err := strconv.Atoi(os.Getenv("NETHVOICE_MIDDLEWARE_GLOBAL_RATE_LIMIT_AVERAGE")); err == nil {
+		Config.GlobalRateLimitAverage = v
+	} else {
+		Config.GlobalRateLimitAverage = 25
+	}
+
+	if v, err := strconv.Atoi(os.Getenv("NETHVOICE_MIDDLEWARE_GLOBAL_RATE_LIMIT_BURST")); err == nil {
+		Config.GlobalRateLimitBurst = v
+	} else {
+		Config.GlobalRateLimitBurst = 100
 	}
 }
