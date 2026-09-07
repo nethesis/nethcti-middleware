@@ -253,6 +253,11 @@ func buildLegacyHistoryPath(req *historyFilterRequest) (string, url.Values, erro
 	// removing them collapses a groupable call down to a single leg, which then
 	// shows as non-expandable. Keep every leg so grouping stays correct.
 	queryValues.Set("removeLostCalls", "false")
+	// Ask cti-server for every leg of a call rather than one row per call: this is
+	// the only caller that groups them back together (by linkedid), and every other
+	// consumer of that API — NethLink, the mobile app, the CTI drawers — keeps
+	// receiving the deduplicated rows it expects.
+	queryValues.Set("expandLegs", "true")
 
 	var path string
 	switch req.CallType {
