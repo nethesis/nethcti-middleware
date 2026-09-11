@@ -8,6 +8,7 @@ package configuration
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
@@ -36,11 +37,19 @@ type Configuration struct {
 	MQTTEnabled  bool   `json:"mqtt_enabled"`
 
 	// Middleware MariaDB Configuration for phonebook and persistence layer
-	MiddlewareMariaDBHost     string `json:"nethvoice_middleware_mariadb_host"`
-	MiddlewareMariaDBPort     string `json:"nethvoice_middleware_mariadb_port"`
-	MiddlewareMariaDBUser     string `json:"nethvoice_middleware_mariadb_user"`
-	MiddlewareMariaDBPassword string `json:"nethvoice_middleware_mariadb_password"`
-	MiddlewareMariaDBDatabase string `json:"nethvoice_middleware_mariadb_database"`
+	MiddlewareMariaDBHost        string `json:"nethvoice_middleware_mariadb_host"`
+	MiddlewareMariaDBPort        string `json:"nethvoice_middleware_mariadb_port"`
+	MiddlewareMariaDBUser        string `json:"nethvoice_middleware_mariadb_user"`
+	MiddlewareMariaDBPassword    string `json:"nethvoice_middleware_mariadb_password"`
+	MiddlewareMariaDBDatabase    string `json:"nethvoice_middleware_mariadb_database"`
+	MiddlewareMariaDBCDRDatabase string `json:"nethvoice_middleware_mariadb_cdr_database"`
+
+	// Satellite PostgreSQL Configuration for transcripts
+	SatellitePgSQLDB       string `json:"satellite_pgsql_db"`
+	SatellitePgSQLUser     string `json:"satellite_pgsql_user"`
+	SatellitePgSQLPassword string `json:"satellite_pgsql_password"`
+	SatellitePgSQLHost     string `json:"satellite_pgsql_host"`
+	SatellitePgSQLPort     string `json:"satellite_pgsql_port"`
 
 	// Super Admin Configuration
 	SuperAdminToken      string   `json:"super_admin_token"`
@@ -53,6 +62,11 @@ type Configuration struct {
 	ProfilesConfigPath string `json:"profiles_config_path"`
 	UsersConfigPath    string `json:"users_config_path"`
 	TrustedProxy       string `json:"trusted_proxy"`
+
+	// Generous global per-IP rate limit applied to every API route as a coarse
+	// safety net; 0 disables it
+	GlobalRateLimitAverage int `json:"global_rate_limit_average"`
+	GlobalRateLimitBurst   int `json:"global_rate_limit_burst"`
 }
 
 var Config = Configuration{}
@@ -238,6 +252,46 @@ func Init() {
 		Config.MiddlewareMariaDBDatabase = "nethcti3"
 	}
 
+	// Set Mariadb CDR database name
+	if os.Getenv("NETHVOICE_MIDDLEWARE_MARIADB_CDR_DATABASE") != "" {
+		Config.MiddlewareMariaDBCDRDatabase = os.Getenv("NETHVOICE_MIDDLEWARE_MARIADB_CDR_DATABASE")
+	} else {
+		Config.MiddlewareMariaDBCDRDatabase = "asteriskcdrdb"
+	}
+
+	// Satellite PostgreSQL settings (transcripts)
+	if os.Getenv("SATELLITE_PGSQL_HOST") != "" {
+		Config.SatellitePgSQLHost = os.Getenv("SATELLITE_PGSQL_HOST")
+	} else {
+		Config.SatellitePgSQLHost = "127.0.0.1"
+		logs.Log("[WARN][ENV] SATELLITE_PGSQL_HOST not set; defaulting to '127.0.0.1'")
+	}
+
+	if os.Getenv("SATELLITE_PGSQL_PORT") != "" {
+		Config.SatellitePgSQLPort = os.Getenv("SATELLITE_PGSQL_PORT")
+	} else if Config.SatellitePgSQLHost != "" {
+		Config.SatellitePgSQLPort = "5432"
+		logs.Log("[WARN][ENV] SATELLITE_PGSQL_PORT not set; defaulting to 5432")
+	}
+
+	if os.Getenv("SATELLITE_PGSQL_USER") != "" {
+		Config.SatellitePgSQLUser = os.Getenv("SATELLITE_PGSQL_USER")
+	} else if Config.SatellitePgSQLHost != "" {
+		Config.SatellitePgSQLUser = "satellite"
+		logs.Log("[WARN][ENV] SATELLITE_PGSQL_USER not set; defaulting to 'satellite'")
+	}
+
+	if os.Getenv("SATELLITE_PGSQL_PASSWORD") != "" {
+		Config.SatellitePgSQLPassword = os.Getenv("SATELLITE_PGSQL_PASSWORD")
+	}
+
+	if os.Getenv("SATELLITE_PGSQL_DB") != "" {
+		Config.SatellitePgSQLDB = os.Getenv("SATELLITE_PGSQL_DB")
+	} else if Config.SatellitePgSQLHost != "" {
+		Config.SatellitePgSQLDB = "satellite"
+		logs.Log("[WARN][ENV] SATELLITE_PGSQL_DB not set; defaulting to 'satellite'")
+	}
+
 	// Load or generate super admin token from environment variable or file
 	if os.Getenv("NETHVOICE_MIDDLEWARE_SUPER_ADMIN_TOKEN") != "" {
 		Config.SuperAdminToken = os.Getenv("NETHVOICE_MIDDLEWARE_SUPER_ADMIN_TOKEN")
@@ -280,5 +334,18 @@ func Init() {
 		Config.TrustedProxy = os.Getenv("NETHVOICE_MIDDLEWARE_TRUSTED_PROXY")
 	} else {
 		Config.TrustedProxy = "127.0.0.1"
+	}
+
+	// Global per-IP rate limit (0 disables it)
+	if v, err := strconv.Atoi(os.Getenv("NETHVOICE_MIDDLEWARE_GLOBAL_RATE_LIMIT_AVERAGE")); err == nil {
+		Config.GlobalRateLimitAverage = v
+	} else {
+		Config.GlobalRateLimitAverage = 25
+	}
+
+	if v, err := strconv.Atoi(os.Getenv("NETHVOICE_MIDDLEWARE_GLOBAL_RATE_LIMIT_BURST")); err == nil {
+		Config.GlobalRateLimitBurst = v
+	} else {
+		Config.GlobalRateLimitBurst = 100
 	}
 }

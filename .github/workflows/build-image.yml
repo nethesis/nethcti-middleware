@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       mariadb:
-        image: mariadb:12.2.2
+        image: mariadb:12.3.3
         env:
           MYSQL_ROOT_PASSWORD: root
           MYSQL_DATABASE: nethcti3
@@ -25,11 +25,11 @@ jobs:
           --health-timeout=5s
           --health-retries=10
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Setup Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
-          go-version: '1.26'
+          go-version: '1.27'
       - name: Install oathtool
         run: |
           sudo apt-get update
@@ -58,7 +58,7 @@ jobs:
       REPOBASE: ghcr.io/${{ github.repository_owner }}
       IMAGETAG: ${{ github.ref_name }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - id: install-podman
         run: |
           # Install podman

@@ -21,5 +21,8 @@ func Init(name string) {
 }
 
 func Log(message string) {
+	if Logs == nil {
+		return
+	}
 	Logs.Println(message)
 }

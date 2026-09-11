@@ -1,5 +1,5 @@
 # Use Go as base image for building
-FROM docker.io/golang:1.26-alpine3.22 AS builder
+FROM docker.io/golang:1.27-alpine3.24 AS builder
 
 # Set working directory
 WORKDIR /app
@@ -13,7 +13,7 @@ RUN go mod download
 # Build the Go application
 RUN go build -o whale
 
-FROM docker.io/alpine:3.23 AS runtime
+FROM docker.io/alpine:3.24 AS runtime
 
 # Set working directory
 WORKDIR /app

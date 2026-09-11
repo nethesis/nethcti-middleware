@@ -25,7 +25,8 @@ func AdminReloadProfiles(c *gin.Context) {
 		return
 	}
 
-	logs.Log(fmt.Sprintf("[INFO] /admin/reload/profiles completed: profiles=%d users=%d", stats.ProfilesLoaded, stats.UsersLoaded))
+	logs.Log(fmt.Sprintf("[INFO] Reloaded users from /etc/nethcti/users.json: users=%d", stats.UsersLoaded))
+	logs.Log(fmt.Sprintf("[INFO] Reloaded profiles from /etc/nethcti/profiles.json: profiles=%d", stats.ProfilesLoaded))
 
 	// Return success response
 	c.JSON(http.StatusOK, structs.Map(models.StatusOK{

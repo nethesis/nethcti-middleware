@@ -14,11 +14,13 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fatih/structs"
 	"github.com/gin-gonic/gin"
 	"github.com/nqd/flat"
+	"golang.org/x/time/rate"
 
 	jwt "github.com/appleboy/gin-jwt/v3"
 	"github.com/appleboy/gin-jwt/v3/core"
@@ -89,7 +91,10 @@ func InitJWT() *jwt.GinJWTMiddleware {
 			}
 			req.Header.Set("Content-Type", "application/json")
 
-			client := &http.Client{}
+			// Timeout avoids the client hanging indefinitely if the backend
+			// leaves the response unfinished (e.g. an unhandled exception
+			// that never calls resp.end() on the restify side).
+			client := &http.Client{Timeout: 30 * time.Second}
 			resp, err := client.Do(req)
 			if err != nil {
 				logs.Log("[AUTH] Failed to send request to NetCTI")
@@ -176,19 +181,14 @@ func InitJWT() *jwt.GinJWTMiddleware {
 		PayloadFunc: func(data any) gojwt.MapClaims {
 			// read current user
 			if userSession, ok := data.(*models.UserSession); ok {
-				// check if user require 2fa
-				status, _ := methods.GetUserStatus(userSession.Username)
-
-				// create base claims map
-				// Note: otp_verified is always false on initial login
-				// It will be set to true only after OTP verification via regenerateUserToken
-				claims := gojwt.MapClaims{
-					identityKey:    userSession.Username,
-					"2fa":          status == "1",
-					"otp_verified": false,
-				}
-
-				return claims
+				// Note: otp_verified is always false on initial login.
+				// It will be set to true only after OTP verification via regenerateUserToken.
+				claims := methods.BuildUserJWTClaims(methods.UserJWTOptions{
+					Username:    userSession.Username,
+					OTPVerified: false,
+					IssuedAt:    time.Now(),
+				})
+				return gojwt.MapClaims(claims)
 			}
 
 			// return empty claims map
@@ -402,7 +402,7 @@ func RequireSuperAdmin() gin.HandlerFunc {
 			return
 		}
 
-		logs.Log(fmt.Sprintf("[INFO][AUTH][INTERNAL] super admin request authorized from %s. %s %s", clientIP, c.Request.Method, c.Request.URL.Path))
+		logs.Log(fmt.Sprintf("[INFO][INTERNAL] super admin request authorized from %s. %s %s", clientIP, c.Request.Method, c.Request.URL.Path))
 		c.Next()
 	}
 }
@@ -440,5 +440,68 @@ func RequireCapabilities(capability string) gin.HandlerFunc {
 			Message: "forbidden: missing capability",
 			Data:    nil,
 		}))
+	}
+}
+
+// BodyLimit rejects requests whose body exceeds maxBytes before any downstream
+// binding reads it, so unauthenticated or semi-trusted routes cannot be used
+// to exhaust memory with oversized payloads.
+func BodyLimit(maxBytes int64) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBytes)
+		c.Next()
+	}
+}
+
+const rateLimiterStaleAfter = 3 * time.Minute
+const rateLimiterCleanupInterval = time.Minute
+
+type rateLimiterVisitor struct {
+	limiter  *rate.Limiter
+	lastSeen time.Time
+}
+
+// RateLimiter throttles requests per client IP with a token-bucket limiter, as a
+// coarse safety net across every route (BodyLimit bounds one request's body,
+// not how many requests run at once). rps is the sustained rate, burst the
+// number of requests allowed instantly.
+func RateLimiter(rps rate.Limit, burst int) gin.HandlerFunc {
+	visitors := make(map[string]*rateLimiterVisitor)
+	var mu sync.Mutex
+
+	go func() {
+		for {
+			time.Sleep(rateLimiterCleanupInterval)
+			mu.Lock()
+			for ip, v := range visitors {
+				if time.Since(v.lastSeen) > rateLimiterStaleAfter {
+					delete(visitors, ip)
+				}
+			}
+			mu.Unlock()
+		}
+	}()
+
+	return func(c *gin.Context) {
+		ip := c.ClientIP()
+
+		mu.Lock()
+		v, exists := visitors[ip]
+		if !exists {
+			v = &rateLimiterVisitor{limiter: rate.NewLimiter(rps, burst)}
+			visitors[ip] = v
+		}
+		v.lastSeen = time.Now()
+		limiter := v.limiter
+		mu.Unlock()
+
+		if !limiter.Allow() {
+			logs.Log("[INFO][AUTH] rate limit exceeded for " + ip + " on " + c.Request.URL.Path)
+			c.JSON(http.StatusTooManyRequests, gin.H{"code": http.StatusTooManyRequests, "message": "too many requests", "data": nil})
+			c.Abort()
+			return
+		}
+
+		c.Next()
 	}
 }

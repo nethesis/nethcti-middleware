@@ -14,7 +14,6 @@ import (
 	"github.com/gin-gonic/gin"
 	jwtv5 "github.com/golang-jwt/jwt/v5"
 
-	"github.com/nethesis/nethcti-middleware/configuration"
 	"github.com/nethesis/nethcti-middleware/models"
 	"github.com/nethesis/nethcti-middleware/store"
 )
@@ -52,7 +51,8 @@ func PhoneIslandTokenLogin(c *gin.Context) {
 // PhoneIslandTokenCheck is a legacy compatibility endpoint.
 // Historically this endpoint checked the phone-island integration token existence.
 func PhoneIslandTokenCheck(c *gin.Context) {
-	checkIntegrationToken(c, "phone-island")
+	subtype := c.Param("subtype")
+	checkIntegrationToken(c, mapLegacySubtypeToAudience(subtype))
 }
 
 // PhoneIslandTokenRemove is a legacy compatibility endpoint.
@@ -120,19 +120,17 @@ func issueIntegrationToken(c *gin.Context, audience string) {
 		return
 	}
 
-	newClaims := jwtv5.MapClaims{}
-	for k, v := range claims {
-		newClaims[k] = v
-	}
 	now := time.Now()
-	newClaims["id"] = username
-	newClaims["aud"] = audience
-	newClaims["iat"] = now.Unix()
-	// Legacy-compatible behavior: very long-lived integration token (100 years).
-	newClaims["exp"] = now.Add(100 * 365 * 24 * time.Hour).Unix()
+	expire := now.Add(100 * 365 * 24 * time.Hour) // Legacy-compatible behavior: very long-lived integration token (100 years).
+	otpVerified, _ := claims["otp_verified"].(bool)
 
-	token := jwtv5.NewWithClaims(jwtv5.SigningMethodHS256, newClaims)
-	tokenString, err := token.SignedString([]byte(configuration.Config.Secret_jwt))
+	_, tokenString, err := IssueUserJWT(UserJWTOptions{
+		Username:    username,
+		OTPVerified: otpVerified,
+		IssuedAt:    now,
+		ExpiresAt:   &expire,
+		Audience:    audience,
+	})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"message": "failed to generate token"})
 		return

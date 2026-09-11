@@ -68,16 +68,79 @@ func TestInitProfilesAndGetters(t *testing.T) {
 	}
 }
 
-func TestMissingProfileReference(t *testing.T) {
-	profilesJSON := `{ "1": {"id":"1","name":"Base","macro_permissions": {}} }`
-	usersJSON := `{ "baduser": {"profile_id":"999"} }`
+func TestMissingProfileReferenceSkipsUserWithoutWipingOthers(t *testing.T) {
+	profilesJSON := `{ "1": {"id":"1","name":"Base","macro_permissions": {"phonebook": {"value": true, "permissions": []}}} }`
+	usersJSON := `{
+        "baduser": {"profile_id":"999"},
+        "gooduser": {"profile_id":"1"}
+    }`
 
 	profFile := writeTempFile(t, "profiles.json", profilesJSON)
 	usersFile := writeTempFile(t, "users.json", usersJSON)
 
-	// InitProfiles should return an error since user references unknown profile
-	if err := InitProfiles(profFile, usersFile); err == nil {
-		t.Fatalf("expected InitProfiles to fail for unknown profile reference")
+	if err := InitProfiles(profFile, usersFile); err != nil {
+		t.Fatalf("InitProfiles should not fail when a single user references an unknown profile: %v", err)
+	}
+
+	// The valid user keeps working (capabilities resolvable).
+	if _, err := GetUserCapabilities("gooduser"); err != nil {
+		t.Fatalf("valid user must remain usable after skipping a bad record: %v", err)
+	}
+
+	// The bad user is dropped, not silently granted.
+	if _, err := GetUserCapabilities("baduser"); err == nil {
+		t.Fatalf("expected user referencing unknown profile to be absent")
+	}
+}
+
+func TestMissingProfileFieldSkipsUser(t *testing.T) {
+	profilesJSON := `{ "1": {"id":"1","name":"Base","macro_permissions": {}} }`
+	usersJSON := `{
+        "noprofile": {"name":"No Profile"},
+        "gooduser": {"profile_id":"1"}
+    }`
+
+	profFile := writeTempFile(t, "profiles.json", profilesJSON)
+	usersFile := writeTempFile(t, "users.json", usersJSON)
+
+	if err := InitProfiles(profFile, usersFile); err != nil {
+		t.Fatalf("InitProfiles should not fail for a user missing profile_id: %v", err)
+	}
+	if _, err := GetUserProfile("gooduser"); err != nil {
+		t.Fatalf("valid user must remain usable: %v", err)
+	}
+	if _, err := GetUserProfile("noprofile"); err == nil {
+		t.Fatalf("expected user without profile_id to be absent")
+	}
+}
+
+func TestUserLookupIsCaseInsensitive(t *testing.T) {
+	// /etc/nethcti/users.json keys preserve the FreePBX display-name casing
+	// (e.g. "ThomasSangalli"), while the JWT username from Asterisk/AMI login
+	// is lowercased (e.g. "thomassangalli"). Lookups must succeed regardless.
+	profilesJSON := `{ "1": {"id":"1","name":"Base","macro_permissions": {"phonebook": {"value": true, "permissions": []}}} }`
+	usersJSON := `{ "JonDoe": {"name":"Jon Doe","profile_id":"1"} }`
+
+	profFile := writeTempFile(t, "profiles.json", profilesJSON)
+	usersFile := writeTempFile(t, "users.json", usersJSON)
+
+	if err := InitProfiles(profFile, usersFile); err != nil {
+		t.Fatalf("InitProfiles failed: %v", err)
+	}
+
+	if _, err := GetUserCapabilities("jondoe"); err != nil {
+		t.Fatalf("expected case-insensitive lookup to succeed: %v", err)
+	}
+	if _, err := GetUserCapabilities("JONDOE"); err != nil {
+		t.Fatalf("expected case-insensitive lookup to succeed: %v", err)
+	}
+
+	displayName, _, err := GetUserDisplayInfo("jondoe")
+	if err != nil {
+		t.Fatalf("GetUserDisplayInfo failed: %v", err)
+	}
+	if displayName != "Jon Doe" {
+		t.Fatalf("unexpected display name: got %s want %s", displayName, "Jon Doe")
 	}
 }
 

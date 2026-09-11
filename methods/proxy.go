@@ -138,6 +138,8 @@ func ProxyV1Request(c *gin.Context, path string, allowAnonymous bool) {
 	}
 	defer resp.Body.Close()
 
+	c.Set("proxied", true)
+
 	// Copy response headers
 	for name, values := range resp.Header {
 		for _, value := range values {

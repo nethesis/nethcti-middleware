@@ -8,6 +8,7 @@ package methods
 import (
 	"context"
 	"encoding/csv"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -20,6 +21,11 @@ import (
 	"github.com/nethesis/nethcti-middleware/logs"
 	"github.com/nethesis/nethcti-middleware/store"
 )
+
+// maxImportRows caps how many CSV data rows a single import may contain. It
+// bounds memory use and the duration of the single insert transaction, and
+// stops a malformed/huge upload from hanging the endpoint.
+const maxImportRows = 20000
 
 // PhonebookImportResponse represents the response from a CSV import
 type PhonebookImportResponse struct {
@@ -67,23 +73,40 @@ func parsePhonebookCSV(file io.Reader) ([]*store.PhonebookEntry, *PhonebookImpor
 	}
 
 	// Parse and import records
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
 	var entries []*store.PhonebookEntry
 	var errorMessages []string
 	totalRows := 0
 	skippedRows := 0
+	// lineNumber tracks the physical CSV line (header is line 1) and is bumped on
+	// every read attempt, so error messages stay correct even across consecutive
+	// unreadable rows.
+	lineNumber := 1
 
 	for {
 		record, err := reader.Read()
 		if err == io.EOF {
 			break
 		}
+		lineNumber++
 		if err != nil {
 			logs.Log("[ERROR][PHONEBOOK] CSV read error: " + err.Error())
-			errorMessages = append(errorMessages, fmt.Sprintf("Row %d: %s", totalRows+2, err.Error()))
-			continue
+			errorMessages = append(errorMessages, fmt.Sprintf("Row %d: %s", lineNumber, err.Error()))
+			// A csv parse error (wrong field count, bare/unescaped quote, ...) is
+			// a per-row problem: encoding/csv recovers on the next Read, so skip
+			// this row and keep importing the rest.
+			var parseErr *csv.ParseError
+			if errors.As(err, &parseErr) {
+				skippedRows++
+				continue
+			}
+			// A non-parse error comes from the underlying reader and may repeat
+			// forever on continue, so stop the import instead of hanging.
+			break
+		}
+
+		if totalRows >= maxImportRows {
+			errorMessages = append(errorMessages, fmt.Sprintf("import aborted: exceeded maximum of %d rows", maxImportRows))
+			break
 		}
 
 		totalRows++
@@ -100,19 +123,24 @@ func parsePhonebookCSV(file io.Reader) ([]*store.PhonebookEntry, *PhonebookImpor
 		name := getField("name")
 		if name == "" {
 			skippedRows++
-			errorMessages = append(errorMessages, fmt.Sprintf("Row %d: name is empty", totalRows+1))
+			errorMessages = append(errorMessages, fmt.Sprintf("Row %d: name is empty", lineNumber))
 			continue
 		}
 
-		// Extract type and validate (must be 'private' or 'public', default to 'private')
+		// Extract type and validate (private/public or shared-group syntax, default to private)
 		entryType := getField("type")
 		if entryType == "" {
 			entryType = "private"
 		} else {
-			entryType = strings.ToLower(entryType)
-			if entryType != "private" && entryType != "public" {
+			entryTypeLower := strings.ToLower(entryType)
+			switch {
+			case entryTypeLower == "private" || entryTypeLower == "public":
+				entryType = entryTypeLower
+			case store.IsValidGroupContactType(entryType):
+				entryType = store.EncodeSharedGroupsType(store.GetSharedGroupsFromType(entryType))
+			default:
 				skippedRows++
-				errorMessages = append(errorMessages, fmt.Sprintf("Row %d: invalid type '%s' (must be 'private' or 'public')", totalRows+1, getField("type")))
+				errorMessages = append(errorMessages, fmt.Sprintf("Row %d: invalid type '%s' (must be 'private', 'public', or 'group:<group1,group2>')", lineNumber, getField("type")))
 				continue
 			}
 		}
@@ -145,12 +173,20 @@ func parsePhonebookCSV(file io.Reader) ([]*store.PhonebookEntry, *PhonebookImpor
 			URL:            getField("url"),
 			Extension:      getField("extension"),
 			SpeedDialNum:   getField("speeddial_num"),
+			FirstName:      getField("firstname"),
+			LastName:       getField("lastname"),
+			Job:            getField("job"),
+			Facebook:       getField("facebook"),
+			Instagram:      getField("instagram"),
+			LinkedIn:       getField("linkedin"),
+			WorkPhone2:     getField("workphone2"),
+			CellPhone2:     getField("cellphone2"),
+			OtherPhone:     getField("otherphone"),
+			OtherEmail:     getField("otheremail"),
 		}
 
 		entries = append(entries, entry)
 	}
-
-	_ = ctx // context used above, keep reference
 
 	response := &PhonebookImportResponse{
 		Message:       "phonebook import completed",
@@ -162,6 +198,17 @@ func parsePhonebookCSV(file io.Reader) ([]*store.PhonebookEntry, *PhonebookImpor
 	}
 
 	return entries, response, nil
+}
+
+// entriesContainPublic reports whether any parsed entry is a public contact, i.e. one
+// that must be republished to the centralized phonebook for call-time name resolution.
+func entriesContainPublic(entries []*store.PhonebookEntry) bool {
+	for _, entry := range entries {
+		if strings.EqualFold(strings.TrimSpace(entry.Type), "public") {
+			return true
+		}
+	}
+	return false
 }
 
 // AdminImportPhonebookCSV handles CSV phonebook imports for admin users.
@@ -214,6 +261,10 @@ func AdminImportPhonebookCSV(c *gin.Context) {
 
 	response.ImportedRows = successful
 	response.FailedRows = failed
+
+	if successful > 0 && entriesContainPublic(entries) {
+		scheduleSyncCentralizedPublicContactsFunc()
+	}
 
 	// Log admin action with user profile info for audit trail
 	logs.Log(fmt.Sprintf("[INFO][PHONEBOOK] Admin imported %d contacts for user %s (total_rows: %d, failed: %d, skipped: %d)",
@@ -272,6 +323,10 @@ func ImportPhonebookCSV(c *gin.Context) {
 
 	response.ImportedRows = successful
 	response.FailedRows = failed
+
+	if successful > 0 && entriesContainPublic(entries) {
+		scheduleSyncCentralizedPublicContactsFunc()
+	}
 
 	// Log user action for audit trail
 	logs.Log(fmt.Sprintf("[INFO][PHONEBOOK] User %s imported %d contacts (total_rows: %d, failed: %d, skipped: %d)",

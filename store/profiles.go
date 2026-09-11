@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/nethesis/nethcti-middleware/logs"
@@ -139,7 +140,7 @@ func GetUserCapabilities(username string) (map[string]bool, error) {
 	profileMutex.RLock()
 	defer profileMutex.RUnlock()
 
-	user, ok := users[username]
+	user, ok := users[strings.ToLower(username)]
 	if !ok {
 		return nil, fmt.Errorf("user %s not found", username)
 	}
@@ -157,7 +158,7 @@ func GetUserProfile(username string) (*ProfileData, error) {
 	profileMutex.RLock()
 	defer profileMutex.RUnlock()
 
-	user, ok := users[username]
+	user, ok := users[strings.ToLower(username)]
 	if !ok {
 		return nil, fmt.Errorf("user %s not found", username)
 	}
@@ -175,7 +176,7 @@ func GetUserDisplayInfo(username string) (string, []string, error) {
 	profileMutex.RLock()
 	defer profileMutex.RUnlock()
 
-	user, ok := users[username]
+	user, ok := users[strings.ToLower(username)]
 	if !ok {
 		return "", nil, fmt.Errorf("user %s not found", username)
 	}
@@ -250,8 +251,12 @@ func ReloadProfiles() (*ReloadStats, error) {
 func loadProfiles(path string) (map[string]*ProfileData, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		// If the provided profiles file cannot be read, fall back to the embedded default
-		logs.Log(fmt.Sprintf("[WARNING][AUTH] Could not read profiles file %s: %v; using embedded defaults", path, err))
+		// If the provided profiles file cannot be read, fall back to the embedded
+		// default. This is a degraded state: the embedded defaults only contain the
+		// stock profiles (ids 1/2/3), so any user on a custom profile will be dropped
+		// by loadUsers and lose all capability-gated features. Log loudly at ERROR so
+		// the real cause (e.g. wrong ownership/permissions on the file) is visible.
+		logs.Log(fmt.Sprintf("[ERROR][AUTH] Could not read profiles file %s: %v; falling back to embedded defaults (custom profiles will be unavailable)", path, err))
 		data = defaultProfilesJSON
 	}
 
@@ -304,12 +309,18 @@ func loadUsers(path string, profilesMap map[string]*ProfileData) (map[string]*Us
 
 	result := make(map[string]*UserProfile)
 	for username, ru := range raw {
+		// A single malformed/unresolvable user must not wipe out every other
+		// user: skip it with a loud warning and keep loading the valid ones.
+		// Otherwise one bad record blacks out all capability-gated features
+		// (e.g. the phonebook) for the entire instance.
 		if ru.ProfileID == "" {
-			return nil, fmt.Errorf("user %s missing profile reference", username)
+			logs.Log(fmt.Sprintf("[WARNING][AUTH] Skipping user %s: missing profile reference", username))
+			continue
 		}
 
 		if _, ok := profilesMap[ru.ProfileID]; !ok {
-			return nil, fmt.Errorf("user %s references unknown profile %s", username, ru.ProfileID)
+			logs.Log(fmt.Sprintf("[WARNING][AUTH] Skipping user %s: references unknown profile %s", username, ru.ProfileID))
+			continue
 		}
 
 		phoneSet := make(map[string]struct{})
@@ -326,7 +337,12 @@ func loadUsers(path string, profilesMap map[string]*ProfileData) (map[string]*Us
 		}
 		sort.Strings(phoneNumbers)
 
-		result[username] = &UserProfile{
+		// Login/JWT usernames are matched case-insensitively (Asterisk/AMI auth
+		// lowercases the login, while /etc/nethcti/users.json keys keep the
+		// original display-name casing from FreePBX). Index by the lowercased
+		// form so lookups from GetUserCapabilities/GetUserProfile/GetUserDisplayInfo
+		// succeed regardless of case, while preserving the original casing for display.
+		result[strings.ToLower(username)] = &UserProfile{
 			Username:  username,
 			Name:      ru.Name,
 			ProfileID: ru.ProfileID,
