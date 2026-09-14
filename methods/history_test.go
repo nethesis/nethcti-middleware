@@ -806,3 +806,30 @@ func TestIsExternalNumber_FallsBackToDigitCount(t *testing.T) {
 		t.Fatalf("an empty number is not a party at all")
 	}
 }
+
+func TestMergeDuplicateLegs(t *testing.T) {
+	// cti-server keeps the destination channel apart so a ring group's members
+	// survive, which also splits a leg Asterisk recorded on two channels.
+	rows := []map[string]interface{}{
+		// One leg, two rows: the Local channel and the device's own.
+		{"uniqueid": "u1", "linkedid": "L1", "dst": "202", "disposition": "ANSWERED", "duration": float64(18), "billsec": float64(0), "lastapp": "", "dstchannel": "Local/203@from-internal-1;1"},
+		{"uniqueid": "u1", "linkedid": "L1", "dst": "202", "disposition": "ANSWERED", "duration": float64(13), "billsec": float64(11), "lastapp": "Dial", "dstchannel": "PJSIP/202-1"},
+		// Two ring-group members: same leg, same outcome, different member.
+		{"uniqueid": "u2", "linkedid": "L1", "dst": "201", "disposition": "NO ANSWER", "duration": float64(4), "dstchannel": "PJSIP/201-1"},
+		{"uniqueid": "u2", "linkedid": "L1", "dst": "203", "disposition": "NO ANSWER", "duration": float64(4), "dstchannel": "PJSIP/203-1"},
+	}
+	got := mergeDuplicateLegs(rows)
+	if len(got) != 3 {
+		t.Fatalf("expected the duplicate pair to merge and both members to survive, got %d rows", len(got))
+	}
+	if got[0]["duration"] != float64(18) {
+		t.Fatalf("expected the longer row to win, got %v", got[0]["duration"])
+	}
+	// Nothing the dropped row carried may be lost.
+	if got[0]["billsec"] != float64(11) || got[0]["lastapp"] != "Dial" {
+		t.Fatalf("expected billsec and lastapp to be kept, got billsec=%v lastapp=%v", got[0]["billsec"], got[0]["lastapp"])
+	}
+	if got[1]["dst"] != "201" || got[2]["dst"] != "203" {
+		t.Fatalf("expected both ring-group members, got %v and %v", got[1]["dst"], got[2]["dst"])
+	}
+}

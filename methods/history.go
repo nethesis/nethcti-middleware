@@ -112,6 +112,9 @@ func GetFilteredHistory(c *gin.Context) {
 	// Queue-entry legs carry the queue number as dst; inject the queue NAME so an
 	// unanswered queue call shows it without relying on the frontend queue store.
 	enrichQueueRows(visibleRows, getQueueNames())
+	// After the enrichment, because it is what tells one ring-group member from
+	// another: their rows all arrive with the group as destination.
+	visibleRows = mergeDuplicateLegs(visibleRows)
 	collapsedRows := collapseHistoryRowsByLinkedid(visibleRows)
 	// Ring-group rows name their member leg; put the GROUP back on a parent that
 	// nobody answered, now that collapsing has decided which leg represents the call.
@@ -1016,4 +1019,73 @@ func applyPersonalDirectionToParent(parent map[string]interface{}, legs []map[st
 			return
 		}
 	}
+}
+
+// mergeDuplicateLegs collapses the rows that describe the SAME leg into one.
+//
+// cti-server is asked to keep the destination channel apart when the caller wants
+// a call's legs (see historyGroupBy there), because a ring group dials all its
+// members from one channel and its legs would otherwise be aggregated into a
+// single row, losing every member but one. The cost is that a leg Asterisk
+// recorded on two channels — typically once on the Local channel and once on the
+// device's own — arrives as two rows naming the same destination.
+//
+// Rows are keyed by the leg (uniqueid), its outcome and the party it reached, so
+// the members of a ring group stay apart while those pairs merge back. The
+// longest row wins, which is the duration cti-server used to report for the
+// merged group.
+func mergeDuplicateLegs(rows []map[string]interface{}) []map[string]interface{} {
+	merged := make([]map[string]interface{}, 0, len(rows))
+	indexByKey := make(map[string]int, len(rows))
+	for _, row := range rows {
+		key := getHistoryRowString(row, "uniqueid") + "\x00" +
+			getHistoryRowString(row, "linkedid") + "\x00" +
+			getHistoryRowString(row, "disposition") + "\x00" +
+			getHistoryRowString(row, "dst")
+		existing, seen := indexByKey[key]
+		if !seen {
+			indexByKey[key] = len(merged)
+			merged = append(merged, row)
+			continue
+		}
+		if historyRowNumber(row, "duration") > historyRowNumber(merged[existing], "duration") {
+			// Keep the longer row, but never lose a billsec or an application name
+			// the shorter one carried.
+			row = keepRicherLeg(row, merged[existing])
+			merged[existing] = row
+			continue
+		}
+		merged[existing] = keepRicherLeg(merged[existing], row)
+	}
+	return merged
+}
+
+// keepRicherLeg fills the gaps of the winning row from the one being dropped.
+func keepRicherLeg(winner, loser map[string]interface{}) map[string]interface{} {
+	if historyRowNumber(loser, "billsec") > historyRowNumber(winner, "billsec") {
+		winner["billsec"] = loser["billsec"]
+	}
+	for _, field := range []string{"lastapp", "dstchannel", "channel", "dst_cnam", "dst_ccompany", "cnam"} {
+		if getHistoryRowString(winner, field) == "" && getHistoryRowString(loser, field) != "" {
+			winner[field] = loser[field]
+		}
+	}
+	return winner
+}
+
+// historyRowNumber reads a numeric field regardless of the JSON type it arrived as.
+func historyRowNumber(row map[string]interface{}, field string) float64 {
+	switch value := row[field].(type) {
+	case float64:
+		return value
+	case int:
+		return float64(value)
+	case int64:
+		return float64(value)
+	case json.Number:
+		if parsed, err := value.Float64(); err == nil {
+			return parsed
+		}
+	}
+	return 0
 }
