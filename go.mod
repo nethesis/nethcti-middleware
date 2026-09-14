@@ -7,19 +7,19 @@ require (
 	github.com/dgryski/dgoogauth v0.0.0-20190221195224-5a805980a5f3
 	github.com/eclipse/paho.mqtt.golang v1.5.1
 	github.com/fatih/structs v1.1.0
-	github.com/gin-contrib/cors v1.7.7
-	github.com/gin-contrib/gzip v1.2.6
+	github.com/gin-contrib/cors v1.7.8
+	github.com/gin-contrib/gzip v1.2.7
 	github.com/gin-gonic/gin v1.12.0
-	github.com/go-sql-driver/mysql v1.10.0
+	github.com/go-sql-driver/mysql v1.10.1
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
-	github.com/jackc/pgx/v5 v5.10.0
+	github.com/jackc/pgx/v5 v5.11.0
 	github.com/nqd/flat v0.2.0
 	github.com/pquerna/otp v1.5.0
 	github.com/robfig/cron/v3 v3.0.1
-	github.com/stretchr/testify v1.11.1
-	golang.org/x/time v0.15.0
+	github.com/stretchr/testify v1.12.1
+	golang.org/x/time v0.16.0
 )
 
 require (
@@ -56,6 +56,7 @@ require (
 	github.com/ugorji/go/codec v1.3.1 // indirect
 	github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78 // indirect
 	go.mongodb.org/mongo-driver/v2 v2.8.0 // indirect
+	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/arch v0.29.0 // indirect
 	golang.org/x/crypto v0.55.0 // indirect
 	golang.org/x/net v0.57.0 // indirect
