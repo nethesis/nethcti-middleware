@@ -10,8 +10,12 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-func TestBroadcastSummaryMessageSendsSatelliteSummaryEvent(t *testing.T) {
-	serverConnCh := make(chan *websocket.Conn, 1)
+// newWSTestServer starts a server that upgrades every request and hands the
+// server side of each connection over the returned channel.
+func newWSTestServer(t *testing.T) (*httptest.Server, <-chan *websocket.Conn) {
+	t.Helper()
+
+	serverConnCh := make(chan *websocket.Conn, 2)
 	upgrader := websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool { return true },
 	}
@@ -24,25 +28,55 @@ func TestBroadcastSummaryMessageSendsSatelliteSummaryEvent(t *testing.T) {
 		}
 		serverConnCh <- conn
 	}))
-	defer server.Close()
+	t.Cleanup(server.Close)
 
-	clientConn, _, err := websocket.DefaultDialer.Dial("ws"+server.URL[len("http"):], nil)
+	return server, serverConnCh
+}
+
+// dialWS opens one client connection and returns it paired with the server
+// side of that same connection.
+//
+// The pairing is done one connection at a time on purpose. Dialing both
+// clients first and only then reading two values off the channel assumes the
+// server handles the two upgrades in the order they were dialed, which it
+// does not guarantee: when the second upgrade completes first the two server
+// connections are swapped, every user is registered under the other user's
+// name, and the test fails on a read deadline.
+func dialWS(t *testing.T, server *httptest.Server, serverConnCh <-chan *websocket.Conn) (client, serverSide *websocket.Conn) {
+	t.Helper()
+
+	client, _, err := websocket.DefaultDialer.Dial("ws"+server.URL[len("http"):], nil)
 	if err != nil {
 		t.Fatalf("failed to dial websocket: %v", err)
 	}
-	defer clientConn.Close()
+	t.Cleanup(func() { client.Close() })
 
-	serverConn := <-serverConnCh
-	defer serverConn.Close()
+	select {
+	case serverSide = <-serverConnCh:
+		t.Cleanup(func() { serverSide.Close() })
+		return client, serverSide
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for the server side of the websocket")
+		return nil, nil
+	}
+}
+
+// useTestConnManager swaps the package level manager for an empty one.
+func useTestConnManager(t *testing.T) {
+	t.Helper()
 
 	originalManager := connManager
 	connManager = &ConnectionManager{
 		connections: make(map[*websocket.Conn]*UserConnection),
 	}
-	defer func() {
-		connManager = originalManager
-	}()
+	t.Cleanup(func() { connManager = originalManager })
+}
 
+func TestBroadcastSummaryMessageSendsSatelliteSummaryEvent(t *testing.T) {
+	server, serverConnCh := newWSTestServer(t)
+	clientConn, serverConn := dialWS(t, server, serverConnCh)
+
+	useTestConnManager(t)
 	connManager.AddConnection(serverConn, &UserConnection{})
 
 	BroadcastSummaryMessage(map[string]string{
@@ -62,46 +96,11 @@ func TestBroadcastSummaryMessageSendsSatelliteSummaryEvent(t *testing.T) {
 }
 
 func TestBroadcastSummaryMessageTargetsOnlyMatchingUser(t *testing.T) {
-	serverConnCh := make(chan *websocket.Conn, 2)
-	upgrader := websocket.Upgrader{
-		CheckOrigin: func(r *http.Request) bool { return true },
-	}
+	server, serverConnCh := newWSTestServer(t)
+	clientConnAlice, serverConnAlice := dialWS(t, server, serverConnCh)
+	clientConnBob, serverConnBob := dialWS(t, server, serverConnCh)
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		conn, err := upgrader.Upgrade(w, r, nil)
-		if err != nil {
-			t.Errorf("failed to upgrade websocket: %v", err)
-			return
-		}
-		serverConnCh <- conn
-	}))
-	defer server.Close()
-
-	clientConnAlice, _, err := websocket.DefaultDialer.Dial("ws"+server.URL[len("http"):], nil)
-	if err != nil {
-		t.Fatalf("failed to dial alice websocket: %v", err)
-	}
-	defer clientConnAlice.Close()
-
-	clientConnBob, _, err := websocket.DefaultDialer.Dial("ws"+server.URL[len("http"):], nil)
-	if err != nil {
-		t.Fatalf("failed to dial bob websocket: %v", err)
-	}
-	defer clientConnBob.Close()
-
-	serverConnAlice := <-serverConnCh
-	defer serverConnAlice.Close()
-	serverConnBob := <-serverConnCh
-	defer serverConnBob.Close()
-
-	originalManager := connManager
-	connManager = &ConnectionManager{
-		connections: make(map[*websocket.Conn]*UserConnection),
-	}
-	defer func() {
-		connManager = originalManager
-	}()
-
+	useTestConnManager(t)
 	connManager.AddConnection(serverConnAlice, &UserConnection{Username: "alice"})
 	connManager.AddConnection(serverConnBob, &UserConnection{Username: "bob"})
 
