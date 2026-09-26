@@ -60,6 +60,22 @@ type Configuration struct {
 	UsersConfigPath    string `json:"users_config_path"`
 	TrustedProxy       string `json:"trusted_proxy"`
 
+	// Trusted SSO login: when set, a login carrying the pre-authenticated
+	// username in SsoUserHeader is accepted without a password (see middleware).
+	SsoTrustedSecret string `json:"sso_trusted_secret"`
+	// Separate key deriving the legacy token (HMAC), matching the V1 server's
+	// sso_token_key; falls back to SsoTrustedSecret when empty.
+	SsoTokenKey   string `json:"sso_token_key"`
+	SsoUserHeader string `json:"sso_user_header"`
+	// Secret injected by Traefik on the mint route AFTER forwardAuth: proves the
+	// request came through the proxy (not a direct local call). When set, the SSO
+	// header is honored only if SsoProxyHeader carries this value.
+	SsoProxySecret string `json:"sso_proxy_secret"`
+	SsoProxyHeader string `json:"sso_proxy_header"`
+
+	// JWT lifetime in hours (default 336 = 14 days)
+	JwtTimeoutHours int `json:"jwt_timeout_hours"`
+
 	// Generous global per-IP rate limit applied to every API route as a coarse
 	// safety net; 0 disables it
 	GlobalRateLimitAverage int `json:"global_rate_limit_average"`
@@ -328,6 +344,32 @@ func Init() {
 		Config.TrustedProxy = os.Getenv("NETHVOICE_MIDDLEWARE_TRUSTED_PROXY")
 	} else {
 		Config.TrustedProxy = "127.0.0.1"
+	}
+
+	Config.SsoTrustedSecret = os.Getenv("NETHVOICE_MIDDLEWARE_SSO_TRUSTED_SECRET")
+	Config.SsoTokenKey = os.Getenv("NETHVOICE_MIDDLEWARE_SSO_TOKEN_KEY")
+	if Config.SsoTokenKey == "" {
+		// fall back to the mint secret when a separate key was not provisioned
+		Config.SsoTokenKey = Config.SsoTrustedSecret
+	}
+	Config.SsoUserHeader = os.Getenv("NETHVOICE_MIDDLEWARE_SSO_USER_HEADER")
+	if Config.SsoUserHeader == "" {
+		Config.SsoUserHeader = "Remote-User"
+	}
+	Config.SsoProxySecret = os.Getenv("NETHVOICE_MIDDLEWARE_SSO_PROXY_SECRET")
+	Config.SsoProxyHeader = os.Getenv("NETHVOICE_MIDDLEWARE_SSO_PROXY_HEADER")
+	if Config.SsoProxyHeader == "" {
+		Config.SsoProxyHeader = "X-SSO-Proxy-Secret"
+	}
+	if Config.SsoTrustedSecret != "" {
+		logs.Log("[INFO][ENV] trusted SSO login is enabled (user header: " + Config.SsoUserHeader + ")")
+	}
+
+	// JWT lifetime (hours); default 336 = 14 days
+	if v, err := strconv.Atoi(os.Getenv("NETHVOICE_MIDDLEWARE_JWT_TIMEOUT_HOURS")); err == nil && v > 0 {
+		Config.JwtTimeoutHours = v
+	} else {
+		Config.JwtTimeoutHours = 336
 	}
 
 	// Global per-IP rate limit (0 disables it)
