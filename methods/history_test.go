@@ -966,3 +966,21 @@ func withTrunks(t *testing.T, trunks ...string) {
 		trunkCacheMu.Unlock()
 	})
 }
+
+func TestBuildLegacyHistoryPath_ForwardsTheQueueFilter(t *testing.T) {
+	for _, callType := range []string{"switchboard", "group", "user"} {
+		req := &historyFilterRequest{CallType: callType, Username: "u", From: "20260901", To: "20260930", Sort: "time desc", Queue: "401"}
+		_, values, err := buildLegacyHistoryPath(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if values.Get("queue") != "401" {
+			t.Fatalf("%s: expected queue=401, got %q", callType, values.Get("queue"))
+		}
+		// No queue selected: every call, so nothing is sent.
+		req.Queue = ""
+		if _, values, _ = buildLegacyHistoryPath(req); values.Has("queue") {
+			t.Fatalf("%s: expected no queue parameter, got %q", callType, values.Get("queue"))
+		}
+	}
+}

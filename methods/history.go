@@ -49,6 +49,7 @@ type historyFilterRequest struct {
 	PageSize    int
 	Artifact    string
 	AudioTest   string
+	Queue       string
 	LegacyToken string
 }
 
@@ -175,6 +176,7 @@ func parseHistoryFilterRequest(c *gin.Context) (*historyFilterRequest, error) {
 		PageSize:    pageSize,
 		Artifact:    artifact,
 		AudioTest:   strings.TrimSpace(c.Query("audioTest")),
+		Queue:       strings.TrimSpace(c.Query("queue")),
 		LegacyToken: userSession.NethCTIToken,
 	}, nil
 }
@@ -261,6 +263,10 @@ func buildLegacyHistoryPath(req *historyFilterRequest) (string, url.Values, erro
 	// consumer of that API — NethLink, the mobile app, the CTI drawers — keeps
 	// receiving the deduplicated rows it expects.
 	queryValues.Set("expandLegs", "true")
+	// Only calls that went through this queue; empty means every call.
+	if req.Queue != "" {
+		queryValues.Set("queue", req.Queue)
+	}
 
 	var path string
 	switch req.CallType {
