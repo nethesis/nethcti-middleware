@@ -16,11 +16,11 @@ import (
 	"github.com/nethesis/nethcti-middleware/logs"
 )
 
-// Telling an extension from a public number decides which side of a history row
-// each party goes on (see applyFinalPartiesToParent), so it is read from the PBX
-// configuration rather than guessed from how many digits a number has: a site
-// with six-digit extensions would have every extension classified as external,
-// turning the summary of every transferred call inside out.
+// The configured extensions tell, positively, that a number is a colleague: a
+// caller id a trunk presents on a call placed outside is not one of them (see
+// applyFinalPartiesToParent). The list is never used the other way round —
+// queues, ring groups and trunk caller ids are not extensions either, yet none of
+// them is an outside party.
 //
 // Same source and caching as the queue and ring-group names (queues.go,
 // ringgroups.go): the FreePBX users table on the CDR database server.
@@ -34,8 +34,7 @@ var (
 
 // getExtensions returns the cached set of configured extensions, refreshing it
 // from the database at most once per TTL. On a load failure it keeps serving the
-// previous cache (or an empty set), which makes isExternalNumber fall back to the
-// digit-count rule rather than misclassify every party.
+// previous cache (or an empty set).
 func getExtensions() map[string]struct{} {
 	extensionCacheMu.Lock()
 	defer extensionCacheMu.Unlock()

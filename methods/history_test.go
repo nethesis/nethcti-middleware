@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	jwtv5 "github.com/golang-jwt/jwt/v5"
@@ -662,6 +663,7 @@ func historyLeg(uniqueID, src, cnum, cnam, dst, dstCnam, disposition, lastapp, c
 }
 
 func TestCollapseHistoryRowsByLinkedid_SummarisesTheCallWhicheverWayItWent(t *testing.T) {
+	withExtensions(t, "201", "202", "203")
 	cases := []struct {
 		name     string
 		legs     []map[string]interface{}
@@ -734,13 +736,32 @@ func TestCollapseHistoryRowsByLinkedid_SummarisesTheCallWhicheverWayItWent(t *te
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			// As in the CDR, a call's linkedid is the uniqueid of its first leg.
+			first := tc.legs[0]["uniqueid"].(string)
+			for _, leg := range tc.legs {
+				if id := leg["uniqueid"].(string); id < first {
+					first = id
+				}
+			}
+			for _, leg := range tc.legs {
+				leg["linkedid"] = first
+			}
 			got := collapseHistoryRowsByLinkedid(tc.legs)
 			if len(got) != 1 {
 				t.Fatalf("expected 1 row, got %d", len(got))
 			}
 			row := got[0]
-			if row["cnum"] != tc.wantFrom || row["src"] != tc.wantFrom {
+			// The caller as the switchboard shows it: cnum, falling back to src.
+			shown := row["cnum"]
+			if shown == "" || shown == nil {
+				shown = row["src"]
+			}
+			if shown != tc.wantFrom {
 				t.Fatalf("caller: got cnum=%v src=%v, want %v", row["cnum"], row["src"], tc.wantFrom)
+			}
+			// A summary composed from several legs names the caller in both fields.
+			if row["interactionsCount"] != 1 && row["src"] != row["cnum"] {
+				t.Fatalf("summary: src=%v and cnum=%v differ", row["src"], row["cnum"])
 			}
 			if row["dst"] != tc.wantTo {
 				t.Fatalf("destination: got %v, want %v", row["dst"], tc.wantTo)
@@ -793,20 +814,6 @@ func withDirection(leg map[string]interface{}, direction string) map[string]inte
 	return leg
 }
 
-func TestIsExternalNumber_FallsBackToDigitCount(t *testing.T) {
-	// With no database behind it the extension list is empty, so the digit-count
-	// rule decides — the behaviour a PBX whose users table cannot be read gets.
-	if isExternalNumber("203") {
-		t.Fatalf("a short number must not be treated as external")
-	}
-	if !isExternalNumber("3391818709") {
-		t.Fatalf("a public number must be treated as external")
-	}
-	if isExternalNumber("") {
-		t.Fatalf("an empty number is not a party at all")
-	}
-}
-
 func TestMergeDuplicateLegs(t *testing.T) {
 	// cti-server keeps the destination channel apart so a ring group's members
 	// survive, which also splits a leg Asterisk recorded on two channels.
@@ -832,4 +839,130 @@ func TestMergeDuplicateLegs(t *testing.T) {
 	if got[1]["dst"] != "201" || got[2]["dst"] != "203" {
 		t.Fatalf("expected both ring-group members, got %v and %v", got[1]["dst"], got[2]["dst"])
 	}
+}
+
+// withExtensions loads the configured extensions for the duration of a test, as
+// the PBX would provide them.
+func withExtensions(t *testing.T, extensions ...string) {
+	t.Helper()
+	extensionCacheMu.Lock()
+	previous, previousAt := extensionCache, extensionCacheAt
+	extensionCache = map[string]struct{}{}
+	for _, e := range extensions {
+		extensionCache[e] = struct{}{}
+	}
+	extensionCacheAt = time.Now()
+	extensionCacheMu.Unlock()
+	t.Cleanup(func() {
+		extensionCacheMu.Lock()
+		extensionCache, extensionCacheAt = previous, previousAt
+		extensionCacheMu.Unlock()
+	})
+}
+
+func TestCollapseHistoryRowsByLinkedid_ReadsPartiesFromTheLegsChannels(t *testing.T) {
+	// Rows exactly as cti-server returned them on a test PBX. Every case runs with
+	// and without the extension list: without it, colleagues must be told by their
+	// device channels.
+	withTrunks(t, "OpenSolution Sip")
+	cases := []struct {
+		name, from, to, callType string
+		legs                     []map[string]interface{}
+	}{
+		{
+			name: "unanswered queue call reads caller -> queue",
+			from: "3400069069", to: "401", callType: "in",
+			legs: []map[string]interface{}{
+				{"uniqueid": "1790603366.564", "linkedid": "1790603366.564", "channel": "PJSIP/OpenSolution Sip-00000012", "dstchannel": "Local/203@from-queue-0000000e;1", "src": "3400069069", "cnum": "3400069069", "cnam": "3400069069", "dst": "401", "dst_cnam": "", "disposition": "NO ANSWER", "lastapp": "Queue", "duration": float64(0), "billsec": float64(0), "type": "in"},
+				{"uniqueid": "1790603366.564", "linkedid": "1790603366.564", "channel": "PJSIP/OpenSolution Sip-00000012", "dstchannel": "Local/202@from-queue-0000000d;1", "src": "3400069069", "cnum": "3400069069", "cnam": "3400069069", "dst": "401", "dst_cnam": "", "disposition": "NO ANSWER", "lastapp": "Queue", "duration": float64(0), "billsec": float64(0), "type": "in"},
+				{"uniqueid": "1790603366.564", "linkedid": "1790603366.564", "channel": "PJSIP/OpenSolution Sip-00000012", "dstchannel": "Local/201@from-queue-0000000c;1", "src": "3400069069", "cnum": "3400069069", "cnam": "3400069069", "dst": "401", "dst_cnam": "", "disposition": "NO ANSWER", "lastapp": "Queue", "duration": float64(0), "billsec": float64(0), "type": "in"},
+				{"uniqueid": "1790603366.564", "linkedid": "1790603366.564", "channel": "PJSIP/OpenSolution Sip-00000012", "dstchannel": "Local/203@from-queue-0000000b;1", "src": "3400069069", "cnum": "3400069069", "cnam": "3400069069", "dst": "401", "dst_cnam": "", "disposition": "NO ANSWER", "lastapp": "Queue", "duration": float64(15), "billsec": float64(15), "type": "in"},
+				{"uniqueid": "1790603366.564", "linkedid": "1790603366.564", "channel": "PJSIP/OpenSolution Sip-00000012", "dstchannel": "Local/202@from-queue-0000000a;1", "src": "3400069069", "cnum": "3400069069", "cnam": "3400069069", "dst": "401", "dst_cnam": "", "disposition": "NO ANSWER", "lastapp": "Queue", "duration": float64(15), "billsec": float64(15), "type": "in"},
+				{"uniqueid": "1790603367.577", "linkedid": "1790603366.564", "channel": "Local/203@from-queue-0000000b;2", "dstchannel": "PJSIP/203-00000015", "src": "3400069069", "cnum": "3400069069", "cnam": "3400069069", "dst": "203", "dst_cnam": "Cristian Manoni", "disposition": "NO ANSWER", "lastapp": "Dial", "duration": float64(15), "billsec": float64(0), "type": "internal"},
+				{"uniqueid": "1790603367.571", "linkedid": "1790603366.564", "channel": "Local/201@from-queue-00000009;2", "dstchannel": "PJSIP/201-00000013", "src": "3400069069", "cnum": "3400069069", "cnam": "3400069069", "dst": "201", "dst_cnam": "Andrea Marchionni", "disposition": "NO ANSWER", "lastapp": "Dial", "duration": float64(15), "billsec": float64(0), "type": "internal"},
+				{"uniqueid": "1790603367.575", "linkedid": "1790603366.564", "channel": "Local/202@from-queue-0000000a;2", "dstchannel": "PJSIP/202-00000014", "src": "3400069069", "cnum": "3400069069", "cnam": "3400069069", "dst": "202", "dst_cnam": "Antonio Colapietro", "disposition": "NO ANSWER", "lastapp": "Dial", "duration": float64(15), "billsec": float64(0), "type": "internal"},
+				{"uniqueid": "1790603366.564", "linkedid": "1790603366.564", "channel": "PJSIP/OpenSolution Sip-00000012", "dstchannel": "Local/201@from-queue-00000009;1", "src": "3400069069", "cnum": "3400069069", "cnam": "3400069069", "dst": "401", "dst_cnam": "", "disposition": "NO ANSWER", "lastapp": "Queue", "duration": float64(16), "billsec": float64(16), "type": "in"},
+			},
+		},
+		{
+			name: "outgoing call whose trunk moved onto a plumbing leg",
+			from: "203", to: "3391818709", callType: "out",
+			legs: []map[string]interface{}{
+				{"uniqueid": "1787914675.1537", "linkedid": "1787914667.1511", "channel": "Local/203@from-internal-00000022;1", "dstchannel": "PJSIP/OpenSolution Sip-0000002f", "src": "203", "cnum": "", "cnam": "", "dst": "203", "dst_cnam": "", "disposition": "ANSWERED", "lastapp": "", "duration": float64(8), "billsec": float64(8), "type": "out"},
+				{"uniqueid": "1787914675.1539", "linkedid": "1787914667.1511", "channel": "Local/203@from-internal-00000022;2", "dstchannel": "PJSIP/203-00000030", "src": "3391818709", "cnum": "07211748905", "cnam": "", "dst": "203", "dst_cnam": "Cristian Manoni", "disposition": "ANSWERED", "lastapp": "Dial", "duration": float64(16), "billsec": float64(11), "type": "internal"},
+				{"uniqueid": "1787914667.1511", "linkedid": "1787914667.1511", "channel": "PJSIP/201-0000002e", "dstchannel": "Local/203@from-internal-00000022;1", "src": "07211748905", "cnum": "201", "cnam": "Andrea Marchionni", "dst": "3391818709", "dst_cnam": "", "disposition": "ANSWERED", "lastapp": "Dial", "duration": float64(7), "billsec": float64(7), "type": "internal"},
+				{"uniqueid": "1787914667.1511", "linkedid": "1787914667.1511", "channel": "PJSIP/201-0000002e", "dstchannel": "PJSIP/OpenSolution Sip-0000002f", "src": "07211748905", "cnum": "201", "cnam": "Andrea Marchionni", "dst": "3391818709", "dst_cnam": "", "disposition": "ANSWERED", "lastapp": "Dial", "duration": float64(8), "billsec": float64(3), "type": "out"},
+			},
+		},
+		{
+			name: "internal call transferred to a mobile, colleague told by its channel",
+			from: "203", to: "3400069069", callType: "out",
+			legs: []map[string]interface{}{
+				{"uniqueid": "1788164039.1818", "linkedid": "1788164022.1792", "channel": "Local/3400069069@from-internal-00000027;1", "dstchannel": "", "src": "3400069069", "cnum": "", "cnam": "", "dst": "3400069069", "dst_cnam": "", "disposition": "ANSWERED", "lastapp": "", "duration": float64(7), "billsec": float64(7), "type": "internal"},
+				{"uniqueid": "1788164039.1820", "linkedid": "1788164022.1792", "channel": "Local/3400069069@from-internal-00000027;2", "dstchannel": "PJSIP/OpenSolution Sip-00000037", "src": "203", "cnum": "202", "cnam": "Antonio Colapietro", "dst": "3400069069", "dst_cnam": "", "disposition": "ANSWERED", "lastapp": "Dial", "duration": float64(18), "billsec": float64(11), "type": "out"},
+				{"uniqueid": "1788164022.1792", "linkedid": "1788164022.1792", "channel": "PJSIP/203-00000035", "dstchannel": "Local/3400069069@from-internal-00000027;1", "src": "203", "cnum": "203", "cnam": "Cristian Manoni", "dst": "202", "dst_cnam": "Antonio Colapietro", "disposition": "ANSWERED", "lastapp": "Dial", "duration": float64(18), "billsec": float64(18), "type": "internal"},
+				{"uniqueid": "1788164022.1796", "linkedid": "1788164022.1792", "channel": "PJSIP/202-00000036", "dstchannel": "Local/3400069069@from-internal-00000027;1", "src": "202", "cnum": "", "cnam": "", "dst": "", "dst_cnam": "", "disposition": "ANSWERED", "lastapp": "Return", "duration": float64(10), "billsec": float64(10), "type": "internal"},
+				{"uniqueid": "1788164022.1792", "linkedid": "1788164022.1792", "channel": "PJSIP/203-00000035", "dstchannel": "PJSIP/202-00000036", "src": "203", "cnum": "203", "cnam": "Cristian Manoni", "dst": "202", "dst_cnam": "Antonio Colapietro", "disposition": "ANSWERED", "lastapp": "Dial", "duration": float64(17), "billsec": float64(14), "type": "internal"},
+			},
+		},
+		{
+			name: "call forwarded outside keeps the parties it recorded",
+			from: "201", to: "203", callType: "out",
+			legs: []map[string]interface{}{
+				{"uniqueid": "1790603322.512", "linkedid": "1790603322.512", "channel": "PJSIP/201-00000010", "dstchannel": "PJSIP/OpenSolution Sip-00000011", "src": "07211748905", "cnum": "201", "cnam": "Andrea Marchionni", "dst": "203", "dst_cnam": "Cristian Manoni", "disposition": "ANSWERED", "lastapp": "Dial", "duration": float64(28), "billsec": float64(28), "type": "out"},
+			},
+		},
+		{
+			name: "internal call received, personal view",
+			from: "203", to: "202", callType: "",
+			legs: []map[string]interface{}{
+				{"uniqueid": "1775664439.329", "linkedid": "1775664438.320", "channel": "Local/202@from-queue-0000000f;2", "dstchannel": "PJSIP/202-00000017", "src": "203", "cnum": "203", "cnam": "Cristian Manoni", "dst": "202", "dst_cnam": "Antonio Colapietro", "disposition": "ANSWERED", "lastapp": "Dial", "duration": float64(15), "billsec": float64(9), "direction": "in"},
+			},
+		},
+	}
+
+	for _, extensions := range [][]string{nil, {"201", "202", "203"}} {
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				if extensions != nil {
+					withExtensions(t, extensions...)
+				}
+				legs := make([]map[string]interface{}, 0, len(tc.legs))
+				for _, leg := range tc.legs {
+					legs = append(legs, copyHistoryRow(leg))
+				}
+				got := collapseHistoryRowsByLinkedid(mergeDuplicateLegs(legs))
+				if len(got) != 1 {
+					t.Fatalf("expected 1 row, got %d", len(got))
+				}
+				row := got[0]
+				// The caller as each view shows it.
+				shown := getHistoryRowString(row, "cnum")
+				if getHistoryRowString(row, "direction") == "in" || shown == "" {
+					shown = getHistoryRowString(row, "src")
+				}
+				if shown != tc.from || row["dst"] != tc.to {
+					t.Fatalf("got %s -> %v, want %s -> %s", shown, row["dst"], tc.from, tc.to)
+				}
+				if tc.callType != "" && row["type"] != tc.callType {
+					t.Fatalf("direction: got %v, want %s", row["type"], tc.callType)
+				}
+			})
+		}
+	}
+}
+
+// withTrunks loads the configured trunks for the duration of a test, as the PBX
+// would provide them.
+func withTrunks(t *testing.T, trunks ...string) {
+	t.Helper()
+	trunkCacheMu.Lock()
+	previous, previousAt := trunkCache, trunkCacheAt
+	trunkCache, trunkCacheAt = trunks, time.Now()
+	trunkCacheMu.Unlock()
+	t.Cleanup(func() {
+		trunkCacheMu.Lock()
+		trunkCache, trunkCacheAt = previous, previousAt
+		trunkCacheMu.Unlock()
+	})
 }

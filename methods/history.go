@@ -612,10 +612,10 @@ func collapseHistoryRowsByLinkedid(rows []map[string]interface{}) []map[string]i
 			}
 			children = append(children, leg)
 		}
-		// The direction is read from EVERY leg, including the queue and plumbing legs
-		// dropped above: on a transferred call they are the only ones still carrying
-		// the trunk, and so the only evidence of which way the call went.
-		applyFinalPartiesToParent(parent, legs, parentIdx, callDirectionFromLegs(allLegs))
+		// Every leg is passed, the queue and plumbing ones dropped above included: on
+		// a transferred or queue call they are the only ones still carrying the trunk,
+		// and so the only evidence of where the outside party is.
+		applyFinalPartiesToParent(parent, legs, allLegs, parentIdx, getTrunks())
 		applyPersonalDirectionToParent(parent, allLegs)
 		if len(legs) > 1 {
 			sortLegsByCreation(children)
@@ -831,23 +831,73 @@ func pruneQueueLegs(legs []map[string]interface{}) []map[string]interface{} {
 	return result
 }
 
+// Leg roles: which side of a leg, if any, faces the outside.
+const (
+	legInternal = iota
+	legInbound
+	legOutbound
+)
+
+// legRole tells whether a leg came in from a trunk, went out to one, or stayed
+// inside the PBX. It is read from the leg's channels, never from its numbers: a
+// queue, a ring group or the caller id a trunk presents are not extensions, yet
+// none of them is an outside party. Without a trunk list it falls back to the
+// classification cti-server attached to the row, when there is one.
+func legRole(leg map[string]interface{}, trunks []string) int {
+	if len(trunks) > 0 {
+		if isTrunkChannel(getHistoryRowString(leg, "dstchannel"), trunks) {
+			return legOutbound
+		}
+		if isTrunkChannel(getHistoryRowString(leg, "channel"), trunks) {
+			return legInbound
+		}
+		return legInternal
+	}
+	switch getHistoryRowString(leg, "type") {
+	case "out":
+		return legOutbound
+	case "in":
+		return legInbound
+	}
+	return legInternal
+}
+
+// callDirection tells which way a call went from all its legs: in when any leg
+// came in from a trunk, out when any went out to one, internal otherwise.
+func callDirection(legs []map[string]interface{}, trunks []string) string {
+	direction := "internal"
+	for _, leg := range legs {
+		switch legRole(leg, trunks) {
+		case legInbound:
+			return "in"
+		case legOutbound:
+			direction = "out"
+		}
+	}
+	return direction
+}
+
 // applyFinalPartiesToParent makes the collapsed row name the two parties that
 // ended up talking, keeping the direction the call had: an incoming call reads
-// "outside number -> colleague who took it", an outgoing one "colleague on the
-// line -> number dialled". A transfer changes who is on the line, never the side
-// the call came from.
+// "outside caller -> colleague who took it", an outgoing one "colleague on the
+// line -> number dialled", an internal one as its last conversation. A transfer
+// changes who is on the line, never the side the call came from.
 //
-// Neither the parties nor the direction can be read off a single leg:
-//
-//   - cnum/cnam name the party that STARTED the transfer, or the trunk's own
-//     caller id on a call placed outside, so they are used only as a fallback;
-//   - the per-leg "type" is unreliable on transferred calls, because Asterisk
-//     rewrites the channels afterwards: the leg that really dialled out comes back
-//     as "internal" while the trunk ends up on a leg with no application at all.
-//     The direction is therefore taken from the call as a whole.
-func applyFinalPartiesToParent(parent map[string]interface{}, legs []map[string]interface{}, parentIdx int, direction string) {
-	// The last real conversation of the call: the two parties on it are the pair
-	// the summary must name.
+// The outside party is taken from the legs that touch a trunk (legRole), which
+// are often the queue or plumbing legs not shown as interactions, hence allLegs.
+// cnum/cnam are not trusted on their own: they name the party that STARTED a
+// transfer, or the caller id a trunk presents on a call placed outside.
+func applyFinalPartiesToParent(parent map[string]interface{}, legs, allLegs []map[string]interface{}, parentIdx int, trunks []string) {
+	// The parent is one of the legs: nothing may be written to it before every leg
+	// has been read.
+	direction := callDirection(allLegs, trunks)
+	// A single leg is its own summary: its parties stay as it recorded them.
+	if len(legs) < 2 {
+		parent["type"] = direction
+		return
+	}
+
+	// The last real conversation of the call.
 	idx := lastLegMatching(legs, func(leg map[string]interface{}) bool {
 		return getHistoryRowString(leg, "disposition") == "ANSWERED" &&
 			getHistoryRowString(leg, "lastapp") != ""
@@ -855,114 +905,135 @@ func applyFinalPartiesToParent(parent map[string]interface{}, legs []map[string]
 	if idx == -1 {
 		idx = parentIdx
 	}
-	leg := legs[idx]
+	conv := legs[idx]
 
-	src := getHistoryRowString(leg, "src")
-	dst := getHistoryRowString(leg, "dst")
-	inside := func() (number, name, company string) {
-		// The internal party: whichever side is not an outside number. When both
-		// look external the extension is only in cnum (a call placed outside keeps
-		// the trunk caller id in src).
-		if src != "" && !isExternalNumber(src) {
-			return src, "", ""
+	// Colleagues: the configured extensions, plus the devices this call rang
+	// (a channel that is not a trunk names one, e.g. "PJSIP/203-...").
+	colleague := func(number string) bool {
+		if number == "" {
+			return false
 		}
-		if dst != "" && !isExternalNumber(dst) {
-			return dst, getHistoryRowString(leg, "dst_cnam"), getHistoryRowString(leg, "dst_ccompany")
+		if _, ok := getExtensions()[number]; ok {
+			return true
 		}
-		return getHistoryRowString(leg, "cnum"), getHistoryRowString(leg, "cnam"), getHistoryRowString(leg, "ccompany")
-	}
-	outside := func() (number, name, company string) {
-		if isExternalNumber(dst) {
-			return dst, getHistoryRowString(leg, "dst_cnam"), getHistoryRowString(leg, "dst_ccompany")
+		for _, leg := range allLegs {
+			for _, field := range []string{"channel", "dstchannel"} {
+				channel := getHistoryRowString(leg, field)
+				if !strings.HasPrefix(channel, "Local/") && !isTrunkChannel(channel, trunks) &&
+					strings.Contains(channel, "/"+number+"-") {
+					return true
+				}
+			}
 		}
-		if isExternalNumber(src) {
-			// cnam here describes cnum (the transferring party), not src.
-			return src, "", ""
-		}
-		return "", "", ""
+		return false
 	}
 
-	var fromNumber, fromName, fromCompany, toNumber, toName, toCompany string
+	// The caller ids a trunk presents on the calls placed through it. On the leg
+	// that dialled out src carries one of them, while the extension stays in cnum
+	// — unless src is itself a colleague: then it is the party a transfer put on
+	// the line, and cnum is whoever transferred it.
+	presented := map[string]bool{}
+	markPresented := func(leg map[string]interface{}) {
+		if src := getHistoryRowString(leg, "src"); src != "" && !colleague(src) {
+			presented[src] = true
+		}
+	}
+	for _, leg := range allLegs {
+		if legRole(leg, trunks) == legOutbound && getHistoryRowString(leg, "lastapp") != "" {
+			markPresented(leg)
+		}
+	}
+
+	type party struct{ number, name, company string }
+	fromSrc := func(leg map[string]interface{}) party {
+		p := party{number: getHistoryRowString(leg, "src")}
+		if p.number != "" && p.number == getHistoryRowString(leg, "cnum") {
+			p.name, p.company = getHistoryRowString(leg, "cnam"), getHistoryRowString(leg, "ccompany")
+		}
+		return p
+	}
+	fromCnum := func(leg map[string]interface{}) party {
+		return party{getHistoryRowString(leg, "cnum"), getHistoryRowString(leg, "cnam"), getHistoryRowString(leg, "ccompany")}
+	}
+	fromDst := func(leg map[string]interface{}) party {
+		return party{getHistoryRowString(leg, "dst"), getHistoryRowString(leg, "dst_cnam"), getHistoryRowString(leg, "dst_ccompany")}
+	}
+	earliest := func(pred func(map[string]interface{}) bool) map[string]interface{} {
+		if i := earliestLegMatching(allLegs, pred); i != -1 {
+			return allLegs[i]
+		}
+		return nil
+	}
+	withApp := func(leg map[string]interface{}) bool { return getHistoryRowString(leg, "lastapp") != "" }
+
+	var from, to party
 	switch direction {
-	case "out":
-		fromNumber, fromName, fromCompany = inside()
-		toNumber, toName, toCompany = outside()
-		if toNumber == "" {
-			// No outside party after all: keep the leg's own destination.
-			toNumber, toName, toCompany = dst, getHistoryRowString(leg, "dst_cnam"), getHistoryRowString(leg, "dst_ccompany")
-		}
-		parent["type"] = "out"
 	case "in":
-		toNumber, toName, toCompany = inside()
-		fromNumber, fromName, fromCompany = outside()
-		if fromNumber == "" {
-			fromNumber = src
+		// The caller, as the first leg in from the trunk recorded it.
+		entry := earliest(func(l map[string]interface{}) bool { return legRole(l, trunks) == legInbound && withApp(l) })
+		if entry == nil {
+			entry = earliest(func(l map[string]interface{}) bool { return legRole(l, trunks) == legInbound })
 		}
-		parent["type"] = "in"
+		from = fromSrc(entry)
+		to = fromDst(conv)
+	case "out":
+		// The number dialled: the destination of the leg that went out, or of the
+		// call's first leg when a transfer moved the trunk onto a plumbing leg.
+		dial := earliest(func(l map[string]interface{}) bool { return legRole(l, trunks) == legOutbound && withApp(l) })
+		if dial == nil {
+			// The leg that placed the call: Asterisk gives the call's first channel
+			// the linkedid as its own uniqueid.
+			dial = earliest(func(l map[string]interface{}) bool {
+				return withApp(l) && getHistoryRowString(l, "uniqueid") == getHistoryRowString(l, "linkedid")
+			})
+			if dial == nil {
+				// Not among these legs (a personal view sees only the user's own):
+				// the dialled number is unknown here, so the call reads as recorded.
+				from, to = fromSrc(conv), fromDst(conv)
+				break
+			}
+			markPresented(dial)
+		}
+		to = fromDst(dial)
+		// Whoever is on the inside of the last conversation: the side that is
+		// neither the number dialled nor a caller id the trunk presented. On the
+		// leg that went out that is src when a transfer put a colleague there,
+		// the extension in cnum otherwise.
+		candidates := []party{fromDst(conv), fromSrc(conv), fromCnum(conv)}
+		if legRole(conv, trunks) == legOutbound {
+			candidates = []party{fromSrc(conv), fromCnum(conv)}
+		}
+		for _, c := range candidates {
+			if c.number != "" && c.number != to.number && !presented[c.number] {
+				from = c
+				break
+			}
+		}
 	default:
-		// Internal call: no outside party to place, the leg reads as it is.
-		fromNumber = src
-		toNumber, toName, toCompany = dst, getHistoryRowString(leg, "dst_cnam"), getHistoryRowString(leg, "dst_ccompany")
-		if fromNumber == "" {
-			fromNumber = getHistoryRowString(leg, "cnum")
-			fromName = getHistoryRowString(leg, "cnam")
-			fromCompany = getHistoryRowString(leg, "ccompany")
+		from = fromSrc(conv)
+		if from.number == "" {
+			from = fromCnum(conv)
 		}
+		to = fromDst(conv)
 	}
 
-	if fromNumber != "" {
-		parent["src"] = fromNumber
-		parent["cnum"] = fromNumber
-		parent["cnam"] = fromName
-		parent["ccompany"] = fromCompany
+	if from.number != "" {
+		parent["src"] = from.number
+		parent["cnum"] = from.number
+		parent["cnam"] = from.name
+		parent["ccompany"] = from.company
 	}
-	if toNumber != "" {
-		parent["dst"] = toNumber
-		parent["dst_cnam"] = toName
-		parent["dst_ccompany"] = toCompany
+	if to.number != "" {
+		parent["dst"] = to.number
+		parent["dst_cnam"] = to.name
+		parent["dst_ccompany"] = to.company
 	}
+	parent["type"] = direction
 	for _, field := range []string{"duration", "billsec"} {
-		if value, ok := leg[field]; ok {
+		if value, ok := conv[field]; ok {
 			parent[field] = value
 		}
 	}
-}
-
-// callDirectionFromLegs tells which way the call went, looking at every leg: the
-// trunk shows up as "in" on a call from the outside and as "out" on one placed
-// towards it, on whichever leg still carries it.
-func callDirectionFromLegs(legs []map[string]interface{}) string {
-	direction := "internal"
-	for _, leg := range legs {
-		switch {
-		case getHistoryRowString(leg, "type") == "in" || getHistoryRowString(leg, "direction") == "in":
-			return "in"
-		case getHistoryRowString(leg, "type") == "out" || getHistoryRowString(leg, "direction") == "out":
-			direction = "out"
-		}
-	}
-	return direction
-}
-
-// isExternalNumber reports whether a number belongs outside the PBX, asking the
-// PBX configuration which numbers are extensions (see extensions.go). Falls back
-// to a digit count only when that list cannot be read, since a wrong answer here
-// swaps the two parties of a call around.
-func isExternalNumber(number string) bool {
-	if number == "" {
-		return false
-	}
-	if extensions := getExtensions(); len(extensions) > 0 {
-		_, isExtension := extensions[number]
-		return !isExtension
-	}
-	digits := 0
-	for _, r := range number {
-		if r >= '0' && r <= '9' {
-			digits++
-		}
-	}
-	return digits > 5
 }
 
 // dropContextEntryLegs removes the legs Asterisk writes for its own bookkeeping
