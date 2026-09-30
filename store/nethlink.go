@@ -8,7 +8,6 @@ package store
 import (
 	"context"
 	"errors"
-	"time"
 
 	"github.com/nethesis/nethcti-middleware/db"
 )
@@ -34,11 +33,10 @@ func SetNethlinkHeartbeat(ctx context.Context, hb NethlinkHeartbeat) error {
 		return errors.New("database not initialized")
 	}
 
-	query := "REPLACE INTO `user_nethlink` (`user`, `extension`, `timestamp`, `nethlink_version`, `os_type`, `os_release`, `arch`) VALUES (?, ?, ?, ?, ?, ?, ?)"
+	query := "REPLACE INTO `user_nethlink` (`user`, `extension`, `timestamp`, `nethlink_version`, `os_type`, `os_release`, `arch`) VALUES (?, ?, DATE_FORMAT(NOW(), '%Y-%m-%d %H:%i:%s'), ?, ?, ?, ?)"
 	_, err := database.ExecContext(ctx, query,
 		hb.Username,
 		hb.Extension,
-		time.Now(),
 		hb.NethlinkVersion,
 		hb.OsType,
 		hb.OsRelease,
