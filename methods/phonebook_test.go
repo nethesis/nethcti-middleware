@@ -89,6 +89,37 @@ func TestParsePhonebookCSV_MissingNameColumn(t *testing.T) {
 	assert.Contains(t, response.ErrorMessages[0], "'name'")
 }
 
+func TestParsePhonebookCSV_NameComposedFromFirstAndLastName(t *testing.T) {
+	csvContent := strings.NewReader("firstname,lastname,workphone\nAlice,Smith,+39123\n,Rossi,+39456\nMario,,+39789\n")
+
+	entries, response, err := parsePhonebookCSV(csvContent)
+
+	require.NoError(t, err)
+	require.Len(t, entries, 3)
+	assert.Equal(t, "Alice Smith", entries[0].Name)
+	assert.Equal(t, "Alice", entries[0].FirstName)
+	assert.Equal(t, "Smith", entries[0].LastName)
+	assert.Equal(t, "Rossi", entries[1].Name)
+	assert.Equal(t, "Mario", entries[2].Name)
+	assert.Equal(t, 0, response.SkippedRows)
+	assert.Empty(t, response.ErrorMessages)
+}
+
+func TestParsePhonebookCSV_EmptyNameFallsBackToFirstAndLastName(t *testing.T) {
+	csvContent := strings.NewReader("name,firstname,lastname\nACME Support,Alice,Smith\n,Bob,Brown\n,,\n")
+
+	entries, response, err := parsePhonebookCSV(csvContent)
+
+	require.NoError(t, err)
+	require.Len(t, entries, 2)
+	assert.Equal(t, "ACME Support", entries[0].Name)
+	assert.Equal(t, "Bob Brown", entries[1].Name)
+	assert.Equal(t, 1, response.SkippedRows)
+	require.Len(t, response.ErrorMessages, 1)
+	assert.Contains(t, response.ErrorMessages[0], "Row 4")
+	assert.Contains(t, response.ErrorMessages[0], "name is empty")
+}
+
 func TestParsePhonebookCSV_OnlyHeaderNoRows(t *testing.T) {
 	csvContent := strings.NewReader("name,workphone\n")
 

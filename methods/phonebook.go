@@ -64,11 +64,13 @@ func parsePhonebookCSV(file io.Reader) ([]*store.PhonebookEntry, *PhonebookImpor
 		columnIndices[colLower] = i
 	}
 
-	// Validate required "name" column
-	if _, hasName := columnIndices["name"]; !hasName {
+	_, hasName := columnIndices["name"]
+	_, hasFirstName := columnIndices["firstname"]
+	_, hasLastName := columnIndices["lastname"]
+	if !hasName && !hasFirstName && !hasLastName {
 		return nil, &PhonebookImportResponse{
 			Message:       "phonebook import failed",
-			ErrorMessages: []string{"CSV must have 'name' column"},
+			ErrorMessages: []string{"CSV must have 'name' or 'firstname'/'lastname' column"},
 		}, nil
 	}
 
@@ -119,8 +121,10 @@ func parsePhonebookCSV(file io.Reader) ([]*store.PhonebookEntry, *PhonebookImpor
 			return ""
 		}
 
-		// Extract and validate name (required)
 		name := getField("name")
+		if name == "" {
+			name = strings.TrimSpace(getField("firstname") + " " + getField("lastname"))
+		}
 		if name == "" {
 			skippedRows++
 			errorMessages = append(errorMessages, fmt.Sprintf("Row %d: name is empty", lineNumber))

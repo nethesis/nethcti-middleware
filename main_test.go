@@ -617,7 +617,7 @@ john@example.com,5551234`
 	// Should return error about missing 'name' column
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	respBody, _ := io.ReadAll(resp.Body)
-	assert.Contains(t, string(respBody), "must have 'name' column")
+	assert.Contains(t, string(respBody), "must have 'name' or 'firstname'/'lastname' column")
 }
 
 // TestAdminPhonebookImportWithMultipleRows tests successful import of multiple contacts

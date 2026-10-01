@@ -791,3 +791,196 @@ func TestUpdateLegacyCTIPhonebookContact_PrivateToPrivateDoesNotTriggerCentraliz
 
 	require.Equal(t, http.StatusOK, recorder.Code)
 }
+
+const phonebookLevelZeroProfiles = `{"p":{"id":"p","name":"P","macro_permissions":{"phonebook":{"value":true,"permissions":[{"id":"p0","name":"phonebook_level_0","value":true}]}}}}`
+
+func TestCreateLegacyCTIPhonebookContact_FavoriteAllowedForLevelZero(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	loadPhonebookTestProfiles(t, phonebookLevelZeroProfiles, `{"alice":{"profile_id":"p"}}`)
+
+	originalCreate := createPhonebookEntryFunc
+	defer func() {
+		createPhonebookEntryFunc = originalCreate
+	}()
+
+	var capturedEntry *store.PhonebookEntry
+	createPhonebookEntryFunc = func(_ context.Context, entry *store.PhonebookEntry) error {
+		capturedEntry = entry
+		return nil
+	}
+
+	payload := map[string]any{
+		"name":          "bob",
+		"company":       "Bob",
+		"type":          "speeddial",
+		"speeddial_num": "201",
+		"notes":         "speeddial-favorite",
+	}
+	ctx, recorder := newLegacyPhonebookTestContext(http.MethodPost, "/phonebook/create", payload, "alice")
+
+	CreateLegacyCTIPhonebookContact(ctx)
+
+	require.Equal(t, http.StatusCreated, recorder.Code)
+	require.NotNil(t, capturedEntry)
+	assert.Equal(t, "alice", capturedEntry.OwnerID)
+	assert.Equal(t, "speeddial", capturedEntry.Type)
+	assert.Equal(t, "speeddial-favorite", capturedEntry.Notes)
+}
+
+func TestCreateLegacyCTIPhonebookContact_FavoriteAllowedForMacroOnly(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	loadPhonebookTestProfiles(t, `{"p":{"id":"p","name":"P","macro_permissions":{"phonebook":{"value":true,"permissions":[]}}}}`, `{"alice":{"profile_id":"p"}}`)
+
+	originalCreate := createPhonebookEntryFunc
+	defer func() {
+		createPhonebookEntryFunc = originalCreate
+	}()
+
+	createPhonebookEntryFunc = func(context.Context, *store.PhonebookEntry) error { return nil }
+
+	payload := map[string]any{"name": "bob", "type": "speeddial", "notes": "speeddial-favorite"}
+	ctx, recorder := newLegacyPhonebookTestContext(http.MethodPost, "/phonebook/create", payload, "alice")
+
+	CreateLegacyCTIPhonebookContact(ctx)
+
+	require.Equal(t, http.StatusCreated, recorder.Code)
+}
+
+func TestCreateLegacyCTIPhonebookContact_FavoriteForbiddenWithoutPhonebook(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	loadPhonebookTestProfiles(t, `{"p":{"id":"p","name":"P","macro_permissions":{"phonebook":{"value":false,"permissions":[]}}}}`, `{"alice":{"profile_id":"p"}}`)
+
+	originalCreate := createPhonebookEntryFunc
+	defer func() {
+		createPhonebookEntryFunc = originalCreate
+	}()
+
+	createPhonebookEntryFunc = func(context.Context, *store.PhonebookEntry) error {
+		t.Fatalf("create should not be called without phonebook access")
+		return nil
+	}
+
+	payload := map[string]any{"name": "bob", "type": "speeddial", "notes": "speeddial-favorite"}
+	ctx, recorder := newLegacyPhonebookTestContext(http.MethodPost, "/phonebook/create", payload, "alice")
+
+	CreateLegacyCTIPhonebookContact(ctx)
+
+	require.Equal(t, http.StatusForbidden, recorder.Code)
+}
+
+func TestCreateLegacyCTIPhonebookContact_SpeeddialForbiddenForLevelZero(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	loadPhonebookTestProfiles(t, phonebookLevelZeroProfiles, `{"alice":{"profile_id":"p"}}`)
+
+	originalCreate := createPhonebookEntryFunc
+	defer func() {
+		createPhonebookEntryFunc = originalCreate
+	}()
+
+	createPhonebookEntryFunc = func(context.Context, *store.PhonebookEntry) error {
+		t.Fatalf("create should not be called for non-favorite speeddials at level 0")
+		return nil
+	}
+
+	for _, payload := range []map[string]any{
+		{"name": "bob", "type": "speeddial", "notes": "speeddial-basic"},
+		{"name": "bob", "type": "speeddial"},
+		{"name": "bob", "type": "private", "notes": "speeddial-favorite"},
+	} {
+		ctx, recorder := newLegacyPhonebookTestContext(http.MethodPost, "/phonebook/create", payload, "alice")
+
+		CreateLegacyCTIPhonebookContact(ctx)
+
+		require.Equal(t, http.StatusForbidden, recorder.Code)
+	}
+}
+
+func TestDeleteLegacyCTIPhonebookContact_OwnFavoriteAllowedForLevelZero(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	loadPhonebookTestProfiles(t, phonebookLevelZeroProfiles, `{"alice":{"profile_id":"p"}}`)
+
+	originalGet := getPhonebookEntryByIDFunc
+	originalDelete := deletePhonebookEntryByIDFunc
+	defer func() {
+		getPhonebookEntryByIDFunc = originalGet
+		deletePhonebookEntryByIDFunc = originalDelete
+	}()
+
+	getPhonebookEntryByIDFunc = func(context.Context, int64) (*store.PhonebookEntry, error) {
+		return &store.PhonebookEntry{ID: 9, OwnerID: "alice", Type: "speeddial", Name: "bob", Notes: "speeddial-favorite"}, nil
+	}
+	deleted := false
+	deletePhonebookEntryByIDFunc = func(context.Context, int64) error {
+		deleted = true
+		return nil
+	}
+
+	payload := map[string]any{"id": "9"}
+	ctx, recorder := newLegacyPhonebookTestContext(http.MethodPost, "/phonebook/delete_cticontact", payload, "alice")
+
+	DeleteLegacyCTIPhonebookContact(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	assert.True(t, deleted)
+}
+
+func TestDeleteLegacyCTIPhonebookContact_ForbiddenForLevelZero(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	loadPhonebookTestProfiles(t, phonebookLevelZeroProfiles, `{"alice":{"profile_id":"p"}}`)
+
+	originalGet := getPhonebookEntryByIDFunc
+	originalDelete := deletePhonebookEntryByIDFunc
+	defer func() {
+		getPhonebookEntryByIDFunc = originalGet
+		deletePhonebookEntryByIDFunc = originalDelete
+	}()
+
+	deletePhonebookEntryByIDFunc = func(context.Context, int64) error {
+		t.Fatalf("delete should not be called")
+		return nil
+	}
+
+	for _, existing := range []*store.PhonebookEntry{
+		{ID: 9, OwnerID: "carol", Type: "speeddial", Name: "bob", Notes: "speeddial-favorite"},
+		{ID: 9, OwnerID: "alice", Type: "speeddial", Name: "bob", Notes: "speeddial-basic"},
+		{ID: 9, OwnerID: "alice", Type: "private", Name: "bob", Notes: "speeddial-favorite"},
+	} {
+		getPhonebookEntryByIDFunc = func(context.Context, int64) (*store.PhonebookEntry, error) {
+			return existing, nil
+		}
+
+		payload := map[string]any{"id": "9"}
+		ctx, recorder := newLegacyPhonebookTestContext(http.MethodPost, "/phonebook/delete_cticontact", payload, "alice")
+
+		DeleteLegacyCTIPhonebookContact(ctx)
+
+		require.Equal(t, http.StatusForbidden, recorder.Code)
+	}
+}
+
+func TestUpdateLegacyCTIPhonebookContact_FavoriteForbiddenForLevelZero(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	loadPhonebookTestProfiles(t, phonebookLevelZeroProfiles, `{"alice":{"profile_id":"p"}}`)
+
+	originalGet := getPhonebookEntryByIDFunc
+	originalUpdate := updatePhonebookEntryFieldsFunc
+	defer func() {
+		getPhonebookEntryByIDFunc = originalGet
+		updatePhonebookEntryFieldsFunc = originalUpdate
+	}()
+
+	getPhonebookEntryByIDFunc = func(context.Context, int64) (*store.PhonebookEntry, error) {
+		return &store.PhonebookEntry{ID: 9, OwnerID: "alice", Type: "speeddial", Name: "bob", Notes: "speeddial-favorite"}, nil
+	}
+	updatePhonebookEntryFieldsFunc = func(context.Context, int64, map[string]any) error {
+		t.Fatalf("update should not be called for favorites at level 0")
+		return nil
+	}
+
+	payload := map[string]any{"id": "9", "notes": "speeddial-basic"}
+	ctx, recorder := newLegacyPhonebookTestContext(http.MethodPost, "/phonebook/modify_cticontact", payload, "alice")
+
+	UpdateLegacyCTIPhonebookContact(ctx)
+
+	require.Equal(t, http.StatusForbidden, recorder.Code)
+}
