@@ -689,6 +689,43 @@ func TestSearchLegacyPhonebook_CompanyViewBuildsContactsPayload(t *testing.T) {
 	assert.Equal(t, "Central Contact", contacts[2]["name"])
 }
 
+func TestSearchLegacyPhonebook_CompanyViewLoadsInfoFromDashNamedCompany(t *testing.T) {
+	clearPhonebookTable(t)
+	clearCentralizedPhonebookTable(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	require.NoError(t, store.CreatePhonebookEntry(ctx, &store.PhonebookEntry{
+		OwnerID:   "bob",
+		Type:      "public",
+		Name:      "-",
+		Company:   "Acme",
+		Notes:     "Headquarters",
+		WorkCity:  "Turin",
+		WorkPhone: "0110000001",
+	}))
+	require.NoError(t, store.CreatePhonebookEntry(ctx, &store.PhonebookEntry{
+		OwnerID: "bob",
+		Type:    "public",
+		Name:    "Bob Public",
+		Company: "Acme",
+	}))
+
+	result, err := store.SearchLegacyPhonebook(ctx, store.LegacyPhonebookQuery{
+		Username:               "alice",
+		Term:                   "Acme",
+		View:                   "company",
+		IncludePrivateContacts: true,
+	})
+	require.NoError(t, err)
+	require.Len(t, result.Rows, 1)
+	assert.Equal(t, "Acme", result.Rows[0].Company)
+	assert.Equal(t, "Headquarters", result.Rows[0].Notes)
+	assert.Equal(t, "Turin", result.Rows[0].WorkCity)
+	assert.Equal(t, "0110000001", result.Rows[0].WorkPhone)
+}
+
 func TestSearchLegacyPhonebook_FiltersByVisibility(t *testing.T) {
 	clearPhonebookTable(t)
 	clearCentralizedPhonebookTable(t)
