@@ -8,6 +8,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -26,6 +27,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/nethesis/nethcti-middleware/configuration"
+	"github.com/nethesis/nethcti-middleware/db"
 	"github.com/nethesis/nethcti-middleware/middleware"
 	"github.com/nethesis/nethcti-middleware/models"
 	"github.com/nethesis/nethcti-middleware/store"
@@ -1064,3 +1066,110 @@ Jane Smith,jane@example.com,555-5678`
 }
 
 // ** End of User Phonebook Import Endpoint Tests **
+
+// ** NethLink Heartbeat Endpoint Tests **
+
+type nethlinkRow struct {
+	Extension       string
+	Timestamp       string
+	NethlinkVersion string
+	OsType          string
+	OsRelease       string
+	Arch            string
+}
+
+func readNethlinkRow(t *testing.T, username string) (nethlinkRow, bool) {
+	t.Helper()
+	var row nethlinkRow
+	err := db.GetDB().QueryRow(
+		"SELECT extension, timestamp, nethlink_version, os_type, os_release, arch FROM user_nethlink WHERE user = ?",
+		username,
+	).Scan(&row.Extension, &row.Timestamp, &row.NethlinkVersion, &row.OsType, &row.OsRelease, &row.Arch)
+	if err == sql.ErrNoRows {
+		return row, false
+	}
+	assert.NoError(t, err)
+	return row, true
+}
+
+func postNethlinkHeartbeat(t *testing.T, token string, body []byte) *http.Response {
+	t.Helper()
+	req, _ := http.NewRequest("POST", testServerURL+"/user/nethlink", bytes.NewBuffer(body))
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	assert.NoError(t, err)
+	return resp
+}
+
+func TestNethlinkHeartbeat(t *testing.T) {
+	resetTestState()
+	_, err := db.GetDB().Exec("DELETE FROM user_nethlink WHERE user = ?", "testuser")
+	assert.NoError(t, err)
+
+	token := utils.PerformLogin(testServerURL)
+
+	t.Run("stores extension, version and OS details", func(t *testing.T) {
+		body, _ := json.Marshal(map[string]string{
+			"extension":        " 92001 ",
+			"username":         "spoofed",
+			"nethlink_version": "1.4.0",
+			"os_type":          "linux",
+			"os_release":       "6.8.0-45-generic",
+			"arch":             "x64",
+		})
+		resp := postNethlinkHeartbeat(t, token, body)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		row, found := readNethlinkRow(t, "testuser")
+		assert.True(t, found, "heartbeat row must be keyed by the JWT username")
+		assert.Equal(t, "92001", row.Extension)
+		assert.Equal(t, "1.4.0", row.NethlinkVersion)
+		assert.Equal(t, "linux", row.OsType)
+		assert.Equal(t, "6.8.0-45-generic", row.OsRelease)
+		assert.Equal(t, "x64", row.Arch)
+		_, perr := time.Parse("2006-01-02 15:04:05", row.Timestamp)
+		assert.NoError(t, perr, "timestamp must use the legacy 'YYYY-MM-DD HH:MM:SS' format")
+
+		_, spoofed := readNethlinkRow(t, "spoofed")
+		assert.False(t, spoofed, "username in body must be ignored")
+	})
+
+	t.Run("upserts a single row per user", func(t *testing.T) {
+		body, _ := json.Marshal(map[string]string{"extension": "92001", "nethlink_version": "1.5.0"})
+		resp := postNethlinkHeartbeat(t, token, body)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		var count int
+		assert.NoError(t, db.GetDB().QueryRow("SELECT COUNT(*) FROM user_nethlink WHERE user = ?", "testuser").Scan(&count))
+		assert.Equal(t, 1, count)
+
+		row, _ := readNethlinkRow(t, "testuser")
+		assert.Equal(t, "1.5.0", row.NethlinkVersion)
+		assert.Equal(t, "", row.OsType)
+	})
+
+	t.Run("empty body still records a heartbeat", func(t *testing.T) {
+		resp := postNethlinkHeartbeat(t, token, nil)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		_, found := readNethlinkRow(t, "testuser")
+		assert.True(t, found)
+	})
+
+	t.Run("requires authentication", func(t *testing.T) {
+		resp := postNethlinkHeartbeat(t, "", []byte(`{"extension":"92001"}`))
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+	})
+
+	_, err = db.GetDB().Exec("DELETE FROM user_nethlink WHERE user = ?", "testuser")
+	assert.NoError(t, err)
+}
+
+// ** End of NethLink Heartbeat Endpoint Tests **
