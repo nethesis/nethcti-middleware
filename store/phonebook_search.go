@@ -453,11 +453,11 @@ func loadLegacyCompanyResult(
 		"SELECT * FROM (",
 		"SELECT", legacyPhonebookSelectColumns, ", extension, speeddial_num, " + ctiPhonebookExtraColumns + ", 'cti' AS source",
 		"FROM cti_phonebook",
-		"WHERE", visibleCTIWhere, "AND company = ? AND (name IS NULL OR name = '') AND type != 'speeddial' AND", ctiVisibilityWhere,
+		"WHERE", visibleCTIWhere, "AND company = ? AND (name IS NULL OR name = '' OR name = '-') AND type != 'speeddial' AND", ctiVisibilityWhere,
 		"UNION",
 		"SELECT", legacyPhonebookSelectColumns, ", '' AS extension, '' AS speeddial_num, " + centralizedPhonebookExtraColumns + ", 'centralized' AS source",
 		"FROM", centralizedPhonebookTable,
-		"WHERE company = ? AND (name IS NULL OR name = '') AND type != 'nethcti' AND", visibleCentralizedWhere, "AND", centralizedVisibilityWhere,
+		"WHERE company = ? AND (name IS NULL OR name = '' OR name = '-') AND type != 'nethcti' AND", visibleCentralizedWhere, "AND", centralizedVisibilityWhere,
 		") company_info LIMIT 1",
 	}, " ")
 	infoArgs := append([]any{}, visibleCTIArgs...)
