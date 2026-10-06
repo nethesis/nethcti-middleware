@@ -6,6 +6,12 @@
   "ignoreTests": false,
   "packageRules": [
     {
+      "description": "Keep the CI MariaDB service on the 10.11 series shipped by ns8-nethvoice",
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["mariadb"],
+      "allowedVersions": "<10.12"
+    },
+    {
       "description": "Automerge patch updates",
       "matchUpdateTypes": ["patch"],
       "automerge": true,
