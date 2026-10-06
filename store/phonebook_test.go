@@ -1207,11 +1207,17 @@ func TestSyncPublicContactsToCentralized(t *testing.T) {
 
 	// Seed cti_phonebook with a public and a private contact.
 	require.NoError(t, store.CreatePhonebookEntry(ctx, &store.PhonebookEntry{
-		OwnerID:   "alice",
-		Type:      "public",
-		Name:      "Alice Public",
-		Company:   "Acme",
-		WorkPhone: "0123456789",
+		OwnerID:    "alice",
+		Type:       "public",
+		Name:       "Alice Public",
+		Company:    "Acme",
+		WorkPhone:  "0123456789",
+		FirstName:  "Alice",
+		LastName:   "Public",
+		WorkPhone2: "0123456788",
+		CellPhone2: "3330001112",
+		OtherPhone: "0123456787",
+		OtherEmail: "alice@other.example",
 	}))
 	require.NoError(t, store.CreatePhonebookEntry(ctx, &store.PhonebookEntry{
 		OwnerID:   "bob",
@@ -1249,6 +1255,17 @@ func TestSyncPublicContactsToCentralized(t *testing.T) {
 	// Republished public CTI contacts must be marked access='public' so the inbound
 	// lookup (which filters access = 'public') keeps resolving their names.
 	assert.Equal(t, "public", access)
+
+	var firstName, lastName, workPhone2, cellPhone2, otherPhone, otherEmail string
+	require.NoError(t, db.GetDB().QueryRowContext(ctx,
+		"SELECT firstname, lastname, workphone2, cellphone2, otherphone, otheremail FROM phonebook.phonebook WHERE sid_imported = 'nethcti'").
+		Scan(&firstName, &lastName, &workPhone2, &cellPhone2, &otherPhone, &otherEmail))
+	assert.Equal(t, "Alice", firstName)
+	assert.Equal(t, "Public", lastName)
+	assert.Equal(t, "0123456788", workPhone2)
+	assert.Equal(t, "3330001112", cellPhone2)
+	assert.Equal(t, "0123456787", otherPhone)
+	assert.Equal(t, "alice@other.example", otherEmail)
 
 	// The private contact must not be exported.
 	var privateCount int
