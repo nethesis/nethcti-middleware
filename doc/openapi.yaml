@@ -1318,7 +1318,9 @@ paths:
         Import phonebook contacts for the authenticated user. The request must be
         a multipart/form-data POST with a single file field named `file` containing
         the CSV of contacts. The authenticated user's JWT must contain the
-        capability `phonebook.ad_phonebook` to allow import.
+        capability `phonebook.ad_phonebook` to allow import. The CSV must be comma
+        separated and contain a `name` column or `firstname`/`lastname` columns;
+        when `name` is empty it is composed as "firstname lastname".
       security:
         - bearerAuth: []
       requestBody:
@@ -1402,7 +1404,9 @@ paths:
         - Field "username" (string, required): Target username to import contacts for
         - Field "file" (binary, required): CSV file with contact data
 
-        CSV Columns (case-insensitive): name (required),
+        CSV Columns (case-insensitive, comma separated): name, or firstname/lastname
+        (at least one of them is required; when name is empty it is composed as
+        "firstname lastname"),
         and optional: workemail, homeemail, workphone, homephone, cellphone, fax, title,
         company, notes, homestreet, homepob, homecity, homeprovince, homepostalcode,
         homecountry, workstreet, workpob, workcity, workprovince, workpostalcode,

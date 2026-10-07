@@ -689,6 +689,43 @@ func TestSearchLegacyPhonebook_CompanyViewBuildsContactsPayload(t *testing.T) {
 	assert.Equal(t, "Central Contact", contacts[2]["name"])
 }
 
+func TestSearchLegacyPhonebook_CompanyViewLoadsInfoFromDashNamedCompany(t *testing.T) {
+	clearPhonebookTable(t)
+	clearCentralizedPhonebookTable(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	require.NoError(t, store.CreatePhonebookEntry(ctx, &store.PhonebookEntry{
+		OwnerID:   "bob",
+		Type:      "public",
+		Name:      "-",
+		Company:   "Acme",
+		Notes:     "Headquarters",
+		WorkCity:  "Turin",
+		WorkPhone: "0110000001",
+	}))
+	require.NoError(t, store.CreatePhonebookEntry(ctx, &store.PhonebookEntry{
+		OwnerID: "bob",
+		Type:    "public",
+		Name:    "Bob Public",
+		Company: "Acme",
+	}))
+
+	result, err := store.SearchLegacyPhonebook(ctx, store.LegacyPhonebookQuery{
+		Username:               "alice",
+		Term:                   "Acme",
+		View:                   "company",
+		IncludePrivateContacts: true,
+	})
+	require.NoError(t, err)
+	require.Len(t, result.Rows, 1)
+	assert.Equal(t, "Acme", result.Rows[0].Company)
+	assert.Equal(t, "Headquarters", result.Rows[0].Notes)
+	assert.Equal(t, "Turin", result.Rows[0].WorkCity)
+	assert.Equal(t, "0110000001", result.Rows[0].WorkPhone)
+}
+
 func TestSearchLegacyPhonebook_FiltersByVisibility(t *testing.T) {
 	clearPhonebookTable(t)
 	clearCentralizedPhonebookTable(t)
@@ -1170,11 +1207,17 @@ func TestSyncPublicContactsToCentralized(t *testing.T) {
 
 	// Seed cti_phonebook with a public and a private contact.
 	require.NoError(t, store.CreatePhonebookEntry(ctx, &store.PhonebookEntry{
-		OwnerID:   "alice",
-		Type:      "public",
-		Name:      "Alice Public",
-		Company:   "Acme",
-		WorkPhone: "0123456789",
+		OwnerID:    "alice",
+		Type:       "public",
+		Name:       "Alice Public",
+		Company:    "Acme",
+		WorkPhone:  "0123456789",
+		FirstName:  "Alice",
+		LastName:   "Public",
+		WorkPhone2: "0123456788",
+		CellPhone2: "3330001112",
+		OtherPhone: "0123456787",
+		OtherEmail: "alice@other.example",
 	}))
 	require.NoError(t, store.CreatePhonebookEntry(ctx, &store.PhonebookEntry{
 		OwnerID:   "bob",
@@ -1212,6 +1255,17 @@ func TestSyncPublicContactsToCentralized(t *testing.T) {
 	// Republished public CTI contacts must be marked access='public' so the inbound
 	// lookup (which filters access = 'public') keeps resolving their names.
 	assert.Equal(t, "public", access)
+
+	var firstName, lastName, workPhone2, cellPhone2, otherPhone, otherEmail string
+	require.NoError(t, db.GetDB().QueryRowContext(ctx,
+		"SELECT firstname, lastname, workphone2, cellphone2, otherphone, otheremail FROM phonebook.phonebook WHERE sid_imported = 'nethcti'").
+		Scan(&firstName, &lastName, &workPhone2, &cellPhone2, &otherPhone, &otherEmail))
+	assert.Equal(t, "Alice", firstName)
+	assert.Equal(t, "Public", lastName)
+	assert.Equal(t, "0123456788", workPhone2)
+	assert.Equal(t, "3330001112", cellPhone2)
+	assert.Equal(t, "0123456787", otherPhone)
+	assert.Equal(t, "alice@other.example", otherEmail)
 
 	// The private contact must not be exported.
 	var privateCount int

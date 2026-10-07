@@ -25,6 +25,8 @@ import (
 	"github.com/nethesis/nethcti-middleware/store"
 )
 
+const operatorFavoriteNotes = "speeddial-favorite"
+
 type legacyPhonebookOperatorGroup struct {
 	Users []string `json:"users"`
 }
@@ -317,7 +319,8 @@ func CreateLegacyCTIPhonebookContact(c *gin.Context) {
 		return
 	}
 
-	if !canWriteContactType(username, contactType) {
+	notesValue, _ := payload["notes"].(string)
+	if !canWriteOperatorFavorite(username, contactType, notesValue) && !canWriteContactType(username, contactType) {
 		c.JSON(http.StatusForbidden, gin.H{"message": "forbidden"})
 		return
 	}
@@ -469,7 +472,7 @@ func DeleteLegacyCTIPhonebookContact(c *gin.Context) {
 		return
 	}
 
-	if existingContact == nil || !canWriteExistingContact(username, existingContact, "") {
+	if existingContact == nil || !(canDeleteOperatorFavorite(username, existingContact) || canWriteExistingContact(username, existingContact, "")) {
 		c.JSON(http.StatusForbidden, gin.H{"message": "forbidden"})
 		return
 	}
@@ -694,6 +697,18 @@ func canWriteContactType(username, contactType string) bool {
 	permissionLevel := store.GetPhonebookPermissionLevel(username)
 	visibility := getContactWriteVisibility(contactType)
 	return permissionLevel >= 2 || (permissionLevel >= 1 && visibility == "private")
+}
+
+func isOperatorFavorite(contactType, notes string) bool {
+	return contactType == "speeddial" && strings.TrimSpace(notes) == operatorFavoriteNotes
+}
+
+func canWriteOperatorFavorite(username, contactType, notes string) bool {
+	return isOperatorFavorite(contactType, notes) && store.GetPhonebookPermissionLevel(username) >= 0
+}
+
+func canDeleteOperatorFavorite(username string, contact *store.PhonebookEntry) bool {
+	return contact != nil && contact.OwnerID == username && canWriteOperatorFavorite(username, contact.Type, contact.Notes)
 }
 
 func canWriteExistingContact(username string, contact *store.PhonebookEntry, nextType string) bool {
