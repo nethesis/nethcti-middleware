@@ -6,7 +6,9 @@
 package methods
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -65,11 +67,15 @@ func GetFilteredHistory(c *gin.Context) {
 		return
 	}
 
-	baseResponse, err := fetchLegacyHistoryFromV1(req)
+	baseResponse, err := fetchLegacyHistoryFromV1(c.Request.Context(), req)
 	if err != nil {
 		logs.Log("[ERROR][HISTORY] Failed to fetch legacy history: " + err.Error())
-		c.JSON(http.StatusBadGateway, gin.H{
-			"code":    http.StatusBadGateway,
+		statusCode := http.StatusBadGateway
+		if errors.Is(err, context.DeadlineExceeded) {
+			statusCode = http.StatusGatewayTimeout
+		}
+		c.JSON(statusCode, gin.H{
+			"code":    statusCode,
 			"message": err.Error(),
 		})
 		return
@@ -120,7 +126,23 @@ func GetFilteredHistory(c *gin.Context) {
 	// Ring-group rows name their member leg; put the GROUP back on a parent that
 	// nobody answered, now that collapsing has decided which leg represents the call.
 	applyRingGroupParentNames(collapsedRows)
+	if pagesCallsUpstream(req) {
+		// cti-server already returned the calls of this page only, and their total.
+		c.JSON(http.StatusOK, gin.H{
+			"count": baseResponse.Count,
+			"rows":  collapsedRows,
+		})
+		return
+	}
 	c.JSON(http.StatusOK, paginateHistoryRows(collapsedRows, req.PageNum, req.PageSize))
+}
+
+// pagesCallsUpstream reports whether cti-server is asked for a page of calls
+// (groupByCall) instead of every leg of the interval. The artifact filters are
+// applied here, on the rows received, so they still need the whole interval
+// to fill a page.
+func pagesCallsUpstream(req *historyFilterRequest) bool {
+	return req.Artifact == historyArtifactAll
 }
 
 func parseHistoryFilterRequest(c *gin.Context) (*historyFilterRequest, error) {
@@ -195,7 +217,7 @@ func parsePositiveInt(raw string, fallback int) (int, error) {
 	return parsed, nil
 }
 
-func fetchLegacyHistoryFromV1(req *historyFilterRequest) (*historyFilterResponse, error) {
+func fetchLegacyHistoryFromV1(ctx context.Context, req *historyFilterRequest) (*historyFilterResponse, error) {
 	if configuration.Config.V1ApiEndpoint == "" {
 		return nil, fmt.Errorf("V1 API endpoint not configured")
 	}
@@ -210,14 +232,17 @@ func fetchLegacyHistoryFromV1(req *historyFilterRequest) (*historyFilterResponse
 		requestURL += "?" + encoded
 	}
 
-	httpReq, err := http.NewRequest(http.MethodGet, requestURL, nil)
+	// Bound to the client request too: when the CTI moves to another page or
+	// filter, the request it leaves is not waited for.
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
 	if err != nil {
 		return nil, err
 	}
 	httpReq.Header.Set("Authorization", req.LegacyToken)
 
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(httpReq)
+	resp, err := http.DefaultClient.Do(httpReq)
 	if err != nil {
 		return nil, err
 	}
@@ -257,7 +282,8 @@ func buildLegacyHistoryPath(req *historyFilterRequest) (string, url.Values, erro
 	// (e.g. the members a queue/ring-group call rang before someone answered);
 	// removing them collapses a groupable call down to a single leg, which then
 	// shows as non-expandable. Keep every leg so grouping stays correct.
-	queryValues.Set("removeLostCalls", "false")
+	// The parameter is left out rather than set to "false": cti-server only checks
+	// whether it is there, so "false" turned the removal on.
 	// Ask cti-server for every leg of a call rather than one row per call: this is
 	// the only caller that groups them back together (by linkedid), and every other
 	// consumer of that API — NethLink, the mobile app, the CTI drawers — keeps
@@ -266,6 +292,19 @@ func buildLegacyHistoryPath(req *historyFilterRequest) (string, url.Values, erro
 	// Only calls that went through this queue; empty means every call.
 	if req.Queue != "" {
 		queryValues.Set("queue", req.Queue)
+	}
+	// A page of calls: cti-server reads only the calls of this page and returns
+	// every leg of them with the total of calls, instead of every leg of the
+	// interval for this side to group and cut.
+	if pagesCallsUpstream(req) {
+		queryValues.Set("groupByCall", "true")
+		queryValues.Set("limit", strconv.Itoa(req.PageSize))
+		queryValues.Set("offset", strconv.Itoa((req.PageNum-1)*req.PageSize))
+		// The audio test legs are left out by the same query, so that they do not
+		// take a place in the page.
+		if code := strings.TrimSpace(req.AudioTest); code != "" {
+			queryValues.Set("audioTest", code)
+		}
 	}
 
 	var path string

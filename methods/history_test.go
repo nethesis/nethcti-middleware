@@ -967,6 +967,32 @@ func withTrunks(t *testing.T, trunks ...string) {
 	})
 }
 
+func TestBuildLegacyHistoryPath_AsksForAPageOfCalls(t *testing.T) {
+	for _, callType := range []string{"switchboard", "group", "user"} {
+		req := &historyFilterRequest{CallType: callType, Username: "u", From: "20260901", To: "20260930", Sort: "time desc",
+			PageNum: 3, PageSize: 10, Artifact: historyArtifactAll, AudioTest: "*41"}
+		_, values, err := buildLegacyHistoryPath(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if values.Get("groupByCall") != "true" || values.Get("limit") != "10" || values.Get("offset") != "20" {
+			t.Fatalf("%s: expected a page of 10 calls from 20, got %v", callType, values)
+		}
+		if values.Get("audioTest") != "*41" {
+			t.Fatalf("%s: expected audioTest=*41, got %q", callType, values.Get("audioTest"))
+		}
+		// cti-server drops the lost legs whenever the parameter is there, "false" included.
+		if values.Has("removeLostCalls") {
+			t.Fatalf("%s: expected no removeLostCalls parameter, got %q", callType, values.Get("removeLostCalls"))
+		}
+		// An artifact filter is applied here on the rows received: it needs them all.
+		req.Artifact = historyArtifactVoicemail
+		if _, values, _ = buildLegacyHistoryPath(req); values.Has("groupByCall") || values.Has("limit") || values.Has("offset") {
+			t.Fatalf("%s: expected the whole interval with an artifact filter, got %v", callType, values)
+		}
+	}
+}
+
 func TestBuildLegacyHistoryPath_ForwardsTheQueueFilter(t *testing.T) {
 	for _, callType := range []string{"switchboard", "group", "user"} {
 		req := &historyFilterRequest{CallType: callType, Username: "u", From: "20260901", To: "20260930", Sort: "time desc", Queue: "401"}
