@@ -1112,10 +1112,15 @@ func dropContextEntryLegs(legs []map[string]interface{}) []map[string]interface{
 //     written once a transferred channel is re-bridged has none. That one is the
 //     most misleading of all, because cti-server reports it with the transferring
 //     party as its source, so it looks like a genuine call between the colleague
-//     who passed the call on and the one who took it.
+//     who passed the call on and the one who took it;
+//   - a "Terminate Call" destination (context app-blackhole: hangup, busy,
+//     congestion, ...), such as a ring group's failover once nobody answered. On
+//     a call already answered by the trunk it is ANSWERED, so it would otherwise
+//     become the summary and show an unanswered call as answered by "hangup".
 func isBookkeepingLeg(leg map[string]interface{}) bool {
 	dst := getHistoryRowString(leg, "dst")
-	return dst == "" || dst == "s" || getHistoryRowString(leg, "lastapp") == ""
+	return dst == "" || dst == "s" || getHistoryRowString(leg, "lastapp") == "" ||
+		getHistoryRowString(leg, "dcontext") == "app-blackhole"
 }
 
 // applyPersonalDirectionToParent keeps the personal history's own notion of

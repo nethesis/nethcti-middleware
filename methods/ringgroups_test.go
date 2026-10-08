@@ -135,3 +135,44 @@ func TestExtensionFromChannel(t *testing.T) {
 		}
 	}
 }
+
+func TestRingGroupFailoverToHangupIsNotAnAnsweredCall(t *testing.T) {
+	// An outside call to a ring group nobody answered, whose failover is the
+	// "Terminate Call: Hangup" destination (real rows). The trunk had already
+	// answered the caller, so the hangup leg (context app-blackhole) is ANSWERED:
+	// it must not become the summary, which is the group and a missed call.
+	withTrunks(t, "OpenSolution Sip")
+	leg := func(time float64, dst, dcontext, dstchannel, lastapp, disposition string, duration float64) map[string]interface{} {
+		return map[string]interface{}{"linkedid": "1791467498.31", "uniqueid": "1791467498.31", "time": time,
+			"src": "3400069069", "cnum": "3400069069", "dst": dst, "dcontext": dcontext,
+			"channel": "PJSIP/OpenSolution Sip-00000005", "dstchannel": dstchannel,
+			"lastapp": lastapp, "disposition": disposition, "duration": duration, "type": "in"}
+	}
+	rows := []map[string]interface{}{
+		leg(1791467519, "hangup", "app-blackhole", "", "Hangup", "ANSWERED", 0),
+		leg(1791467499, "600", "ext-group", "PJSIP/202-00000007", "Dial", "NO ANSWER", 20),
+		leg(1791467499, "600", "ext-group", "PJSIP/203-00000008", "Dial", "NO ANSWER", 20),
+		leg(1791467498, "600", "ext-group", "PJSIP/201-00000006", "Dial", "NO ANSWER", 21),
+	}
+	enrichRingGroupRows(rows, map[string]string{"600": "Test RG"})
+	collapsed := collapseHistoryRowsByLinkedid(rows)
+	applyRingGroupParentNames(collapsed)
+
+	if len(collapsed) != 1 {
+		t.Fatalf("expected 1 call, got %d", len(collapsed))
+	}
+	parent := collapsed[0]
+	if parent["disposition"] != "NO ANSWER" || parent["dst"] != "600" || parent["dst_cnam"] != "Test RG" {
+		t.Fatalf("expected a missed call to Test RG 600, got disposition=%v dst=%v dst_cnam=%v",
+			parent["disposition"], parent["dst"], parent["dst_cnam"])
+	}
+	legs, _ := parent["interactions"].([]map[string]interface{})
+	if len(legs) != 3 {
+		t.Fatalf("expected the 3 members rung, got %d legs", len(legs))
+	}
+	for _, l := range legs {
+		if l["dcontext"] == "app-blackhole" {
+			t.Fatalf("the hangup leg must not be listed: %v", l)
+		}
+	}
+}
