@@ -7,6 +7,7 @@ package methods
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -90,7 +91,10 @@ func GetFilteredHistory(c *gin.Context) {
 			return
 		}
 		if isSatelliteDBUnavailableError(err) {
-			logs.Log("[WARNING][HISTORY] Satellite database is unavailable while filtering history rows: " + err.Error())
+			// sql.ErrConnDone: GetSatelliteDB already logged the outage.
+			if !errors.Is(err, sql.ErrConnDone) {
+				logs.Log("[WARNING][HISTORY] Satellite database is unavailable while filtering history rows: " + err.Error())
+			}
 			writeSatelliteDBUnavailableResponse(c)
 			return
 		}
@@ -353,6 +357,9 @@ func filterHistoryRowsByArtifact(c *gin.Context, artifact string, rows []map[str
 	case historyArtifactSummary, historyArtifactTranscription:
 		if !summary.IsSatelliteDBConfigured() {
 			return nil, fmt.Errorf("satellite database not configured")
+		}
+		if !satelliteDBAvailableFunc() {
+			return nil, sql.ErrConnDone
 		}
 
 		lookups := collectHistorySummaryLookups(rows)
