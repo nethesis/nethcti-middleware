@@ -28,7 +28,12 @@ var (
 	// stopped satellite-pgsql (transcriptions never enabled) does not flood the
 	// logs on every request.
 	satelliteDown bool
+	// satelliteRetryAt delays the next connection attempt after a failed one,
+	// so requests do not queue up on the mutex waiting for the ping timeout.
+	satelliteRetryAt time.Time
 )
+
+const satelliteRetryDelay = 5 * time.Second
 
 // initSatellite initializes the satellite database connection pool.
 // The caller must hold satelliteMutex.
@@ -93,8 +98,15 @@ func GetSatelliteDB() *sql.DB {
 	var err error
 	opened := database == nil
 	if opened {
+		if time.Now().Before(satelliteRetryAt) {
+			satelliteMutex.Unlock()
+			return nil
+		}
 		err = initSatellite()
 		database = SatelliteDB
+		if err != nil {
+			satelliteRetryAt = time.Now().Add(satelliteRetryDelay)
+		}
 	}
 	satelliteMutex.Unlock()
 
