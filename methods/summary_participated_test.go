@@ -59,7 +59,11 @@ func TestListSummaryStatus_AppendsParticipatedConversations(t *testing.T) {
 	resolveLinkedIDToUniqueIDFunc = func(string, []string) (string, error) { return "", nil }
 
 	updatedAt := time.Now()
-	fetchSummaryListFunc = func([]string) ([]SummaryListItem, error) {
+	// The row's transcript is chosen among the conversations of the user (a
+	// parked call picked up by another agent shares the same uniqueid).
+	var preferredNumbers []string
+	fetchSummaryListFunc = func(_ []string, numbers []string) ([]SummaryListItem, error) {
+		preferredNumbers = numbers
 		return []SummaryListItem{
 			{UniqueID: "main1", State: "done", HasTranscription: true, HasSummary: true, SrcNumber: "202", DstNumber: "3401234567", UpdatedAt: &updatedAt},
 		}, nil
@@ -99,6 +103,10 @@ func TestListSummaryStatus_AppendsParticipatedConversations(t *testing.T) {
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
 		t.Fatalf("decode: %v", err)
+	}
+
+	if len(preferredNumbers) != 1 || preferredNumbers[0] != "202" {
+		t.Fatalf("expected the user's numbers to pick the row transcript, got %v", preferredNumbers)
 	}
 
 	if len(response.Data) != 2 {

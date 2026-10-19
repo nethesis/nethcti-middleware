@@ -82,7 +82,7 @@ func GetFilteredHistory(c *gin.Context) {
 	}
 
 	enrichedRows := enrichLocalChannelArtifactRows(baseResponse.Rows)
-	filteredRows, err := filterHistoryRowsByArtifact(c, req.Artifact, enrichedRows)
+	filteredRows, err := filterHistoryRowsByArtifact(c, req.Artifact, req.CallType == "switchboard", enrichedRows)
 	if err != nil {
 		if isSatelliteSchemaMissingError(err) {
 			logs.Log("[WARNING][HISTORY] Satellite schema is not initialized while filtering history rows: " + err.Error())
@@ -338,7 +338,7 @@ func buildLegacyHistoryPath(req *historyFilterRequest) (string, url.Values, erro
 	return path, queryValues, nil
 }
 
-func filterHistoryRowsByArtifact(c *gin.Context, artifact string, rows []map[string]interface{}) ([]map[string]interface{}, error) {
+func filterHistoryRowsByArtifact(c *gin.Context, artifact string, switchboard bool, rows []map[string]interface{}) ([]map[string]interface{}, error) {
 	switch artifact {
 	case historyArtifactAll:
 		return rows, nil
@@ -365,7 +365,14 @@ func filterHistoryRowsByArtifact(c *gin.Context, artifact string, rows []map[str
 			return nil, err
 		}
 
-		statusItems, err := fetchSummaryListFunc(collectResolvedUniqueIDs(resolvedLookups))
+		// Same choice as the status list: in the personal view the row's
+		// transcript is the one the user took part in.
+		var preferredNumbers []string
+		if !switchboard {
+			preferredNumbers, _ = getUserPhoneNumbersFromContext(c)
+		}
+
+		statusItems, err := fetchSummaryListFunc(collectResolvedUniqueIDs(resolvedLookups), preferredNumbers)
 		if err != nil {
 			if isSatelliteSchemaMissingError(err) {
 				// No schema yet means none of the rows have a summary/transcription
