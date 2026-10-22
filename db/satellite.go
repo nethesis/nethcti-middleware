@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -21,17 +22,27 @@ import (
 var (
 	SatelliteDB          *sql.DB
 	satelliteSqlOpenFunc = sql.Open
+
+	satelliteMutex sync.Mutex
+	// satelliteDown is set once the unreachable database has been logged, so a
+	// stopped satellite-pgsql (transcriptions never enabled) does not flood the
+	// logs on every request.
+	satelliteDown bool
+	// satelliteRetryAt delays the next connection attempt after a failed one,
+	// so requests do not queue up on the mutex waiting for the ping timeout.
+	satelliteRetryAt time.Time
 )
 
-// InitSatellite initializes the satellite database connection pool.
-func InitSatellite() error {
+const satelliteRetryDelay = 5 * time.Second
+
+// initSatellite initializes the satellite database connection pool.
+// The caller must hold satelliteMutex.
+func initSatellite() error {
 	if strings.TrimSpace(configuration.Config.SatellitePgSQLHost) == "" ||
 		strings.TrimSpace(configuration.Config.SatellitePgSQLPort) == "" ||
 		strings.TrimSpace(configuration.Config.SatellitePgSQLDB) == "" ||
 		strings.TrimSpace(configuration.Config.SatellitePgSQLUser) == "" {
-		err := fmt.Errorf("missing satellite database configuration")
-		logs.Log("[ERROR][SATELLITE-DB] " + err.Error())
-		return err
+		return fmt.Errorf("missing satellite database configuration")
 	}
 
 	pgURL := url.URL{
@@ -45,57 +56,80 @@ func InitSatellite() error {
 
 	dsn := pgURL.String()
 
-	var err error
-	SatelliteDB, err = satelliteSqlOpenFunc("pgx", dsn)
+	// Open and ping a local pool: SatelliteDB is set only once the pool works,
+	// so concurrent readers never get a closed handle.
+	database, err := satelliteSqlOpenFunc("pgx", dsn)
 	if err != nil {
-		logs.Log("[CRITICAL][SATELLITE-DB] Failed to open database connection: " + err.Error())
 		return err
 	}
 
-	SatelliteDB.SetMaxOpenConns(10)
-	SatelliteDB.SetMaxIdleConns(2)
-	SatelliteDB.SetConnMaxLifetime(5 * time.Minute)
+	database.SetMaxOpenConns(10)
+	database.SetMaxIdleConns(2)
+	database.SetConnMaxLifetime(5 * time.Minute)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	if err := SatelliteDB.PingContext(ctx); err != nil {
-		logs.Log("[CRITICAL][SATELLITE-DB] Failed to ping database: " + err.Error())
-		_ = SatelliteDB.Close()
-		SatelliteDB = nil
+	if err := database.PingContext(ctx); err != nil {
+		_ = database.Close()
 		return err
 	}
 
+	SatelliteDB = database
 	logs.Log("[INFO][SATELLITE-DB] Database connection established successfully")
 	return nil
 }
 
 // CloseSatellite gracefully closes the satellite database connection pool.
 func CloseSatellite() error {
+	satelliteMutex.Lock()
+	defer satelliteMutex.Unlock()
 	if SatelliteDB != nil {
 		return SatelliteDB.Close()
 	}
 	return nil
 }
 
-// GetSatelliteDB returns a ready-to-use satellite DB connection, initializing it on demand.
+// GetSatelliteDB returns a ready-to-use satellite DB connection, initializing it
+// on demand. It returns nil when the database is not reachable: satellite-pgsql
+// runs only once call or voicemail transcription has been enabled.
 func GetSatelliteDB() *sql.DB {
-	if SatelliteDB == nil {
-		if err := InitSatellite(); err != nil {
-			logs.Log("[CRITICAL][SATELLITE-DB] Failed to initialize database: " + err.Error())
-			return SatelliteDB
+	satelliteMutex.Lock()
+	database := SatelliteDB
+	var err error
+	opened := database == nil
+	if opened {
+		if time.Now().Before(satelliteRetryAt) {
+			satelliteMutex.Unlock()
+			return nil
 		}
-		return SatelliteDB
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	if err := SatelliteDB.PingContext(ctx); err != nil {
-		logs.Log("[WARNING][SATELLITE-DB] Lost DB connection, attempting reconnect: " + err.Error())
-		if err := InitSatellite(); err != nil {
-			logs.Log("[CRITICAL][SATELLITE-DB] Failed to reconnect database: " + err.Error())
-			return SatelliteDB
+		err = initSatellite()
+		database = SatelliteDB
+		if err != nil {
+			satelliteRetryAt = time.Now().Add(satelliteRetryDelay)
 		}
 	}
+	satelliteMutex.Unlock()
 
-	return SatelliteDB
+	if !opened {
+		// The pool reconnects by itself once the database is back: it is
+		// never replaced, only reported as unavailable meanwhile.
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		err = database.PingContext(ctx)
+	}
+
+	satelliteMutex.Lock()
+	defer satelliteMutex.Unlock()
+	if err != nil {
+		if !satelliteDown {
+			satelliteDown = true
+			logs.Log("[WARNING][SATELLITE-DB] Database unavailable: " + err.Error())
+		}
+		return nil
+	}
+	if satelliteDown {
+		satelliteDown = false
+		logs.Log("[INFO][SATELLITE-DB] Database available again")
+	}
+	return database
 }

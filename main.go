@@ -49,11 +49,8 @@ func main() {
 	}
 	defer db.CloseCDR()
 
-	// Init satellite database
-	err = db.InitSatellite()
-	if err != nil {
-		logs.Log("[CRITICAL][DB] Failed to initialize satellite database: " + err.Error())
-	}
+	// Init satellite database: it is optional, GetSatelliteDB logs when unavailable
+	db.GetSatelliteDB()
 	defer db.CloseSatellite()
 
 	// Init store

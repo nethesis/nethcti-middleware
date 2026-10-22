@@ -84,6 +84,11 @@ func GetTranscriptionByUniqueID(c *gin.Context) {
 		return
 	}
 
+	if !satelliteDBAvailableFunc() {
+		writeSatelliteDBUnavailableResponse(c)
+		return
+	}
+
 	uniqueID, phoneNumbers, excludedSrcNums, ok, err := ensureUserParticipatedInCall(c, uniqueIDHint, linkedID)
 	if err != nil {
 		if errors.Is(err, errUnauthorized) {
