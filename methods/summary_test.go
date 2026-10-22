@@ -330,6 +330,49 @@ func TestCheckSummaryByUniqueID_NotFound(t *testing.T) {
 	}
 }
 
+func TestCheckSummaryByUniqueID_ReturnsServiceUnavailableWhenSatelliteDBIsDown(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store.UserSessionInit()
+	store.UserSessions["alice"] = &models.UserSession{Username: "alice", NethCTIToken: "token"}
+
+	configuration.Config.SatellitePgSQLHost = "test"
+	configuration.Config.SatellitePgSQLPort = "5432"
+	configuration.Config.SatellitePgSQLDB = "test"
+	configuration.Config.SatellitePgSQLUser = "test"
+
+	originalAvailable := satelliteDBAvailableFunc
+	originalGetUserInfo := getUserInfoFunc
+	defer func() {
+		satelliteDBAvailableFunc = originalAvailable
+		getUserInfoFunc = originalGetUserInfo
+	}()
+
+	satelliteDBAvailableFunc = func() bool { return false }
+	called := false
+	getUserInfoFunc = func(string) (*UserInfo, error) {
+		called = true
+		return &UserInfo{PhoneNumbers: []string{"100"}}, nil
+	}
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("JWT_PAYLOAD", jwtv5.MapClaims{"id": "alice"})
+		c.Next()
+	})
+	router.HEAD("/summary/:uniqueid", CheckSummaryByUniqueID)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("HEAD", "/summary/abc123", nil)
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 service unavailable, got %d", w.Code)
+	}
+	if called {
+		t.Fatalf("did not expect call participation to be resolved")
+	}
+}
+
 func TestCheckSummaryByUniqueID_ReturnsNotFoundWhenTranscriptsTableIsMissing(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	store.UserSessionInit()

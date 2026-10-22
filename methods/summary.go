@@ -94,6 +94,7 @@ var (
 	updateSummaryFunc                          = updateSummaryInDB
 	updateSummaryByIDFunc                      = updateSummaryByID
 	startSummaryWatchFunc = summary.StartSummaryWatchWithLinkedID
+	satelliteDBAvailableFunc = func() bool { return db.GetSatelliteDB() != nil }
 )
 
 // getTranscriptIDFromQuery returns the optional ?id= transcript row id used to
@@ -154,6 +155,11 @@ func WatchCallSummary(c *gin.Context) {
 			Message: "satellite database not configured",
 			Data:    nil,
 		}))
+		return
+	}
+
+	if !satelliteDBAvailableFunc() {
+		writeSatelliteDBUnavailableResponse(c)
 		return
 	}
 
@@ -236,6 +242,11 @@ func CheckSummaryByUniqueID(c *gin.Context) {
 	}
 
 	if !summary.IsSatelliteDBConfigured() {
+		c.Status(http.StatusServiceUnavailable)
+		return
+	}
+
+	if !satelliteDBAvailableFunc() {
 		c.Status(http.StatusServiceUnavailable)
 		return
 	}
@@ -331,6 +342,11 @@ func GetSummaryByUniqueID(c *gin.Context) {
 			Message: "satellite database not configured",
 			Data:    nil,
 		}))
+		return
+	}
+
+	if !satelliteDBAvailableFunc() {
+		writeSatelliteDBUnavailableResponse(c)
 		return
 	}
 
@@ -455,6 +471,11 @@ func UpdateSummaryByUniqueID(c *gin.Context) {
 		return
 	}
 
+	if !satelliteDBAvailableFunc() {
+		writeSatelliteDBUnavailableResponse(c)
+		return
+	}
+
 	uniqueID, _, _, ok, err := ensureUserParticipatedInCall(c, uniqueIDHint, linkedID)
 	if err != nil {
 		if errors.Is(err, errUnauthorized) {
@@ -544,6 +565,11 @@ func ListSummaryStatus(c *gin.Context) {
 			Message: "satellite database not configured",
 			Data:    nil,
 		}))
+		return
+	}
+
+	if !satelliteDBAvailableFunc() {
+		writeSatelliteDBUnavailableResponse(c)
 		return
 	}
 
