@@ -760,7 +760,7 @@ func TestListSummaryStatus_Succeeds(t *testing.T) {
 	checkUserParticipationByLinkedIDFunc = func(string, []string) (bool, error) {
 		return true, nil
 	}
-	fetchSummaryListFunc = func([]string) ([]SummaryListItem, error) {
+	fetchSummaryListFunc = func([]string, []string) ([]SummaryListItem, error) {
 		updatedAt := time.Now()
 		return []SummaryListItem{
 			{
@@ -837,7 +837,7 @@ func TestListSummaryStatus_MixedResults(t *testing.T) {
 	checkUserParticipationByLinkedIDFunc = func(string, []string) (bool, error) {
 		return true, nil
 	}
-	fetchSummaryListFunc = func([]string) ([]SummaryListItem, error) {
+	fetchSummaryListFunc = func([]string, []string) ([]SummaryListItem, error) {
 		updatedAt := time.Now()
 		return []SummaryListItem{
 			{
@@ -926,7 +926,7 @@ func TestListSummaryStatus_ReturnsNotFoundItemsWhenTranscriptsTableIsMissing(t *
 	checkUserParticipationFunc = func(string, []string) (bool, error) {
 		return true, nil
 	}
-	fetchSummaryListFunc = func([]string) ([]SummaryListItem, error) {
+	fetchSummaryListFunc = func([]string, []string) ([]SummaryListItem, error) {
 		return nil, &pgconn.PgError{Code: "42P01", Message: `relation "transcripts" does not exist`}
 	}
 
@@ -988,7 +988,7 @@ func TestListSummaryStatus_ReturnsServiceUnavailableWhenSatelliteDBIsUnavailable
 	checkUserParticipationFunc = func(string, []string) (bool, error) {
 		return true, nil
 	}
-	fetchSummaryListFunc = func([]string) ([]SummaryListItem, error) {
+	fetchSummaryListFunc = func([]string, []string) ([]SummaryListItem, error) {
 		return nil, sql.ErrConnDone
 	}
 
@@ -1058,7 +1058,7 @@ func TestListSummaryStatus_FiltersCallsOutsideUserParticipation(t *testing.T) {
 	}
 
 	var fetchedUniqueIDs []string
-	fetchSummaryListFunc = func(uniqueIDs []string) ([]SummaryListItem, error) {
+	fetchSummaryListFunc = func(uniqueIDs []string, _ []string) ([]SummaryListItem, error) {
 		fetchedUniqueIDs = append([]string{}, uniqueIDs...)
 		updatedAt := time.Now()
 		return []SummaryListItem{
@@ -1230,7 +1230,7 @@ func TestListSummaryStatus_DeduplicatesByUniqueID(t *testing.T) {
 
 	updatedAt := time.Now()
 	// The DB function uses DISTINCT ON (uniqueid), so it returns exactly one row per uniqueid.
-	fetchSummaryListFunc = func(uniqueIDs []string) ([]SummaryListItem, error) {
+	fetchSummaryListFunc = func(uniqueIDs []string, _ []string) ([]SummaryListItem, error) {
 		items := make([]SummaryListItem, 0, len(uniqueIDs))
 		for _, uid := range uniqueIDs {
 			items = append(items, SummaryListItem{

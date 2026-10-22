@@ -612,8 +612,22 @@ func ListSummaryStatus(c *gin.Context) {
 		return
 	}
 
+	// Personal view: when several conversations share the row's uniqueid (a
+	// parked call picked up by another agent keeps the same CDR uniqueid), pick
+	// the one the user took part in. Switchboard view keeps the latest one.
+	switchboard := false
+	if c.GetBool("summaryStatusSwitchboard") {
+		if username, uerr := getUsernameFromContext(c); uerr == nil {
+			switchboard = userHasSwitchboardCapability(username)
+		}
+	}
+	var preferredNumbers []string
+	if !switchboard {
+		preferredNumbers, _ = getUserPhoneNumbersFromContext(c)
+	}
+
 	resolvedUniqueIDs := collectResolvedUniqueIDs(resolvedLookups)
-	items, err := fetchSummaryListFunc(resolvedUniqueIDs)
+	items, err := fetchSummaryListFunc(resolvedUniqueIDs, preferredNumbers)
 	if err != nil {
 		if isSatelliteSchemaMissingError(err) {
 			// No schema yet means none of the requested calls have a summary;
@@ -669,12 +683,6 @@ func ListSummaryStatus(c *gin.Context) {
 	// the legs the user took part in (e.g. a transfer consultation). Switchboard
 	// view (only if the user holds the cdr.ad_cdr capability): every conversation
 	// of the calls, regardless of participant.
-	switchboard := false
-	if c.GetBool("summaryStatusSwitchboard") {
-		if username, uerr := getUsernameFromContext(c); uerr == nil {
-			switchboard = userHasSwitchboardCapability(username)
-		}
-	}
 	result = appendParticipatedConversations(c, resolvedLookups, presentKeys, result, switchboard)
 
 	c.JSON(http.StatusOK, structs.Map(models.StatusOK{
@@ -1041,7 +1049,10 @@ func fetchSummaryDrawerFromDB(uniqueID string, phoneNumbers []string, excludedSr
 	}, true, nil
 }
 
-func fetchSummaryListFromDB(uniqueIDs []string) ([]SummaryListItem, error) {
+// fetchSummaryListFromDB returns one transcript per uniqueid. When
+// preferredNumbers is set, a transcript where one of them is a party wins over
+// the most recent one.
+func fetchSummaryListFromDB(uniqueIDs []string, preferredNumbers []string) ([]SummaryListItem, error) {
 	if len(uniqueIDs) == 0 {
 		return []SummaryListItem{}, nil
 	}
@@ -1055,15 +1066,23 @@ func fetchSummaryListFromDB(uniqueIDs []string) ([]SummaryListItem, error) {
 	defer cancel()
 
 	placeholders := buildPostgresPlaceholders(len(uniqueIDs), 1)
+	orderBy := "uniqueid, updated_at DESC, id DESC"
+	if len(preferredNumbers) > 0 {
+		phonePlaceholders := buildPostgresPlaceholders(len(preferredNumbers), len(uniqueIDs)+1)
+		orderBy = fmt.Sprintf("uniqueid, (src_number IN (%s) OR dst_number IN (%s)) DESC, updated_at DESC, id DESC", phonePlaceholders, phonePlaceholders)
+	}
 	query := fmt.Sprintf(`
 		SELECT DISTINCT ON (uniqueid) id, uniqueid, cleaned_transcription, raw_transcription, summary, state, src_number, dst_number, updated_at
 		FROM transcripts
 		WHERE deleted_at IS NULL AND uniqueid IN (%s)
-		ORDER BY uniqueid, updated_at DESC, id DESC`, placeholders)
+		ORDER BY %s`, placeholders, orderBy)
 
-	args := make([]interface{}, 0, len(uniqueIDs))
+	args := make([]interface{}, 0, len(uniqueIDs)+len(preferredNumbers))
 	for _, id := range uniqueIDs {
 		args = append(args, id)
+	}
+	for _, number := range preferredNumbers {
+		args = append(args, number)
 	}
 
 	rows, err := database.QueryContext(queryCtx, query, args...)

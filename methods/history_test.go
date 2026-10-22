@@ -46,7 +46,7 @@ func TestHistorySummaryLookupKey_PrefersUniqueID(t *testing.T) {
 }
 
 func TestGetFilteredHistory_ReturnsEmptyRowsWhenTranscriptsTableIsMissing(t *testing.T) {
-	router, cleanup := setupHistoryArtifactTest(t, func([]string) ([]SummaryListItem, error) {
+	router, cleanup := setupHistoryArtifactTest(t, func([]string, []string) ([]SummaryListItem, error) {
 		return nil, &pgconn.PgError{Code: "42P01", Message: `relation "transcripts" does not exist`}
 	})
 	defer cleanup()
@@ -74,7 +74,7 @@ func TestGetFilteredHistory_ReturnsEmptyRowsWhenTranscriptsTableIsMissing(t *tes
 }
 
 func TestGetFilteredHistory_ReturnsServiceUnavailableWhenSatelliteDBIsUnavailable(t *testing.T) {
-	router, cleanup := setupHistoryArtifactTest(t, func([]string) ([]SummaryListItem, error) {
+	router, cleanup := setupHistoryArtifactTest(t, func([]string, []string) ([]SummaryListItem, error) {
 		return nil, sql.ErrConnDone
 	})
 	defer cleanup()
@@ -102,7 +102,7 @@ func TestGetFilteredHistory_ReturnsServiceUnavailableWhenSatelliteDBIsUnavailabl
 	}
 }
 
-func setupHistoryArtifactTest(t *testing.T, fetchList func([]string) ([]SummaryListItem, error)) (*gin.Engine, func()) {
+func setupHistoryArtifactTest(t *testing.T, fetchList func([]string, []string) ([]SummaryListItem, error)) (*gin.Engine, func()) {
 	t.Helper()
 
 	gin.SetMode(gin.TestMode)
