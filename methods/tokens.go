@@ -22,6 +22,7 @@ var allowedIntegrationAudiences = map[string]struct{}{
 	"phone-island": {},
 	"mobile-app":   {},
 	"nethlink":     {},
+	"chat-island":  {},
 }
 
 // -----------------------------------------------------------------------------
