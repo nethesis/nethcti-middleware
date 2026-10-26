@@ -1111,7 +1111,7 @@ paths:
           required: true
           schema:
             type: string
-            enum: [phone-island, mobile-app, nethlink]
+            enum: [phone-island, mobile-app, nethlink, chat-island]
           description: Integration token audience
       responses:
         '200':
@@ -1151,7 +1151,7 @@ paths:
           required: true
           schema:
             type: string
-            enum: [phone-island, mobile-app, nethlink]
+            enum: [phone-island, mobile-app, nethlink, chat-island]
           description: Integration token audience
       responses:
         '200':
@@ -1185,7 +1185,7 @@ paths:
           required: true
           schema:
             type: string
-            enum: [phone-island, mobile-app, nethlink]
+            enum: [phone-island, mobile-app, nethlink, chat-island]
           description: Integration token audience
       responses:
         '204':
