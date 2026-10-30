@@ -189,6 +189,7 @@ func WsProxyHandler(c *gin.Context) {
 								user := &UserConnection{
 									Username:             session.Username,
 									AccessKeyId:          accessKeyId,
+									JWTToken:             clientJWTToken,
 									DisplayName:          displayName,
 									PhoneNumbers:         phoneNumbers,
 									TranscriptionEnabled: false,
@@ -230,6 +231,23 @@ func WsProxyHandler(c *gin.Context) {
 	}()
 
 	<-errc
+}
+
+// CloseRevokedConnections disconnects the websockets of a user logged in with
+// a token that is no longer valid, e.g. after a password change
+func CloseRevokedConnections(username string) int {
+	session := store.UserSessions[username]
+	closed := 0
+	for conn, user := range connManager.GetAllConnections() {
+		if user.AccessKeyId != username || (session != nil && utils.Contains(user.JWTToken, session.JWTTokens)) {
+			continue
+		}
+		// socket.io disconnect packet: the client logs out instead of reconnecting
+		connManager.WriteMessage(conn, websocket.TextMessage, []byte("41"))
+		conn.Close()
+		closed++
+	}
+	return closed
 }
 
 func parseSocketIOEvent(msg []byte) (string, map[string]interface{}, bool) {
