@@ -33,6 +33,9 @@ const (
 // Matches the ephemeral user created by the support tunnel-client.
 var supportUsernameRe = regexp.MustCompile(`^support-[a-z0-9-]{1,64}$`)
 
+// A real FreePBX SHA1 hash: an empty one would make the key derivable from the secret alone.
+var sha1HexRe = regexp.MustCompile(`^[0-9a-fA-F]{40}$`)
+
 var errUserNotFound = errors.New("user not found")
 
 // Replaced in tests.
@@ -94,8 +97,18 @@ func secretKeyMatches(provided, expected string) bool {
 	return expected != "" && subtle.ConstantTimeCompare([]byte(provided), []byte(expected)) == 1
 }
 
-// SupportAuthThrottled reports whether ip exceeded the failed support login budget.
-func SupportAuthThrottled(ip string) bool {
+// supportFailureKey scopes the failure budget to one support user from one IP:
+// every operator request reaches the middleware from the same proxy address.
+func supportFailureKey(ip, username string) string {
+	return ip + " " + username
+}
+
+// SupportAuthThrottled reports whether ip exceeded the failed login budget for username.
+func SupportAuthThrottled(ip, username string) bool {
+	return supportThrottled(supportFailureKey(ip, username))
+}
+
+func supportThrottled(ip string) bool {
 	supportFailuresMu.Lock()
 	defer supportFailuresMu.Unlock()
 
@@ -142,6 +155,7 @@ func RewriteSupportToAdmin(c *gin.Context) bool {
 	secretKey := c.GetHeader("Secretkey")
 	secret := configuration.Config.NethVoiceSecretKey
 	ip := c.ClientIP()
+	key := supportFailureKey(ip, username)
 
 	if secret == "" {
 		logs.Log("[ERROR][FREEPBX_AUTH] NETHVOICESECRETKEY not configured, cannot validate support user")
@@ -149,20 +163,23 @@ func RewriteSupportToAdmin(c *gin.Context) bool {
 	}
 
 	if !supportUsernameRe.MatchString(username) {
-		recordSupportFailure(ip)
+		recordSupportFailure(key)
 		logs.Log("[WARNING][FREEPBX_AUTH] malformed support username from " + ip)
 		return false
 	}
 
 	userSHA1, err := lookupSupportUserSHA1(username)
+	if err == nil && !sha1HexRe.MatchString(userSHA1) {
+		err = errors.New("ampusers row has no valid password hash")
+	}
 	if err != nil {
-		recordSupportFailure(ip)
+		recordSupportFailure(key)
 		logs.Log(fmt.Sprintf("[WARNING][FREEPBX_AUTH] support user %s from %s: %v", username, ip, err))
 		return false
 	}
 
 	if !secretKeyMatches(secretKey, computeFreePBXSecretKey(username, userSHA1, secret)) {
-		recordSupportFailure(ip)
+		recordSupportFailure(key)
 		logs.Log(fmt.Sprintf("[WARNING][FREEPBX_AUTH] invalid Secretkey for support user %s from %s", username, ip))
 		return false
 	}
@@ -173,7 +190,7 @@ func RewriteSupportToAdmin(c *gin.Context) bool {
 		return false
 	}
 
-	clearSupportFailures(ip)
+	clearSupportFailures(key)
 
 	c.Request.Header.Set("User", "admin")
 	c.Request.Header.Set("Secretkey", computeFreePBXSecretKey("admin", adminSHA1, secret))

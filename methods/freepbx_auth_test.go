@@ -70,13 +70,16 @@ func TestRewriteSupportToAdmin(t *testing.T) {
 	lookupSupportUserSHA1 = func(u string) (string, error) {
 		lookups++
 		if u == "support-neth-1-2" {
-			return "supporthash", nil
+			return "a94a8fe5ccb19ba61c4c0873d391e987982fbbd3", nil
+		}
+		if u == "support-neth-empty" {
+			return "", nil
 		}
 		return "", errUserNotFound
 	}
 	lookupAdminSHA1 = func() (string, error) { return "adminhash", nil }
 
-	good := computeFreePBXSecretKey("support-neth-1-2", "supporthash", "secret")
+	good := computeFreePBXSecretKey("support-neth-1-2", "a94a8fe5ccb19ba61c4c0873d391e987982fbbd3", "secret")
 
 	c := newSupportContext("support-neth-1-2", good, "192.0.2.1")
 	if !RewriteSupportToAdmin(c) {
@@ -95,6 +98,10 @@ func TestRewriteSupportToAdmin(t *testing.T) {
 		t.Error("expected no DB lookup for malformed username")
 	}
 
+	if RewriteSupportToAdmin(newSupportContext("support-neth-empty", computeFreePBXSecretKey("support-neth-empty", "", "secret"), "192.0.2.5")) {
+		t.Error("expected a row without a password hash to fail")
+	}
+
 	if RewriteSupportToAdmin(newSupportContext("support-neth-1-2", "bad", "192.0.2.3")) {
 		t.Error("expected wrong Secretkey to fail")
 	}
@@ -106,26 +113,30 @@ func TestRewriteSupportToAdmin(t *testing.T) {
 }
 
 func TestSupportAuthThrottled(t *testing.T) {
-	ip := "198.51.100.7"
-	defer clearSupportFailures(ip)
+	ip, user := "198.51.100.7", "support-neth-0001"
+	key := supportFailureKey(ip, user)
+	defer clearSupportFailures(key)
 
 	for i := 0; i < supportMaxFailures; i++ {
-		if SupportAuthThrottled(ip) {
+		if SupportAuthThrottled(ip, user) {
 			t.Fatalf("throttled too early after %d failures", i)
 		}
-		recordSupportFailure(ip)
+		recordSupportFailure(key)
 	}
-	if !SupportAuthThrottled(ip) {
-		t.Error("expected ip to be throttled")
+	if !SupportAuthThrottled(ip, user) {
+		t.Error("expected user to be throttled from ip")
 	}
-	if SupportAuthThrottled("198.51.100.8") {
+	if SupportAuthThrottled("198.51.100.8", user) {
 		t.Error("expected other ip not to be throttled")
+	}
+	if SupportAuthThrottled(ip, "support-neth-0002") {
+		t.Error("expected other support user behind the same proxy not to be throttled")
 	}
 
 	supportFailuresMu.Lock()
-	supportFailures[ip].first = supportFailures[ip].first.Add(-supportFailureWindow - 1)
+	supportFailures[key].first = supportFailures[key].first.Add(-supportFailureWindow - 1)
 	supportFailuresMu.Unlock()
-	if SupportAuthThrottled(ip) {
+	if SupportAuthThrottled(ip, user) {
 		t.Error("expected throttling to expire after the window")
 	}
 }

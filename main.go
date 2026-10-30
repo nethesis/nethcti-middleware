@@ -265,7 +265,7 @@ func createRouter() *gin.Engine {
 
 		if isFreePBXAPI && isSupportUser {
 			// Support user on FreePBX API: validate and rewrite to admin credentials
-			if methods.SupportAuthThrottled(c.ClientIP()) {
+			if methods.SupportAuthThrottled(c.ClientIP(), c.GetHeader("User")) {
 				c.JSON(429, gin.H{"code": 429, "message": "too many failed support authentications"})
 				return
 			}
