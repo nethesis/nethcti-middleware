@@ -3,7 +3,7 @@ module github.com/nethesis/nethcti-middleware
 go 1.26.10
 
 require (
-	github.com/appleboy/gin-jwt/v3 v3.5.3
+	github.com/appleboy/gin-jwt/v3 v3.6.0
 	github.com/dgryski/dgoogauth v0.0.0-20190221195224-5a805980a5f3
 	github.com/eclipse/paho.mqtt.golang v1.5.1
 	github.com/fatih/structs v1.1.0
