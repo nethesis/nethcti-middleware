@@ -207,7 +207,7 @@ func TestPasswordInfoAndUserPasswordChange(t *testing.T) {
 		var data map[string]interface{}
 		assert.Eventually(t, func() bool {
 			_, data = getPasswordInfo(t, token)
-			return data["expiration"] != nil
+			return data["refreshing"] == false && data["expiration"] != nil
 		}, 5*time.Second, 100*time.Millisecond)
 
 		assert.Equal(t, true, data["enabled"])

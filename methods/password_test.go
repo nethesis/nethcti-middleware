@@ -63,3 +63,17 @@ func TestPortalDisabled(t *testing.T) {
 	assert.False(t, expired)
 	assert.Nil(t, policy)
 }
+
+func TestRefreshing(t *testing.T) {
+	assert.False(t, isRefreshing("alice"))
+
+	// overlapping logins: refreshing until the last one is done
+	setRefreshing("alice", 1)
+	setRefreshing("alice", 1)
+	assert.True(t, isRefreshing("alice"))
+	assert.False(t, isRefreshing("bob"))
+	setRefreshing("alice", -1)
+	assert.True(t, isRefreshing("alice"))
+	setRefreshing("alice", -1)
+	assert.False(t, isRefreshing("alice"))
+}

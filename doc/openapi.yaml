@@ -95,6 +95,9 @@ components:
           format: date-time
           nullable: true
           description: When the info was read from the user portal; null if not read yet
+        refreshing:
+          type: boolean
+          description: The info is being read again after a login and may be stale
         policy:
           type: object
           nullable: true

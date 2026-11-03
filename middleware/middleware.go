@@ -209,7 +209,7 @@ func InitJWT() *jwt.GinJWTMiddleware {
 
 			// Cache the password expiration info, the user portal needs the password
 			if !useSso {
-				go methods.RefreshPasswordInfo(username, password)
+				methods.RefreshPasswordInfo(username, password)
 			}
 
 			// Check if user session already exists (multi-session support)

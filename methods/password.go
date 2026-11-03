@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -44,6 +45,13 @@ type passwordInfo struct {
 
 // Background refresh deadline, the request context is gone by then
 const refreshTimeout = time.Minute
+
+// Background refreshes in progress per user: until done, the cached info may
+// be stale (e.g. the password was changed or expired since the last login)
+var (
+	refreshes      = map[string]int{}
+	refreshesMutex sync.Mutex
+)
 
 // Expiration checks run on every login rejected by the V1 server, wrong
 // passwords included: never queue them, when the slots are taken the login
@@ -76,7 +84,7 @@ func IsPasswordExpired(ctx context.Context, username, password string) (bool, *u
 		return false, nil
 	}
 
-	expiration, err := userportal.GetPasswordExpiration(ctx, token)
+	expiration, policy, err := readExpirationAndPolicy(ctx, username, token)
 	if err != nil {
 		logs.Log("[WARNING][PASSWORD] cannot read password expiration for user " + username + ": " + err.Error())
 		return false, nil
@@ -84,34 +92,35 @@ func IsPasswordExpired(ctx context.Context, username, password string) (bool, *u
 	if !expiration.Expired && !expiration.MustChange {
 		return false, nil
 	}
-
-	// the policy is a hint for the change password form: it is optional
-	policy, err := userportal.GetPasswordPolicy(ctx, token)
-	if err != nil {
-		logs.Log("[WARNING][PASSWORD] cannot read password policy for user " + username + ": " + err.Error())
-	}
 	return true, policy
 }
 
-// RefreshPasswordInfo reads the password expiration info of the user from the
-// user portal and caches it. It runs at every login, as the password can be
-// changed elsewhere too (e.g. the NS8 user portal). Errors are logged only:
-// the info is optional.
+// RefreshPasswordInfo reads in background the password expiration info of the
+// user from the user portal and caches it. It runs at every login, as the
+// password can be changed elsewhere too (e.g. the NS8 user portal). Errors are
+// logged only: the info is optional.
 func RefreshPasswordInfo(username, password string) {
 	if !userportal.Enabled() || !validUsername(username) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), refreshTimeout)
-	defer cancel()
+	// marked before returning: the info is reported as refreshing as soon as
+	// the login completes
+	setRefreshing(username, 1)
+	go func() {
+		defer setRefreshing(username, -1)
 
-	token, err := userportal.Login(ctx, username, password)
-	if err != nil {
-		logs.Log("[WARNING][PASSWORD] user portal login failed for user " + username + ": " + err.Error())
-		return
-	}
+		ctx, cancel := context.WithTimeout(context.Background(), refreshTimeout)
+		defer cancel()
 
-	refreshPasswordInfo(ctx, username, token)
+		token, err := userportal.Login(ctx, username, password)
+		if err != nil {
+			logs.Log("[WARNING][PASSWORD] user portal login failed for user " + username + ": " + err.Error())
+			return
+		}
+
+		refreshPasswordInfo(ctx, username, token)
+	}()
 }
 
 // GetPasswordInfo returns the cached password expiration info of the user
@@ -119,13 +128,15 @@ func GetPasswordInfo(c *gin.Context) {
 	claims := jwt.ExtractClaims(c)
 	username := claims["id"].(string)
 
-	// updated_at is null until the info is read from the user portal
+	// updated_at is null until the info is read from the user portal;
+	// refreshing is true while it is read again after a login
 	info := gin.H{
 		"enabled":    userportal.Enabled(),
 		"expiration": nil,
 		"expired":    false,
 		"policy":     nil,
 		"updated_at": nil,
+		"refreshing": isRefreshing(username),
 	}
 
 	if userportal.Enabled() {
@@ -290,7 +301,7 @@ func changePassword(c *gin.Context, username, currentPassword, newPassword strin
 }
 
 func refreshPasswordInfo(ctx context.Context, username, token string) {
-	expiration, err := userportal.GetPasswordExpiration(ctx, token)
+	expiration, policy, err := readExpirationAndPolicy(ctx, username, token)
 	if err != nil {
 		logs.Log("[WARNING][PASSWORD] cannot read password expiration for user " + username + ": " + err.Error())
 		return
@@ -299,20 +310,47 @@ func refreshPasswordInfo(ctx context.Context, username, token string) {
 	info := passwordInfo{
 		Expiration: expiration.Expiration,
 		MustChange: expiration.MustChange,
+		Policy:     policy,
 		UpdatedAt:  time.Now(),
 		PortalURL:  configuration.Config.UserPortalURL,
-	}
-
-	// the policy is a hint for the change password form: it is optional
-	if policy, err := userportal.GetPasswordPolicy(ctx, token); err == nil {
-		info.Policy = policy
-	} else {
-		logs.Log("[WARNING][PASSWORD] cannot read password policy for user " + username + ": " + err.Error())
 	}
 
 	if err := writePasswordInfo(username, info); err != nil {
 		logs.Log("[ERROR][PASSWORD] cannot save password info for user " + username + ": " + err.Error())
 	}
+}
+
+// readExpirationAndPolicy reads the password expiration and policy of the user
+// at the same time, as every user portal call takes a while. The policy is a
+// hint for the change password form: it is optional, nil when not available.
+func readExpirationAndPolicy(ctx context.Context, username, token string) (*userportal.Expiration, *userportal.Policy, error) {
+	policyCh := make(chan *userportal.Policy, 1)
+	go func() {
+		policy, err := userportal.GetPasswordPolicy(ctx, token)
+		if err != nil {
+			logs.Log("[WARNING][PASSWORD] cannot read password policy for user " + username + ": " + err.Error())
+			policy = nil
+		}
+		policyCh <- policy
+	}()
+
+	expiration, err := userportal.GetPasswordExpiration(ctx, token)
+	return expiration, <-policyCh, err
+}
+
+func setRefreshing(username string, delta int) {
+	refreshesMutex.Lock()
+	defer refreshesMutex.Unlock()
+	refreshes[username] += delta
+	if refreshes[username] <= 0 {
+		delete(refreshes, username)
+	}
+}
+
+func isRefreshing(username string) bool {
+	refreshesMutex.Lock()
+	defer refreshesMutex.Unlock()
+	return refreshes[username] > 0
 }
 
 func isExpired(expiration *string) bool {
