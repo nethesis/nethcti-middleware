@@ -80,6 +80,10 @@ type Configuration struct {
 	// safety net; 0 disables it
 	GlobalRateLimitAverage int `json:"global_rate_limit_average"`
 	GlobalRateLimitBurst   int `json:"global_rate_limit_burst"`
+
+	// Base URL of the account provider users-admin API (user portal), used
+	// for password expiration and change; empty disables the feature
+	UserPortalURL string `json:"user_portal_url"`
 }
 
 var Config = Configuration{}
@@ -383,5 +387,11 @@ func Init() {
 		Config.GlobalRateLimitBurst = v
 	} else {
 		Config.GlobalRateLimitBurst = 100
+	}
+
+	// User portal (users-admin API) of the account provider
+	Config.UserPortalURL = strings.TrimRight(os.Getenv("NETHVOICE_USER_PORTAL_URL"), "/")
+	if Config.UserPortalURL != "" {
+		logs.Log("[INFO][ENV] user portal password management is enabled")
 	}
 }

@@ -37,6 +37,7 @@ import (
 // Global variables for test server URLs and mock server
 var testServerURL string
 var mockNetCTI *httptest.Server
+var mockUserPortal *httptest.Server
 var restoreBatchInsert func()
 
 // TestMain sets up the test environment once for all tests
@@ -61,6 +62,8 @@ func setupTestEnvironment() {
 	// Start mock NetCTI server first
 	mockNetCTI = mockNetCTIServer()
 	mockURL := strings.TrimPrefix(mockNetCTI.URL, "http://")
+	mockUserPortal = mockUserPortalServer()
+	os.Setenv("NETHVOICE_USER_PORTAL_URL", mockUserPortal.URL+"/")
 
 	// Set environment variables for the middleware
 	os.Setenv("NETHVOICE_MIDDLEWARE_LISTEN_ADDRESS", "127.0.0.1:8899")
@@ -162,6 +165,10 @@ func cleanupTestEnvironment() {
 	if mockNetCTI != nil {
 		mockNetCTI.Close()
 	}
+	if mockUserPortal != nil {
+		mockUserPortal.Close()
+	}
+	os.Unsetenv("NETHVOICE_USER_PORTAL_URL")
 	if restoreBatchInsert != nil {
 		restoreBatchInsert()
 	}
@@ -901,9 +908,14 @@ func TestImportPhonebookCSV_Capability(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	// Ensure middleware uses test secret
+	previousSecret := configuration.Config.Secret_jwt
 	configuration.Config.Secret_jwt = "test-phonebook-secret"
 	// Reset cached middleware to use new secret
 	middleware.ResetJWTMiddleware()
+	t.Cleanup(func() {
+		configuration.Config.Secret_jwt = previousSecret
+		middleware.ResetJWTMiddleware()
+	})
 
 	// Initialize store
 	store.UserSessionInit()

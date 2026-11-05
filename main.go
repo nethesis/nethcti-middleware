@@ -161,6 +161,8 @@ func createRouter() *gin.Engine {
 	// set-route can guard it with forwardAuth (injects the verified Remote-User)
 	api.POST("/api/sso-login", middleware.BodyLimit(32<<10), middleware.InstanceJWT().LoginHandler)
 	api.GET("/ws/", socket.WsProxyHandler)
+	// Change an expired password: the current password authenticates the request
+	api.POST("/password/change", middleware.BodyLimit(32<<10), methods.ChangePassword)
 
 	// Authentication required endpoints
 	api.Use(middleware.InstanceJWT().MiddlewareFunc())
@@ -180,6 +182,10 @@ func createRouter() *gin.Engine {
 		api.GET("/2fa/status", methods.Get2FAStatus)
 		api.POST("/2fa/recovery-codes", methods.Get2FARecoveryCodes)
 		api.GET("/2fa/qr-code", methods.QRCode)
+
+		// Password
+		api.GET("/password/info", methods.GetPasswordInfo)
+		api.POST("/user/password", middleware.BodyLimit(32<<10), methods.ChangeUserPassword)
 
 		// Token
 		// @migration-replaces: POST /authentication/phone_island_token_login

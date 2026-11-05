@@ -15,6 +15,8 @@ import (
 	"sync"
 	"time"
 
+	jwtv5 "github.com/golang-jwt/jwt/v5"
+
 	"github.com/nethesis/nethcti-middleware/configuration"
 	"github.com/nethesis/nethcti-middleware/logs"
 	"github.com/nethesis/nethcti-middleware/models"
@@ -178,6 +180,43 @@ func RemoveAllJWTTokens(username string) error {
 	}
 
 	return nil
+}
+
+// RemoveSessionJWTTokens removes the login tokens of the user except keep.
+// Integration tokens (issued with an audience) stay valid. Returns how many
+// tokens were removed.
+func RemoveSessionJWTTokens(username, keep string) (int, error) {
+	userSession, exists := UserSessions[username]
+	if !exists || userSession == nil {
+		return 0, nil
+	}
+
+	parser := jwtv5.NewParser(jwtv5.WithoutClaimsValidation())
+	updatedTokens := make([]string, 0, len(userSession.JWTTokens))
+	for _, token := range userSession.JWTTokens {
+		claims := jwtv5.MapClaims{}
+		_, _, err := parser.ParseUnverified(token, claims)
+		if token == keep || (err == nil && claims["aud"] != nil) {
+			updatedTokens = append(updatedTokens, token)
+		}
+	}
+
+	removed := len(userSession.JWTTokens) - len(updatedTokens)
+	if removed == 0 {
+		return 0, nil
+	}
+	userSession.JWTTokens = updatedTokens
+
+	// Remove user session if no tokens remain
+	if len(updatedTokens) == 0 {
+		RevokeLegacySession(username, userSession)
+	}
+
+	if err := SaveSessions(); err != nil {
+		return removed, fmt.Errorf("failed to save sessions after token removal: %w", err)
+	}
+
+	return removed, nil
 }
 
 // RevokeLegacySession deletes the session entry and revokes legacy persistent token (subtype "user")
