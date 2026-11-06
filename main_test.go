@@ -25,6 +25,7 @@ import (
 	"github.com/gin-gonic/gin"
 	jwtv5 "github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/nethesis/nethcti-middleware/configuration"
 	"github.com/nethesis/nethcti-middleware/db"
@@ -302,6 +303,56 @@ func TestFeatureCodesServedLocally(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, `{"pickup":"*8","audio_test":"*41"}`, string(body))
+}
+
+func TestAllAvatarsServedLocally(t *testing.T) {
+	resetTestState()
+
+	_, err := db.GetDB().Exec("CREATE TABLE IF NOT EXISTS `user_settings` (`id` int(11) NOT NULL AUTO_INCREMENT, `username` varchar(50) NOT NULL, `key_name` varchar(50) NOT NULL, `value` mediumtext, PRIMARY KEY (`id`), UNIQUE KEY `username_key_name` (`username`,`key_name`)) ENGINE=MyISAM DEFAULT CHARSET=utf8")
+	require.NoError(t, err)
+	_, err = db.GetDB().Exec("DELETE FROM `user_settings`")
+	require.NoError(t, err)
+	defer db.GetDB().Exec("DELETE FROM `user_settings`")
+	_, err = db.GetDB().Exec("INSERT INTO `user_settings` (`username`, `key_name`, `value`) VALUES ('zeta', 'avatar', 'z'), ('alice', 'theme', 'dark'), ('alice', 'avatar', 'a'), ('200', 'avatar', NULL), ('bob', 'theme', 'light')")
+	require.NoError(t, err)
+
+	unauthenticated, err := http.Get(testServerURL + "/user/all_avatars")
+	assert.NoError(t, err)
+	unauthenticated.Body.Close()
+	assert.Equal(t, http.StatusUnauthorized, unauthenticated.StatusCode)
+
+	token := utils.PerformLogin(testServerURL)
+	req, _ := http.NewRequest(http.MethodGet, testServerURL+"/user/all_avatars", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	assert.NoError(t, err)
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, `{"200":null,"zeta":"z","alice":"a"}`, string(body))
+}
+
+func TestParamURLServedLocally(t *testing.T) {
+	resetTestState()
+
+	unauthenticated, err := http.Get(testServerURL + "/user/paramurl")
+	assert.NoError(t, err)
+	unauthenticated.Body.Close()
+	assert.Equal(t, http.StatusUnauthorized, unauthenticated.StatusCode)
+
+	token := utils.PerformLogin(testServerURL)
+	req, _ := http.NewRequest(http.MethodGet, testServerURL+"/user/paramurl", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	assert.NoError(t, err)
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, `{}`, string(body))
 }
 
 // Test 2FA QR code generation

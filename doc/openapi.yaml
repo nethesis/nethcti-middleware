@@ -1835,6 +1835,85 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /user/all_avatars:
+    get:
+      summary: Get the avatars of all users
+      operationId: getAllAvatars
+      tags:
+        - Users
+      description: |
+        Served by the middleware from the `user_settings` table (`avatar` setting),
+        replacing the legacy nethcti-server endpoint with the same path and response shape.
+        Users without an avatar setting are omitted; an avatar stored as NULL is returned as `null`.
+        Keys follow the legacy server order.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Avatar data URLs keyed by username
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  type: string
+                  nullable: true
+              example:
+                giovanni: 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQ...'
+                alessandro: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUg...'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Failed to read the user settings (empty body)
+
+  /user/paramurl:
+    get:
+      summary: Get the parameterized URL of the user's profile
+      operationId: getParamURL
+      tags:
+        - Users
+      description: |
+        Served by the middleware from the `rest_cti_profiles_paramurl` table of the `asterisk`
+        database, using the profile of the authenticated user from `users.json`. It replaces the
+        legacy nethcti-server endpoint with the same path and response shape. The response is an
+        empty object when the profile has no parameterized URL or the user has no profile.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Parameterized URL of the user's profile, or an empty object
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: integer
+                  profile_id:
+                    type: integer
+                  url:
+                    type: string
+                  only_queues:
+                    type: boolean
+                    description: Open the URL only for calls coming through a queue
+              example:
+                id: 84
+                profile_id: 3
+                url: 'https://mycrm.it/script.php?caller=$CALLER_NAME&number=$CALLER_NUMBER'
+                only_queues: false
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Failed to read the parameterized URL (empty body)
+
   /voicemail/list/{id}:
     get:
       summary: Get voicemail by numeric ID or proxy legacy list selectors
@@ -1953,6 +2032,8 @@ tags:
     description: Operator panel groups and their members
   - name: Asterisk Configuration
     description: Read-only Asterisk configuration exposed to CTI clients
+  - name: Users
+    description: User settings and profile data exposed to CTI clients
   - name: Voicemail
     description: Voicemail retrieval and legacy proxy behavior
   - name: Administration

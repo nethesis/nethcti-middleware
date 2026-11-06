@@ -220,6 +220,8 @@ func createRouter() *gin.Engine {
 
 		api.GET("/astproxy/opgroups", methods.GetOperatorGroups)
 		api.GET("/astproxy/feature_codes", methods.GetFeatureCodes)
+		api.GET("/user/all_avatars", methods.GetAllAvatars)
+		api.GET("/user/paramurl", methods.GetParamURL)
 
 		// Voicemail
 		api.GET("/voicemail/list/:id", methods.ListVoicemailByID)
