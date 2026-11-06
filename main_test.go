@@ -355,6 +355,58 @@ func TestParamURLServedLocally(t *testing.T) {
 	assert.Equal(t, `{}`, string(body))
 }
 
+func TestSpeeddialsServedLocally(t *testing.T) {
+	resetTestState()
+
+	for _, route := range []struct{ method, path string }{
+		{http.MethodGet, "/phonebook/speeddials"},
+		{http.MethodDelete, "/phonebook/speeddials"},
+		{http.MethodPost, "/phonebook/import_csv_speeddial"},
+	} {
+		req, _ := http.NewRequest(route.method, testServerURL+route.path, nil)
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		resp.Body.Close()
+		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode, route.method+" "+route.path)
+	}
+
+	_, err := db.GetDB().Exec("DELETE FROM cti_phonebook WHERE owner_id = 'testuser'")
+	require.NoError(t, err)
+	defer db.GetDB().Exec("DELETE FROM cti_phonebook WHERE owner_id = 'testuser'")
+	_, err = db.GetDB().Exec("INSERT INTO cti_phonebook (owner_id, type, name, speeddial_num) VALUES ('testuser', 'speeddial', 'Mario', '201')")
+	require.NoError(t, err)
+
+	token := utils.PerformLogin(testServerURL)
+	call := func(method, path, body string) (int, string) {
+		req, _ := http.NewRequest(method, testServerURL+path, strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		data, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		return resp.StatusCode, string(data)
+	}
+
+	status, body := call(http.MethodGet, "/phonebook/speeddials", "")
+	assert.Equal(t, http.StatusOK, status)
+	assert.Contains(t, body, `"owner_id":"testuser","type":"speeddial"`)
+	assert.Contains(t, body, `"name":"Mario"`)
+
+	status, body = call(http.MethodPost, "/phonebook/import_csv_speeddial", `{"file64":"data:text/csv;base64,bmFtZQ0KQQ0K"}`)
+	assert.Equal(t, http.StatusForbidden, status)
+	assert.Empty(t, body)
+
+	status, body = call(http.MethodDelete, "/phonebook/speeddials", "")
+	assert.Equal(t, http.StatusOK, status)
+	assert.Equal(t, `{"num":1}`, body)
+
+	status, body = call(http.MethodGet, "/phonebook/speeddials", "")
+	assert.Equal(t, http.StatusOK, status)
+	assert.Equal(t, `[]`, body)
+}
+
 // Test 2FA QR code generation
 func TestQRCode(t *testing.T) {
 	resetTestState()

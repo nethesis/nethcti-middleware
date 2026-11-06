@@ -213,6 +213,9 @@ func createRouter() *gin.Engine {
 		api.POST("/phonebook/delete_cticontact", middleware.RequireCapabilities("phonebook"), methods.DeleteLegacyCTIPhonebookContact)
 		api.POST("/phonebook/modify_cticontact", middleware.RequireCapabilities("phonebook"), methods.UpdateLegacyCTIPhonebookContact)
 		api.POST("/phonebook/import", middleware.RequireCapabilities("phonebook.ad_phonebook"), methods.ImportPhonebookCSV)
+		api.GET("/phonebook/speeddials", methods.GetSpeeddials)
+		api.DELETE("/phonebook/speeddials", methods.DeleteSpeeddials)
+		api.POST("/phonebook/import_csv_speeddial", methods.ImportSpeeddialsCSV)
 
 		// History
 		api.GET("/history/calls", methods.GetFilteredHistory)

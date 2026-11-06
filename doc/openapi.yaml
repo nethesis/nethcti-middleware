@@ -1387,6 +1387,142 @@ paths:
                     type: string
                     example: "forbidden: missing capability"
 
+  /phonebook/speeddials:
+    get:
+      summary: Get the speed dials of the authenticated user
+      operationId: getSpeeddials
+      tags:
+        - Phonebook
+      description: |
+        Returns the CTI phonebook contacts of type `speeddial` owned by the authenticated user,
+        ordered by name and company. It replaces the legacy nethcti-server endpoint with the same
+        path and response shape: every column is present and empty columns are `null`.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Speed dial contacts
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: integer
+                    owner_id:
+                      type: string
+                    type:
+                      type: string
+                      example: speeddial
+                    name:
+                      type: string
+                      nullable: true
+                    company:
+                      type: string
+                      nullable: true
+                    speeddial_num:
+                      type: string
+                      nullable: true
+                    notes:
+                      type: string
+                      nullable: true
+                  additionalProperties:
+                    type: string
+                    nullable: true
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Failed to read the speed dials (empty body)
+    delete:
+      summary: Delete all speed dials of the authenticated user
+      operationId: deleteSpeeddials
+      tags:
+        - Phonebook
+      description: |
+        Deletes every CTI phonebook contact of type `speeddial` owned by the authenticated user
+        and returns how many were deleted, like the legacy nethcti-server endpoint.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Number of deleted speed dials
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  num:
+                    type: integer
+              example:
+                num: 3
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Failed to delete the speed dials (empty body)
+
+  /phonebook/import_csv_speeddial:
+    post:
+      summary: Import speed dials from a CSV file
+      operationId: importSpeeddialsCSV
+      tags:
+        - Phonebook
+      description: |
+        Imports speed dials for the authenticated user from a base64 CSV sent as a data URL,
+        with the same parsing as the legacy nethcti-server endpoint: lines are separated by CRLF,
+        the first line holds the column names, the last line is always discarded (the trailing
+        CRLF), fields are split on commas without quoting, rows without a `name` field are
+        skipped and rows the database rejects are skipped silently. Owner and type are always
+        set to the authenticated user and `speeddial`. `num` is the number of data rows in the
+        file, including skipped ones. Requires the `phonebook` permission.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - file64
+              properties:
+                file64:
+                  type: string
+                  description: CSV file as data URL, for example `data:text/csv;base64,...`
+      responses:
+        '200':
+          description: Number of rows processed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  num:
+                    type: integer
+              example:
+                num: 2
+        '400':
+          description: Missing or non-string `file64` (empty body)
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: The user does not have the phonebook permission (empty body)
+        '500':
+          description: '`file64` is not a data URL (empty body)'
+
   /admin/phonebook/import:
     post:
       summary: Import phonebook contacts (Super Admin only)
