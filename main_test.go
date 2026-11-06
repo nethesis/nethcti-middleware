@@ -277,6 +277,33 @@ func TestOperatorGroupsServedLocally(t *testing.T) {
 	assert.Equal(t, `{"Support":{"users":["bob","alice"]},"Sales":{"users":["carol"]}}`, string(body))
 }
 
+func TestFeatureCodesServedLocally(t *testing.T) {
+	resetTestState()
+
+	originalPath := configuration.Config.AstObjectsConfigPath
+	defer func() {
+		configuration.Config.AstObjectsConfigPath = originalPath
+	}()
+	configuration.Config.AstObjectsConfigPath = writeTempFileForTest(t, "ast_objects.json", `{"trunks":{},"queues":{},"feature_codes":{"pickup":"*8","audio_test":"*41"}}`)
+
+	unauthenticated, err := http.Get(testServerURL + "/astproxy/feature_codes")
+	assert.NoError(t, err)
+	unauthenticated.Body.Close()
+	assert.Equal(t, http.StatusUnauthorized, unauthenticated.StatusCode)
+
+	token := utils.PerformLogin(testServerURL)
+	req, _ := http.NewRequest(http.MethodGet, testServerURL+"/astproxy/feature_codes", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	assert.NoError(t, err)
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, `{"pickup":"*8","audio_test":"*41"}`, string(body))
+}
+
 // Test 2FA QR code generation
 func TestQRCode(t *testing.T) {
 	resetTestState()

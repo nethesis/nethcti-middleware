@@ -93,10 +93,10 @@ func TestLoadOperatorGroups_ReadsFileAndKeepsLastGoodVersion(t *testing.T) {
 	originalPath := configuration.Config.OperatorConfigPath
 	defer func() {
 		configuration.Config.OperatorConfigPath = originalPath
-		operatorGroupsCache = operatorGroupsCacheState{}
+		operatorGroupsFile.clear()
 	}()
 	configuration.Config.OperatorConfigPath = path
-	operatorGroupsCache = operatorGroupsCacheState{}
+	operatorGroupsFile.clear()
 
 	assert.Empty(t, loadOperatorGroups())
 
@@ -118,10 +118,10 @@ func TestLoadOperatorGroups_InvalidFileWithoutCacheReturnsEmpty(t *testing.T) {
 	originalPath := configuration.Config.OperatorConfigPath
 	defer func() {
 		configuration.Config.OperatorConfigPath = originalPath
-		operatorGroupsCache = operatorGroupsCacheState{}
+		operatorGroupsFile.clear()
 	}()
 	configuration.Config.OperatorConfigPath = path
-	operatorGroupsCache = operatorGroupsCacheState{}
+	operatorGroupsFile.clear()
 
 	require.NoError(t, os.WriteFile(path, []byte(`not json`), 0o600))
 

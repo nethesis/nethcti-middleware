@@ -1797,6 +1797,44 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /astproxy/feature_codes:
+    get:
+      summary: Get the Asterisk feature codes used by CTI clients
+      operationId: getFeatureCodes
+      tags:
+        - Asterisk Configuration
+      description: |
+        Served by the middleware from the `feature_codes` section of the CTI Asterisk objects
+        file (`/etc/nethcti/ast_objects.json`, overridable with `NETHVOICE_MIDDLEWARE_AST_OBJECTS_PATH`),
+        replacing the legacy nethcti-server endpoint with the same path and response shape.
+        The file is ignored when its `trunks` or `queues` sections are not objects, like in the
+        legacy server. When the file is missing the response is an empty object; when it cannot be
+        parsed the last valid version is returned.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Feature codes keyed by feature name
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  type: string
+              example:
+                pickup: '*8'
+                confbridge_conf: '*87'
+                que_toggle: '*45'
+                dnd_toggle: '*76'
+                incall_audio: '*49'
+                audio_test: '*41'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
   /voicemail/list/{id}:
     get:
       summary: Get voicemail by numeric ID or proxy legacy list selectors
@@ -1913,6 +1951,8 @@ tags:
     description: Endpoint resolution helpers
   - name: Operator Groups
     description: Operator panel groups and their members
+  - name: Asterisk Configuration
+    description: Read-only Asterisk configuration exposed to CTI clients
   - name: Voicemail
     description: Voicemail retrieval and legacy proxy behavior
   - name: Administration

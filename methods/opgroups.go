@@ -8,33 +8,18 @@ package methods
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"net/http"
-	"os"
-	"sort"
 	"strconv"
 	"strings"
-	"sync"
-	"time"
 
 	"github.com/gin-gonic/gin"
 
 	"github.com/nethesis/nethcti-middleware/configuration"
-	"github.com/nethesis/nethcti-middleware/logs"
 )
 
 type operatorGroup struct {
 	Name  string
 	Users []string
-}
-
-type operatorGroupsCacheState struct {
-	mu      sync.Mutex
-	loaded  bool
-	path    string
-	modTime time.Time
-	size    int64
-	groups  []operatorGroup
 }
 
 type jsonObjectEntry struct {
@@ -43,7 +28,8 @@ type jsonObjectEntry struct {
 }
 
 var (
-	operatorGroupsCache    operatorGroupsCacheState
+	operatorGroupsFile = newCachedConfigFile("OPGROUPS", parseOperatorGroups, func() []operatorGroup { return []operatorGroup{} })
+
 	loadOperatorGroupsFunc = loadOperatorGroups
 )
 
@@ -52,52 +38,7 @@ func GetOperatorGroups(c *gin.Context) {
 }
 
 func loadOperatorGroups() []operatorGroup {
-	path := configuration.Config.OperatorConfigPath
-	cache := &operatorGroupsCache
-	cache.mu.Lock()
-	defer cache.mu.Unlock()
-
-	info, err := os.Stat(path)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			cache.loaded = false
-			cache.groups = nil
-			return []operatorGroup{}
-		}
-		logs.Log("[WARNING][OPGROUPS] Failed to stat " + path + ": " + err.Error())
-		return cache.fallback(path)
-	}
-
-	if cache.loaded && cache.path == path && cache.modTime.Equal(info.ModTime()) && cache.size == info.Size() {
-		return cache.groups
-	}
-
-	data, err := os.ReadFile(path)
-	if err != nil {
-		logs.Log("[WARNING][OPGROUPS] Failed to read " + path + ": " + err.Error())
-		return cache.fallback(path)
-	}
-
-	groups, err := parseOperatorGroups(data)
-	if err != nil {
-		logs.Log("[WARNING][OPGROUPS] Failed to parse " + path + ": " + err.Error())
-		return cache.fallback(path)
-	}
-
-	cache.loaded = true
-	cache.path = path
-	cache.modTime = info.ModTime()
-	cache.size = info.Size()
-	cache.groups = groups
-
-	return groups
-}
-
-func (cache *operatorGroupsCacheState) fallback(path string) []operatorGroup {
-	if cache.loaded && cache.path == path {
-		return cache.groups
-	}
-	return []operatorGroup{}
+	return operatorGroupsFile.load(configuration.Config.OperatorConfigPath)
 }
 
 func parseOperatorGroups(data []byte) ([]operatorGroup, error) {
@@ -244,42 +185,6 @@ func uniqueJSKeys(values []string) []string {
 	return ordered
 }
 
-func jsPropertyOrder(count int, keyAt func(int) string) []int {
-	indexKeys := make([]int, 0)
-	otherKeys := make([]int, 0, count)
-	for i := 0; i < count; i++ {
-		if _, ok := jsArrayIndex(keyAt(i)); ok {
-			indexKeys = append(indexKeys, i)
-		} else {
-			otherKeys = append(otherKeys, i)
-		}
-	}
-
-	sort.SliceStable(indexKeys, func(a, b int) bool {
-		left, _ := jsArrayIndex(keyAt(indexKeys[a]))
-		right, _ := jsArrayIndex(keyAt(indexKeys[b]))
-		return left < right
-	})
-
-	return append(indexKeys, otherKeys...)
-}
-
-func jsArrayIndex(key string) (uint64, bool) {
-	if key == "" || (len(key) > 1 && key[0] == '0') {
-		return 0, false
-	}
-	for _, char := range key {
-		if char < '0' || char > '9' {
-			return 0, false
-		}
-	}
-	value, err := strconv.ParseUint(key, 10, 64)
-	if err != nil || value >= 4294967295 {
-		return 0, false
-	}
-	return value, true
-}
-
 func encodeOperatorGroups(groups []operatorGroup) []byte {
 	var buffer bytes.Buffer
 	buffer.WriteByte('{')
@@ -287,25 +192,16 @@ func encodeOperatorGroups(groups []operatorGroup) []byte {
 		if i > 0 {
 			buffer.WriteByte(',')
 		}
-		buffer.Write(marshalJSONNoEscape(group.Name))
-		buffer.WriteString(`:{"users":`)
-		users := group.Users
-		if users == nil {
-			users = []string{}
+		writeJSString(&buffer, group.Name)
+		buffer.WriteString(`:{"users":[`)
+		for j, user := range group.Users {
+			if j > 0 {
+				buffer.WriteByte(',')
+			}
+			writeJSString(&buffer, user)
 		}
-		buffer.Write(marshalJSONNoEscape(users))
-		buffer.WriteByte('}')
+		buffer.WriteString(`]}`)
 	}
 	buffer.WriteByte('}')
 	return buffer.Bytes()
-}
-
-func marshalJSONNoEscape(value any) []byte {
-	var buffer bytes.Buffer
-	encoder := json.NewEncoder(&buffer)
-	encoder.SetEscapeHTML(false)
-	if err := encoder.Encode(value); err != nil {
-		return []byte("null")
-	}
-	return bytes.TrimRight(buffer.Bytes(), "\n")
 }
