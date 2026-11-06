@@ -56,9 +56,11 @@ type Configuration struct {
 	SuperAdminAllowedIPs []string `json:"super_admin_allowed_ips"`
 
 	// Profiles and Users configuration paths
-	ProfilesConfigPath string `json:"profiles_config_path"`
-	UsersConfigPath    string `json:"users_config_path"`
-	TrustedProxy       string `json:"trusted_proxy"`
+	ProfilesConfigPath   string `json:"profiles_config_path"`
+	UsersConfigPath      string `json:"users_config_path"`
+	OperatorConfigPath   string `json:"operator_config_path"`
+	AstObjectsConfigPath string `json:"ast_objects_config_path"`
+	TrustedProxy         string `json:"trusted_proxy"`
 
 	// Trusted SSO login: when set, a login carrying the pre-authenticated
 	// username in SsoUserHeader is accepted without a password (see middleware).
@@ -337,6 +339,18 @@ func Init() {
 		Config.UsersConfigPath = os.Getenv("AUTH_USERS_PATH")
 	} else {
 		Config.UsersConfigPath = "/etc/nethcti/users.json"
+	}
+
+	if os.Getenv("AUTH_OPERATOR_PATH") != "" {
+		Config.OperatorConfigPath = os.Getenv("AUTH_OPERATOR_PATH")
+	} else {
+		Config.OperatorConfigPath = "/etc/nethcti/operator.json"
+	}
+
+	if os.Getenv("NETHVOICE_MIDDLEWARE_AST_OBJECTS_PATH") != "" {
+		Config.AstObjectsConfigPath = os.Getenv("NETHVOICE_MIDDLEWARE_AST_OBJECTS_PATH")
+	} else {
+		Config.AstObjectsConfigPath = "/etc/nethcti/ast_objects.json"
 	}
 
 	// Trusted proxy (used by Gin to set trusted proxies)

@@ -71,6 +71,8 @@ All configuration comes from environment variables.
 |---|---|---|
 | `AUTH_PROFILES_PATH` | Profiles file | `/etc/nethcti/profiles.json` |
 | `AUTH_USERS_PATH` | Users file | `/etc/nethcti/users.json` |
+| `AUTH_OPERATOR_PATH` | Operator groups file | `/etc/nethcti/operator.json` |
+| `NETHVOICE_MIDDLEWARE_AST_OBJECTS_PATH` | Asterisk objects file (feature codes) | `/etc/nethcti/ast_objects.json` |
 | `NETHVOICE_MIDDLEWARE_ISSUER_2FA` | Issuer shown in 2FA authenticator apps | `NethVoice` |
 | `NETHVOICE_MIDDLEWARE_SUPER_ADMIN_TOKEN` | Bearer token for `/admin/*` | random at startup |
 | `NETHVOICE_MIDDLEWARE_SUPER_ADMIN_ALLOW_IPS` | Comma-separated IPs or CIDRs allowed to call `/admin/*` | `127.0.0.0/8` |

@@ -25,6 +25,7 @@ import (
 	"github.com/gin-gonic/gin"
 	jwtv5 "github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/nethesis/nethcti-middleware/configuration"
 	"github.com/nethesis/nethcti-middleware/db"
@@ -248,6 +249,162 @@ func TestCreateRouter_IncludesLegacyPhonebookTrailingSlashRoutes(t *testing.T) {
 	for routeKey, found := range expectedRoutes {
 		assert.True(t, found, "expected route %s to be registered", routeKey)
 	}
+}
+
+func TestOperatorGroupsServedLocally(t *testing.T) {
+	resetTestState()
+
+	originalPath := configuration.Config.OperatorConfigPath
+	defer func() {
+		configuration.Config.OperatorConfigPath = originalPath
+	}()
+	configuration.Config.OperatorConfigPath = writeTempFileForTest(t, "operator.json", `{"groups":{"Support":["Bob","alice"],"Sales":["carol"]}}`)
+
+	unauthenticated, err := http.Get(testServerURL + "/astproxy/opgroups")
+	assert.NoError(t, err)
+	unauthenticated.Body.Close()
+	assert.Equal(t, http.StatusUnauthorized, unauthenticated.StatusCode)
+
+	token := utils.PerformLogin(testServerURL)
+	req, _ := http.NewRequest(http.MethodGet, testServerURL+"/astproxy/opgroups", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	assert.NoError(t, err)
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, `{"Support":{"users":["bob","alice"]},"Sales":{"users":["carol"]}}`, string(body))
+}
+
+func TestFeatureCodesServedLocally(t *testing.T) {
+	resetTestState()
+
+	originalPath := configuration.Config.AstObjectsConfigPath
+	defer func() {
+		configuration.Config.AstObjectsConfigPath = originalPath
+	}()
+	configuration.Config.AstObjectsConfigPath = writeTempFileForTest(t, "ast_objects.json", `{"trunks":{},"queues":{},"feature_codes":{"pickup":"*8","audio_test":"*41"}}`)
+
+	unauthenticated, err := http.Get(testServerURL + "/astproxy/feature_codes")
+	assert.NoError(t, err)
+	unauthenticated.Body.Close()
+	assert.Equal(t, http.StatusUnauthorized, unauthenticated.StatusCode)
+
+	token := utils.PerformLogin(testServerURL)
+	req, _ := http.NewRequest(http.MethodGet, testServerURL+"/astproxy/feature_codes", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	assert.NoError(t, err)
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, `{"pickup":"*8","audio_test":"*41"}`, string(body))
+}
+
+func TestAllAvatarsServedLocally(t *testing.T) {
+	resetTestState()
+
+	_, err := db.GetDB().Exec("CREATE TABLE IF NOT EXISTS `user_settings` (`id` int(11) NOT NULL AUTO_INCREMENT, `username` varchar(50) NOT NULL, `key_name` varchar(50) NOT NULL, `value` mediumtext, PRIMARY KEY (`id`), UNIQUE KEY `username_key_name` (`username`,`key_name`)) ENGINE=MyISAM DEFAULT CHARSET=utf8")
+	require.NoError(t, err)
+	_, err = db.GetDB().Exec("DELETE FROM `user_settings`")
+	require.NoError(t, err)
+	defer db.GetDB().Exec("DELETE FROM `user_settings`")
+	_, err = db.GetDB().Exec("INSERT INTO `user_settings` (`username`, `key_name`, `value`) VALUES ('zeta', 'avatar', 'z'), ('alice', 'theme', 'dark'), ('alice', 'avatar', 'a'), ('200', 'avatar', NULL), ('bob', 'theme', 'light')")
+	require.NoError(t, err)
+
+	unauthenticated, err := http.Get(testServerURL + "/user/all_avatars")
+	assert.NoError(t, err)
+	unauthenticated.Body.Close()
+	assert.Equal(t, http.StatusUnauthorized, unauthenticated.StatusCode)
+
+	token := utils.PerformLogin(testServerURL)
+	req, _ := http.NewRequest(http.MethodGet, testServerURL+"/user/all_avatars", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	assert.NoError(t, err)
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, `{"200":null,"zeta":"z","alice":"a"}`, string(body))
+}
+
+func TestParamURLServedLocally(t *testing.T) {
+	resetTestState()
+
+	unauthenticated, err := http.Get(testServerURL + "/user/paramurl")
+	assert.NoError(t, err)
+	unauthenticated.Body.Close()
+	assert.Equal(t, http.StatusUnauthorized, unauthenticated.StatusCode)
+
+	token := utils.PerformLogin(testServerURL)
+	req, _ := http.NewRequest(http.MethodGet, testServerURL+"/user/paramurl", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	assert.NoError(t, err)
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, `{}`, string(body))
+}
+
+func TestSpeeddialsServedLocally(t *testing.T) {
+	resetTestState()
+
+	for _, route := range []struct{ method, path string }{
+		{http.MethodGet, "/phonebook/speeddials"},
+		{http.MethodDelete, "/phonebook/speeddials"},
+		{http.MethodPost, "/phonebook/import_csv_speeddial"},
+	} {
+		req, _ := http.NewRequest(route.method, testServerURL+route.path, nil)
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		resp.Body.Close()
+		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode, route.method+" "+route.path)
+	}
+
+	_, err := db.GetDB().Exec("DELETE FROM cti_phonebook WHERE owner_id = 'testuser'")
+	require.NoError(t, err)
+	defer db.GetDB().Exec("DELETE FROM cti_phonebook WHERE owner_id = 'testuser'")
+	_, err = db.GetDB().Exec("INSERT INTO cti_phonebook (owner_id, type, name, speeddial_num) VALUES ('testuser', 'speeddial', 'Mario', '201')")
+	require.NoError(t, err)
+
+	token := utils.PerformLogin(testServerURL)
+	call := func(method, path, body string) (int, string) {
+		req, _ := http.NewRequest(method, testServerURL+path, strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		data, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		return resp.StatusCode, string(data)
+	}
+
+	status, body := call(http.MethodGet, "/phonebook/speeddials", "")
+	assert.Equal(t, http.StatusOK, status)
+	assert.Contains(t, body, `"owner_id":"testuser","type":"speeddial"`)
+	assert.Contains(t, body, `"name":"Mario"`)
+
+	status, body = call(http.MethodPost, "/phonebook/import_csv_speeddial", `{"file64":"data:text/csv;base64,bmFtZQ0KQQ0K"}`)
+	assert.Equal(t, http.StatusForbidden, status)
+	assert.Empty(t, body)
+
+	status, body = call(http.MethodDelete, "/phonebook/speeddials", "")
+	assert.Equal(t, http.StatusOK, status)
+	assert.Equal(t, `{"num":1}`, body)
+
+	status, body = call(http.MethodGet, "/phonebook/speeddials", "")
+	assert.Equal(t, http.StatusOK, status)
+	assert.Equal(t, `[]`, body)
 }
 
 // Test 2FA QR code generation
