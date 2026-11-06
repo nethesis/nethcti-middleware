@@ -58,6 +58,7 @@ type Configuration struct {
 	// Profiles and Users configuration paths
 	ProfilesConfigPath string `json:"profiles_config_path"`
 	UsersConfigPath    string `json:"users_config_path"`
+	OperatorConfigPath string `json:"operator_config_path"`
 	TrustedProxy       string `json:"trusted_proxy"`
 
 	// Trusted SSO login: when set, a login carrying the pre-authenticated
@@ -337,6 +338,12 @@ func Init() {
 		Config.UsersConfigPath = os.Getenv("AUTH_USERS_PATH")
 	} else {
 		Config.UsersConfigPath = "/etc/nethcti/users.json"
+	}
+
+	if os.Getenv("AUTH_OPERATOR_PATH") != "" {
+		Config.OperatorConfigPath = os.Getenv("AUTH_OPERATOR_PATH")
+	} else {
+		Config.OperatorConfigPath = "/etc/nethcti/operator.json"
 	}
 
 	// Trusted proxy (used by Gin to set trusted proxies)

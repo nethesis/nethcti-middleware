@@ -10,7 +10,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"sort"
 	"strconv"
@@ -20,7 +19,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/nethesis/nethcti-middleware/configuration"
 	"github.com/nethesis/nethcti-middleware/logs"
 	"github.com/nethesis/nethcti-middleware/store"
 )
@@ -32,11 +30,10 @@ type legacyPhonebookOperatorGroup struct {
 }
 
 var (
-	errInvalidSharedGroups      = errors.New("invalid shared groups")
-	errForbiddenSharedGroups    = errors.New("forbidden shared groups")
-	errLegacySessionUnavailable = errors.New("legacy session unavailable")
+	errInvalidSharedGroups   = errors.New("invalid shared groups")
+	errForbiddenSharedGroups = errors.New("forbidden shared groups")
 
-	fetchPhonebookOperatorGroupsFunc     = fetchPhonebookOperatorGroupsFromV1
+	fetchPhonebookOperatorGroupsFunc     = loadPhonebookOperatorGroups
 	getPhonebookEntryByIDFunc            = store.GetPhonebookEntryByID
 	getCentralizedPhonebookEntryByIDFunc = store.GetCentralizedPhonebookEntryByID
 	createPhonebookEntryFunc             = store.CreatePhonebookEntry
@@ -491,47 +488,14 @@ func DeleteLegacyCTIPhonebookContact(c *gin.Context) {
 	c.Writer.WriteHeaderNow()
 }
 
-func fetchPhonebookOperatorGroupsFromV1(username string) (map[string]legacyPhonebookOperatorGroup, error) {
-	userSession := store.UserSessions[username]
-	if userSession == nil || strings.TrimSpace(userSession.NethCTIToken) == "" {
-		return nil, errLegacySessionUnavailable
-	}
-	if configuration.Config.V1ApiEndpoint == "" {
-		return nil, fmt.Errorf("V1 API endpoint not configured")
+func loadPhonebookOperatorGroups(string) (map[string]legacyPhonebookOperatorGroup, error) {
+	groups := loadOperatorGroupsFunc()
+	result := make(map[string]legacyPhonebookOperatorGroup, len(groups))
+	for _, group := range groups {
+		result[group.Name] = legacyPhonebookOperatorGroup{Users: group.Users}
 	}
 
-	requestURL := configuration.Config.V1Protocol + "://" + configuration.Config.V1ApiEndpoint + configuration.Config.V1ApiPath + "/astproxy/opgroups"
-	httpReq, err := http.NewRequest(http.MethodGet, requestURL, nil)
-	if err != nil {
-		return nil, err
-	}
-	httpReq.Header.Set("Authorization", userSession.NethCTIToken)
-
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		bodyText := strings.TrimSpace(string(bodyBytes))
-		if bodyText == "" {
-			return nil, fmt.Errorf("unexpected V1 response status: %d", resp.StatusCode)
-		}
-		return nil, fmt.Errorf("unexpected V1 response status: %d: %s", resp.StatusCode, bodyText)
-	}
-
-	var groups map[string]legacyPhonebookOperatorGroup
-	if err := json.NewDecoder(resp.Body).Decode(&groups); err != nil {
-		return nil, err
-	}
-	if groups == nil {
-		groups = map[string]legacyPhonebookOperatorGroup{}
-	}
-
-	return groups, nil
+	return result, nil
 }
 
 func getUserGroupNames(username string) ([]string, error) {
@@ -1000,8 +964,6 @@ func writePhonebookValidationError(c *gin.Context, err error) {
 		c.JSON(http.StatusBadRequest, gin.H{"message": "invalid shared groups"})
 	case errors.Is(err, errForbiddenSharedGroups):
 		c.JSON(http.StatusForbidden, gin.H{"message": "forbidden"})
-	case errors.Is(err, errLegacySessionUnavailable):
-		c.JSON(http.StatusUnauthorized, gin.H{"message": "user session not found"})
 	default:
 		logs.Log("[ERROR][PHONEBOOK] Group validation failed: " + err.Error())
 		c.JSON(http.StatusBadGateway, gin.H{"message": "failed to resolve operator groups"})
@@ -1009,11 +971,6 @@ func writePhonebookValidationError(c *gin.Context, err error) {
 }
 
 func writePhonebookGroupLookupError(c *gin.Context, err error) {
-	if errors.Is(err, errLegacySessionUnavailable) {
-		c.JSON(http.StatusUnauthorized, gin.H{"message": "user session not found"})
-		return
-	}
-
 	logs.Log("[ERROR][PHONEBOOK] Failed to resolve operator groups: " + err.Error())
 	c.JSON(http.StatusBadGateway, gin.H{"message": "failed to resolve operator groups"})
 }

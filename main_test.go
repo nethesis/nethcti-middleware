@@ -250,6 +250,33 @@ func TestCreateRouter_IncludesLegacyPhonebookTrailingSlashRoutes(t *testing.T) {
 	}
 }
 
+func TestOperatorGroupsServedLocally(t *testing.T) {
+	resetTestState()
+
+	originalPath := configuration.Config.OperatorConfigPath
+	defer func() {
+		configuration.Config.OperatorConfigPath = originalPath
+	}()
+	configuration.Config.OperatorConfigPath = writeTempFileForTest(t, "operator.json", `{"groups":{"Support":["Bob","alice"],"Sales":["carol"]}}`)
+
+	unauthenticated, err := http.Get(testServerURL + "/astproxy/opgroups")
+	assert.NoError(t, err)
+	unauthenticated.Body.Close()
+	assert.Equal(t, http.StatusUnauthorized, unauthenticated.StatusCode)
+
+	token := utils.PerformLogin(testServerURL)
+	req, _ := http.NewRequest(http.MethodGet, testServerURL+"/astproxy/opgroups", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	assert.NoError(t, err)
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, `{"Support":{"users":["bob","alice"]},"Sales":{"users":["carol"]}}`, string(body))
+}
+
 // Test 2FA QR code generation
 func TestQRCode(t *testing.T) {
 	resetTestState()

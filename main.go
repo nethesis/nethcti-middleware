@@ -218,6 +218,8 @@ func createRouter() *gin.Engine {
 		api.GET("/history/calls", methods.GetFilteredHistory)
 		api.POST("/history/statuses", middleware.RequireCapabilities("nethvoice_cti.satellite_stt"), methods.ListSummaryStatus)
 
+		api.GET("/astproxy/opgroups", methods.GetOperatorGroups)
+
 		// Voicemail
 		api.GET("/voicemail/list/:id", methods.ListVoicemailByID)
 
