@@ -6,9 +6,12 @@
 package methods
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -138,5 +141,65 @@ func TestSupportAuthThrottled(t *testing.T) {
 	supportFailuresMu.Unlock()
 	if SupportAuthThrottled(ip, user) {
 		t.Error("expected throttling to expire after the window")
+	}
+}
+
+func resetSupportFailures(t *testing.T) {
+	t.Helper()
+	supportFailuresMu.Lock()
+	supportFailures = make(map[string]*supportFailure)
+	supportFailuresMu.Unlock()
+	t.Cleanup(func() {
+		supportFailuresMu.Lock()
+		supportFailures = make(map[string]*supportFailure)
+		supportFailuresMu.Unlock()
+	})
+}
+
+func TestMalformedSupportUserNotTracked(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	resetSupportFailures(t)
+	origSecret := configuration.Config.NethVoiceSecretKey
+	defer func() { configuration.Config.NethVoiceSecretKey = origSecret }()
+	configuration.Config.NethVoiceSecretKey = "secret"
+
+	for i := 0; i < 100; i++ {
+		user := fmt.Sprintf("support-%d-%s", i, strings.Repeat("X", 4096))
+		if RewriteSupportToAdmin(newSupportContext(user, "key", "192.0.2.9")) {
+			t.Fatal("expected malformed username to fail")
+		}
+	}
+	if n := len(supportFailures); n != 0 {
+		t.Errorf("expected no tracked failures for malformed usernames, got %d", n)
+	}
+}
+
+func TestSupportFailuresBounded(t *testing.T) {
+	resetSupportFailures(t)
+
+	for i := 0; i < supportMaxTracked+500; i++ {
+		recordSupportFailure(supportFailureKey("192.0.2.10", fmt.Sprintf("support-%d", i)))
+	}
+	if n := len(supportFailures); n != supportMaxTracked {
+		t.Errorf("expected %d tracked failures, got %d", supportMaxTracked, n)
+	}
+
+	full := supportFailureKey("192.0.2.10", "support-0")
+	for i := 0; i < supportMaxFailures; i++ {
+		recordSupportFailure(full)
+	}
+	if !supportThrottled(full) {
+		t.Error("expected an already tracked key to keep counting when full")
+	}
+
+	supportFailuresMu.Lock()
+	for _, f := range supportFailures {
+		f.first = f.first.Add(-supportFailureWindow - time.Second)
+	}
+	supportFailuresMu.Unlock()
+	fresh := supportFailureKey("192.0.2.11", "support-new")
+	recordSupportFailure(fresh)
+	if _, ok := supportFailures[fresh]; !ok || len(supportFailures) != 1 {
+		t.Errorf("expected expired entries pruned to make room, got %d", len(supportFailures))
 	}
 }

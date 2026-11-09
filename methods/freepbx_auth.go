@@ -28,6 +28,8 @@ import (
 const (
 	supportMaxFailures   = 5
 	supportFailureWindow = 5 * time.Minute
+	// Bounds the memory unauthenticated requests can pin in supportFailures.
+	supportMaxTracked = 10000
 )
 
 // Matches the ephemeral user created by the support tunnel-client.
@@ -128,13 +130,18 @@ func recordSupportFailure(ip string) {
 	defer supportFailuresMu.Unlock()
 
 	now := time.Now()
-	for k, f := range supportFailures {
-		if now.Sub(f.first) > supportFailureWindow {
-			delete(supportFailures, k)
-		}
-	}
 	f, ok := supportFailures[ip]
 	if !ok {
+		if len(supportFailures) >= supportMaxTracked {
+			for k, f := range supportFailures {
+				if now.Sub(f.first) > supportFailureWindow {
+					delete(supportFailures, k)
+				}
+			}
+			if len(supportFailures) >= supportMaxTracked {
+				return
+			}
+		}
 		f = &supportFailure{first: now}
 		supportFailures[ip] = f
 	}
@@ -162,8 +169,8 @@ func RewriteSupportToAdmin(c *gin.Context) bool {
 		return false
 	}
 
+	// Not recorded: no lookup to throttle, and the key would be an arbitrary header.
 	if !supportUsernameRe.MatchString(username) {
-		recordSupportFailure(key)
 		logs.Log("[WARNING][FREEPBX_AUTH] malformed support username from " + ip)
 		return false
 	}
