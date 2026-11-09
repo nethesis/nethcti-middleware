@@ -6,13 +6,18 @@
 package methods
 
 import (
+	"bytes"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
-	"time"
+	"unicode/utf8"
 
+	jwt "github.com/appleboy/gin-jwt/v3"
 	"github.com/fatih/structs"
 	"github.com/gin-gonic/gin"
 
@@ -22,21 +27,37 @@ import (
 	"github.com/nethesis/nethcti-middleware/store"
 )
 
-type voicemailListResponse struct {
-	Count int                      `json:"count"`
-	Rows  []map[string]interface{} `json:"rows"`
+const (
+	legacyVoicemailAllRows    = uint64(10000000000000)
+	legacyQueryParameterLimit = 1000
+)
+
+type legacyVoicemailUsers map[string][]string
+
+type legacyVoicemailList struct {
+	missingUser bool
+	noVoicemail bool
+	count       int64
+	rows        []store.VoicemailMessageRow
 }
 
 var (
-	fetchLegacyVoicemailListFunc = fetchLegacyVoicemailListFromV1
+	legacyVoicemailUsersFile = newCachedConfigFile("VOICEMAIL", parseLegacyVoicemailUsers, func() legacyVoicemailUsers { return legacyVoicemailUsers{} })
+
+	loadLegacyVoicemailUsersFunc = loadLegacyVoicemailUsers
+	countVoicemailMessagesFunc   = store.CountLegacyVoicemailMessages
+	listVoicemailMessagesFunc    = store.ListLegacyVoicemailMessages
 	proxyV1RequestFunc           = ProxyV1Request
+
+	qsDotNotation = regexp.MustCompile(`\.([^.[]+)`)
+	qsBrackets    = regexp.MustCompile(`\[[^[\]]*\]`)
 )
 
-// ListVoicemailByID returns a single voicemail by DB id when :id is numeric.
-// For legacy list types such as "all", "old" or "inbox", it transparently
-// falls back to the V1 voicemail endpoint to preserve existing behavior.
+// ListVoicemailByID returns a single voicemail by DB id when :id is numeric,
+// otherwise it lists the user's voicemail messages of the :id folder type.
 func ListVoicemailByID(c *gin.Context) {
-	voicemailID := strings.TrimSpace(c.Param("id"))
+	rawID := c.Param("id")
+	voicemailID := strings.TrimSpace(rawID)
 	if voicemailID == "" {
 		c.JSON(http.StatusBadRequest, structs.Map(models.StatusBadRequest{
 			Code:    http.StatusBadRequest,
@@ -47,7 +68,7 @@ func ListVoicemailByID(c *gin.Context) {
 	}
 
 	if !isNumericVoicemailID(voicemailID) {
-		proxyV1RequestFunc(c, c.Request.URL.Path, false)
+		listLegacyVoicemailMessages(c, rawID)
 		return
 	}
 
@@ -61,17 +82,10 @@ func ListVoicemailByID(c *gin.Context) {
 		return
 	}
 
-	userSession := store.UserSessions[username]
-	if userSession == nil || strings.TrimSpace(userSession.NethCTIToken) == "" {
-		c.JSON(http.StatusUnauthorized, structs.Map(models.StatusUnauthorized{
-			Code:    http.StatusUnauthorized,
-			Message: "user session not found",
-			Data:    nil,
-		}))
-		return
+	list, err := fetchLegacyVoicemailList(c, username, "all", nil, nil)
+	if err == nil && (list.missingUser || list.noVoicemail) {
+		err = errors.New("user has no single voicemail")
 	}
-
-	voicemailList, err := fetchLegacyVoicemailListFunc(userSession.NethCTIToken)
 	if err != nil {
 		logs.Log("[ERROR][VOICEMAIL] Failed to fetch voicemail list for user " + username + ": " + err.Error())
 		c.JSON(http.StatusBadGateway, gin.H{
@@ -83,9 +97,9 @@ func ListVoicemailByID(c *gin.Context) {
 	}
 
 	filteredRows := make([]map[string]interface{}, 0, 1)
-	for _, row := range voicemailList.Rows {
-		if getVoicemailRowID(row) == voicemailID {
-			filteredRows = append(filteredRows, row)
+	for _, row := range list.rows {
+		if strconv.FormatInt(row.ID, 10) == voicemailID {
+			filteredRows = append(filteredRows, legacyVoicemailRowMap(row))
 			break
 		}
 	}
@@ -96,42 +110,401 @@ func ListVoicemailByID(c *gin.Context) {
 	})
 }
 
-func fetchLegacyVoicemailListFromV1(nethCTIToken string) (*voicemailListResponse, error) {
-	if configuration.Config.V1ApiEndpoint == "" {
-		return nil, fmt.Errorf("V1 API endpoint not configured")
+func listLegacyVoicemailMessages(c *gin.Context, folder string) {
+	if !utf8.ValidString(folder) {
+		c.Data(http.StatusBadRequest, "application/json; charset=utf-8", []byte(`{"code":"BadRequestError","message":"URI malformed"}`))
+		return
 	}
 
-	url := configuration.Config.V1Protocol + "://" + configuration.Config.V1ApiEndpoint + configuration.Config.V1ApiPath + "/voicemail/list/all"
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+	offset, limit, ok := parseLegacyPagination(c.Request.URL.RawQuery)
+	if !ok {
+		proxyV1RequestFunc(c, c.Request.URL.Path, false)
+		return
+	}
+
+	username, _ := jwt.ExtractClaims(c)["id"].(string)
+	list, err := fetchLegacyVoicemailList(c, username, folder, offset, limit)
+	if err != nil {
+		logs.Log("[ERROR][VOICEMAIL] Failed to list voicemail messages for user " + username + ": " + err.Error())
+		c.AbortWithStatus(http.StatusInternalServerError)
+		return
+	}
+	if list.missingUser {
+		c.AbortWithStatus(http.StatusInternalServerError)
+		return
+	}
+	if list.noVoicemail {
+		c.Data(http.StatusOK, "application/json; charset=utf-8", []byte("[]"))
+		return
+	}
+
+	c.Data(http.StatusOK, "application/json; charset=utf-8", encodeLegacyVoicemailList(list.count, list.rows))
+}
+
+func fetchLegacyVoicemailList(c *gin.Context, username, folderType string, offset, limit []string) (*legacyVoicemailList, error) {
+	voicemails, exists := loadLegacyVoicemailUsersFunc()[username]
+	if !exists {
+		return &legacyVoicemailList{missingUser: true}, nil
+	}
+	if len(voicemails) != 1 {
+		return &legacyVoicemailList{noVoicemail: true}, nil
+	}
+
+	var folder *string
+	if folderType != "all" {
+		value, ok := decodeMySQLDoubleQuotedLiteral(folderType)
+		if !ok {
+			return nil, errors.New("voicemail type breaks the SQL string literal")
+		}
+		folder = &value
+	}
+
+	if hasSupplementaryRune(voicemails[0]) || (folder != nil && hasSupplementaryRune(*folder)) {
+		return &legacyVoicemailList{rows: []store.VoicemailMessageRow{}}, nil
+	}
+
+	ctx := c.Request.Context()
+	count, err := countVoicemailMessagesFunc(ctx, voicemails[0], folder)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", nethCTIToken)
+	if count == 0 {
+		return &legacyVoicemailList{rows: []store.VoicemailMessageRow{}}, nil
+	}
 
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+	offsetValue := "0"
+	if legacyParamTruthy(offset) {
+		offsetValue = jsNumberToString(jsParseInt(strings.Join(offset, ",")))
+	}
+	limitValue := strconv.FormatUint(legacyVoicemailAllRows, 10)
+	if legacyParamTruthy(limit) {
+		limitValue = jsNumberToString(jsParseInt(strings.Join(limit, ",")))
+	}
+
+	offsetNumber, offsetOK := parseSQLLimitNumber(offsetValue)
+	limitNumber, limitOK := parseSQLLimitNumber(limitValue)
+	if !offsetOK || !limitOK {
+		return nil, fmt.Errorf("invalid LIMIT %s, %s", offsetValue, limitValue)
+	}
+
+	rows, err := listVoicemailMessagesFunc(ctx, voicemails[0], folder, offsetNumber, limitNumber)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("unexpected V1 response status: %d", resp.StatusCode)
+	return &legacyVoicemailList{count: count, rows: rows}, nil
+}
+
+func hasSupplementaryRune(value string) bool {
+	for _, char := range value {
+		if char > 0xffff {
+			return true
+		}
+	}
+	return false
+}
+
+func legacyParamTruthy(values []string) bool {
+	return len(values) > 1 || (len(values) == 1 && values[0] != "")
+}
+
+func parseSQLLimitNumber(value string) (uint64, bool) {
+	for _, char := range value {
+		if char < '0' || char > '9' {
+			return 0, false
+		}
+	}
+	number, err := strconv.ParseUint(value, 10, 64)
+	return number, err == nil
+}
+
+func parseLegacyPagination(rawQuery string) ([]string, []string, bool) {
+	if rawQuery == "" {
+		return nil, nil, true
 	}
 
-	decoder := json.NewDecoder(resp.Body)
-	decoder.UseNumber()
+	parts := strings.SplitN(rawQuery, "&", legacyQueryParameterLimit+1)
+	if len(parts) > legacyQueryParameterLimit {
+		parts = parts[:legacyQueryParameterLimit]
+	}
 
-	var result voicemailListResponse
-	if err := decoder.Decode(&result); err != nil {
+	var offset, limit []string
+	for _, part := range parts {
+		position := strings.Index(part, "]=")
+		if position == -1 {
+			position = strings.Index(part, "=")
+		} else {
+			position++
+		}
+
+		var key, value string
+		if position == -1 {
+			key = decodeQSComponent(part)
+		} else {
+			key = decodeQSComponent(part[:position])
+			value = decodeQSComponent(part[position+1:])
+		}
+
+		switch key {
+		case "offset":
+			offset = append(offset, value)
+			continue
+		case "limit":
+			limit = append(limit, value)
+			continue
+		case "":
+			continue
+		}
+
+		expanded := qsDotNotation.ReplaceAllString(key, "[$1]")
+		bracket := qsBrackets.FindStringIndex(expanded)
+		if bracket == nil {
+			continue
+		}
+		parent := expanded[:bracket[0]]
+		if parent == "" || parent == "offset" || parent == "limit" {
+			return nil, nil, false
+		}
+	}
+
+	return offset, limit, true
+}
+
+func decodeQSComponent(value string) string {
+	decoded, ok := jsDecodeURIComponent(strings.ReplaceAll(value, "+", " "))
+	if !ok {
+		return value
+	}
+	return decoded
+}
+
+func decodeMySQLDoubleQuotedLiteral(value string) (string, bool) {
+	var builder strings.Builder
+	for i := 0; i < len(value); {
+		char, size := utf8.DecodeRuneInString(value[i:])
+		switch char {
+		case '\\':
+			if i+size >= len(value) {
+				return "", false
+			}
+			escaped, escapedSize := utf8.DecodeRuneInString(value[i+size:])
+			switch escaped {
+			case '0':
+				builder.WriteByte(0)
+			case 'b':
+				builder.WriteByte('\b')
+			case 'n':
+				builder.WriteByte('\n')
+			case 'r':
+				builder.WriteByte('\r')
+			case 't':
+				builder.WriteByte('\t')
+			case 'Z':
+				builder.WriteByte(0x1a)
+			case '%', '_':
+				builder.WriteByte('\\')
+				builder.WriteRune(escaped)
+			default:
+				builder.WriteRune(escaped)
+			}
+			i += size + escapedSize
+		case '"':
+			if i+1 < len(value) && value[i+1] == '"' {
+				builder.WriteByte('"')
+				i += 2
+				continue
+			}
+			return "", false
+		default:
+			builder.WriteString(value[i : i+size])
+			i += size
+		}
+	}
+	return builder.String(), true
+}
+
+func loadLegacyVoicemailUsers() legacyVoicemailUsers {
+	return legacyVoicemailUsersFile.load(configuration.Config.UsersConfigPath)
+}
+
+func parseLegacyVoicemailUsers(data []byte) (legacyVoicemailUsers, error) {
+	var root json.RawMessage
+	if err := json.Unmarshal(data, &root); err != nil {
 		return nil, err
 	}
 
-	if result.Rows == nil {
-		result.Rows = []map[string]interface{}{}
+	entries, err := decodeJSONContainerEntries(root)
+	if err != nil {
+		return nil, err
 	}
 
-	return &result, nil
+	keys := make([]string, 0, len(entries))
+	values := make(map[string]json.RawMessage, len(entries))
+	for _, entry := range entries {
+		keys = append(keys, entry.key)
+		values[entry.key] = entry.value
+	}
+
+	for _, key := range jsOrderedKeys(keys) {
+		value := values[key]
+		keys = removeKey(keys, key)
+		delete(values, key)
+		lower := strings.ToLower(key)
+		if lower == "__proto__" {
+			continue
+		}
+		if _, exists := values[lower]; !exists {
+			keys = append(keys, lower)
+		}
+		values[lower] = value
+	}
+
+	ordered := jsOrderedKeys(keys)
+	created := 0
+	for created < len(ordered) && legacyUserHasName(values[ordered[created]]) {
+		created++
+	}
+
+	users := make(legacyVoicemailUsers, created)
+	for _, key := range ordered[:created] {
+		if created < len(ordered) {
+			users[key] = nil
+			continue
+		}
+		users[key] = legacyUserVoicemails(values[key])
+	}
+
+	return users, nil
+}
+
+func jsOrderedKeys(keys []string) []string {
+	order := jsPropertyOrder(len(keys), func(i int) string { return keys[i] })
+	ordered := make([]string, len(order))
+	for i, index := range order {
+		ordered[i] = keys[index]
+	}
+	return ordered
+}
+
+func removeKey(keys []string, key string) []string {
+	for i, current := range keys {
+		if current == key {
+			return append(keys[:i], keys[i+1:]...)
+		}
+	}
+	return keys
+}
+
+func jsonObjectField(raw json.RawMessage, name string) (json.RawMessage, bool) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || trimmed[0] != '{' {
+		return nil, false
+	}
+	entries, err := decodeJSONContainerEntries(trimmed)
+	if err != nil {
+		return nil, false
+	}
+	for _, entry := range entries {
+		if entry.key == name {
+			return entry.value, true
+		}
+	}
+	return nil, false
+}
+
+func legacyUserHasName(raw json.RawMessage) bool {
+	name, ok := jsonObjectField(raw, "name")
+	if !ok {
+		return false
+	}
+	trimmed := bytes.TrimSpace(name)
+	return len(trimmed) > 0 && trimmed[0] == '"'
+}
+
+func legacyUserVoicemails(raw json.RawMessage) []string {
+	endpoints, ok := jsonObjectField(raw, "endpoints")
+	if !ok {
+		return nil
+	}
+	voicemail, ok := jsonObjectField(endpoints, "voicemail")
+	if !ok {
+		return nil
+	}
+
+	trimmed := bytes.TrimSpace(voicemail)
+	if len(trimmed) == 0 || (trimmed[0] != '{' && trimmed[0] != '[') {
+		return nil
+	}
+	entries, err := decodeJSONContainerEntries(trimmed)
+	if err != nil {
+		return nil
+	}
+
+	var voicemails []string
+	for _, entry := range entries {
+		value := bytes.TrimSpace(entry.value)
+		if len(value) == 0 || (value[0] != '{' && value[0] != '[' && value[0] != 'n') {
+			break
+		}
+		voicemails = append(voicemails, entry.key)
+	}
+	return voicemails
+}
+
+func legacyVoicemailStringValue(value sql.NullString) interface{} {
+	if !value.Valid {
+		return nil
+	}
+	return decodeUTF8LikeNode([]byte(value.String))
+}
+
+func legacyVoicemailRowMap(row store.VoicemailMessageRow) map[string]interface{} {
+	return map[string]interface{}{
+		"origtime":    legacyVoicemailStringValue(row.OrigTime),
+		"duration":    legacyVoicemailStringValue(row.Duration),
+		"id":          row.ID,
+		"dir":         legacyVoicemailStringValue(row.Dir),
+		"callerid":    legacyVoicemailStringValue(row.CallerID),
+		"mailboxuser": legacyVoicemailStringValue(row.MailboxUser),
+		"type":        legacyVoicemailStringValue(row.Type),
+	}
+}
+
+func encodeLegacyVoicemailList(count int64, rows []store.VoicemailMessageRow) []byte {
+	var buffer bytes.Buffer
+	buffer.WriteString(`{"count":`)
+	buffer.WriteString(strconv.FormatInt(count, 10))
+	buffer.WriteString(`,"rows":[`)
+	for i, row := range rows {
+		if i > 0 {
+			buffer.WriteByte(',')
+		}
+		buffer.WriteString(`{"origtime":`)
+		writeLegacyVoicemailString(&buffer, row.OrigTime)
+		buffer.WriteString(`,"duration":`)
+		writeLegacyVoicemailString(&buffer, row.Duration)
+		buffer.WriteString(`,"id":`)
+		buffer.WriteString(strconv.FormatInt(row.ID, 10))
+		buffer.WriteString(`,"dir":`)
+		writeLegacyVoicemailString(&buffer, row.Dir)
+		buffer.WriteString(`,"callerid":`)
+		writeLegacyVoicemailString(&buffer, row.CallerID)
+		buffer.WriteString(`,"mailboxuser":`)
+		writeLegacyVoicemailString(&buffer, row.MailboxUser)
+		buffer.WriteString(`,"type":`)
+		writeLegacyVoicemailString(&buffer, row.Type)
+		buffer.WriteByte('}')
+	}
+	buffer.WriteString(`]}`)
+	return buffer.Bytes()
+}
+
+func writeLegacyVoicemailString(buffer *bytes.Buffer, value sql.NullString) {
+	if !value.Valid {
+		buffer.WriteString("null")
+		return
+	}
+	writeJSString(buffer, decodeUTF8LikeNode([]byte(value.String)))
 }
 
 func isNumericVoicemailID(value string) bool {
@@ -146,29 +519,4 @@ func isNumericVoicemailID(value string) bool {
 	}
 
 	return true
-}
-
-func getVoicemailRowID(row map[string]interface{}) string {
-	if row == nil {
-		return ""
-	}
-
-	switch value := row["id"].(type) {
-	case string:
-		return value
-	case json.Number:
-		return value.String()
-	case float64:
-		return strconv.FormatInt(int64(value), 10)
-	case float32:
-		return strconv.FormatInt(int64(value), 10)
-	case int:
-		return strconv.Itoa(value)
-	case int32:
-		return strconv.FormatInt(int64(value), 10)
-	case int64:
-		return strconv.FormatInt(value, 10)
-	default:
-		return fmt.Sprintf("%v", value)
-	}
 }

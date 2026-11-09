@@ -14,7 +14,6 @@ import (
 	"math"
 	"sort"
 	"strconv"
-	"strings"
 )
 
 type jsNodeKind int
@@ -201,20 +200,7 @@ func jsNumberString(number json.Number) string {
 	if err != nil || math.IsInf(value, 0) || math.IsNaN(value) {
 		return "null"
 	}
-	if value == 0 {
-		return "0"
-	}
-
-	absolute := math.Abs(value)
-	if absolute >= 1e21 || absolute < 1e-6 {
-		formatted := strconv.FormatFloat(value, 'e', -1, 64)
-		mantissa, exponent, _ := strings.Cut(formatted, "e")
-		sign := exponent[:1]
-		digits := strings.TrimLeft(exponent[1:], "0")
-		return mantissa + "e" + sign + digits
-	}
-
-	return strconv.FormatFloat(value, 'f', -1, 64)
+	return jsNumberToString(value)
 }
 
 func jsPropertyOrder(count int, keyAt func(int) string) []int {

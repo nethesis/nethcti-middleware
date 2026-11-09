@@ -407,6 +407,47 @@ func TestSpeeddialsServedLocally(t *testing.T) {
 	assert.Equal(t, `[]`, body)
 }
 
+func TestVoicemailListServedLocally(t *testing.T) {
+	resetTestState()
+
+	resp, err := http.Get(testServerURL + "/voicemail/list/all")
+	require.NoError(t, err)
+	resp.Body.Close()
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+
+	originalUsersPath := configuration.Config.UsersConfigPath
+	defer func() { configuration.Config.UsersConfigPath = originalUsersPath }()
+	configuration.Config.UsersConfigPath = writeTempFileForTest(t, "users.json", `{"testuser":{"name":"Test","endpoints":{"voicemail":{}}}}`)
+
+	token := utils.PerformLogin(testServerURL)
+	call := func(path string) (int, string) {
+		req, _ := http.NewRequest(http.MethodGet, testServerURL+path, nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		data, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		return resp.StatusCode, string(data)
+	}
+
+	status, body := call("/voicemail/list/all")
+	assert.Equal(t, http.StatusOK, status)
+	assert.Equal(t, `[]`, body)
+
+	status, body = call("/voicemail/list/inbox?offset=0&limit=10")
+	assert.Equal(t, http.StatusOK, status)
+	assert.Equal(t, `[]`, body)
+
+	status, _ = call("/voicemail/list/4")
+	assert.Equal(t, http.StatusBadGateway, status)
+
+	configuration.Config.UsersConfigPath = writeTempFileForTest(t, "users.json", `{"otheruser":{"name":"Other","endpoints":{"voicemail":{"201":{}}}}}`)
+	status, body = call("/voicemail/list/all")
+	assert.Equal(t, http.StatusInternalServerError, status)
+	assert.Empty(t, body)
+}
+
 // Test 2FA QR code generation
 func TestQRCode(t *testing.T) {
 	resetTestState()

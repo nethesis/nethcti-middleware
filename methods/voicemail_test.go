@@ -6,111 +6,286 @@
 package methods
 
 import (
-	"encoding/json"
+	"context"
+	"database/sql"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/gin-gonic/gin"
 	jwtv5 "github.com/golang-jwt/jwt/v5"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
-	"github.com/nethesis/nethcti-middleware/models"
 	"github.com/nethesis/nethcti-middleware/store"
 )
 
-func TestListVoicemailByID_ReturnsSingleRow(t *testing.T) {
+type voicemailQuery struct {
+	mailbox string
+	folder  *string
+	offset  uint64
+	limit   uint64
+}
+
+type voicemailMocks struct {
+	counts  []voicemailQuery
+	lists   []voicemailQuery
+	proxied []string
+}
+
+func nullString(value string) sql.NullString {
+	return sql.NullString{String: value, Valid: true}
+}
+
+func setupVoicemailMocks(t *testing.T, users legacyVoicemailUsers, count int64, rows []store.VoicemailMessageRow) *voicemailMocks {
+	t.Helper()
 	gin.SetMode(gin.TestMode)
-	store.UserSessionInit()
-	store.UserSessions["alice"] = &models.UserSession{Username: "alice", NethCTIToken: "token"}
 
-	originalFetch := fetchLegacyVoicemailListFunc
+	originalUsers := loadLegacyVoicemailUsersFunc
+	originalCount := countVoicemailMessagesFunc
+	originalList := listVoicemailMessagesFunc
 	originalProxy := proxyV1RequestFunc
-	defer func() {
-		fetchLegacyVoicemailListFunc = originalFetch
+	t.Cleanup(func() {
+		loadLegacyVoicemailUsersFunc = originalUsers
+		countVoicemailMessagesFunc = originalCount
+		listVoicemailMessagesFunc = originalList
 		proxyV1RequestFunc = originalProxy
-	}()
+	})
 
-	fetchLegacyVoicemailListFunc = func(string) (*voicemailListResponse, error) {
-		return &voicemailListResponse{
-			Count: 2,
-			Rows: []map[string]interface{}{
-				{"id": json.Number("2"), "callerid": "\"Alice\" <202>", "type": "old"},
-				{"id": json.Number("4"), "callerid": "\"Bob\" <203>", "type": "inbox"},
-			},
-		}, nil
+	mocks := &voicemailMocks{}
+	loadLegacyVoicemailUsersFunc = func() legacyVoicemailUsers { return users }
+	countVoicemailMessagesFunc = func(_ context.Context, mailbox string, folder *string) (int64, error) {
+		mocks.counts = append(mocks.counts, voicemailQuery{mailbox: mailbox, folder: folder})
+		return count, nil
+	}
+	listVoicemailMessagesFunc = func(_ context.Context, mailbox string, folder *string, offset, limit uint64) ([]store.VoicemailMessageRow, error) {
+		mocks.lists = append(mocks.lists, voicemailQuery{mailbox: mailbox, folder: folder, offset: offset, limit: limit})
+		return rows, nil
 	}
 	proxyV1RequestFunc = func(c *gin.Context, path string, allowAnonymous bool) {
-		t.Fatalf("did not expect proxy fallback for numeric voicemail id")
+		assert.False(t, allowAnonymous)
+		mocks.proxied = append(mocks.proxied, path)
+		c.Status(http.StatusTeapot)
 	}
+	return mocks
+}
 
+func runVoicemailRequest(user, target string) *httptest.ResponseRecorder {
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
-		c.Set("JWT_PAYLOAD", jwtv5.MapClaims{"id": "alice"})
+		c.Set("JWT_PAYLOAD", jwtv5.MapClaims{"id": user})
 		c.Next()
 	})
 	router.GET("/voicemail/list/:id", ListVoicemailByID)
 
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/voicemail/list/4", nil)
-	router.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-
-	var response voicemailListResponse
-	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
-
-	if response.Count != 1 {
-		t.Fatalf("expected count 1, got %d", response.Count)
-	}
-
-	if len(response.Rows) != 1 || getVoicemailRowID(response.Rows[0]) != "4" {
-		t.Fatalf("expected voicemail id 4, got %#v", response.Rows)
-	}
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, target, nil))
+	return recorder
 }
 
-func TestListVoicemailByID_FallsBackToLegacyTypes(t *testing.T) {
-	gin.SetMode(gin.TestMode)
+var sampleVoicemailRows = []store.VoicemailMessageRow{
+	{OrigTime: nullString("1700000100"), Duration: nullString("5"), ID: 2, Dir: nullString("/var/spool/asterisk/voicemail/default/201/Old"), CallerID: nullString("\"Luigi\" <334> & \xed\xa0\xbd"), MailboxUser: nullString("201"), Type: nullString("old")},
+	{OrigTime: nullString(""), ID: 4, CallerID: nullString("x\u2028"), MailboxUser: nullString("201")},
+}
 
-	originalFetch := fetchLegacyVoicemailListFunc
-	originalProxy := proxyV1RequestFunc
-	defer func() {
-		fetchLegacyVoicemailListFunc = originalFetch
-		proxyV1RequestFunc = originalProxy
-	}()
+func TestListVoicemailByID_ReturnsSingleRow(t *testing.T) {
+	mocks := setupVoicemailMocks(t, legacyVoicemailUsers{"alice": {"201"}}, 2, sampleVoicemailRows)
 
-	fetchLegacyVoicemailListFunc = func(string) (*voicemailListResponse, error) {
-		t.Fatalf("did not expect filtered fetch for legacy type route")
-		return nil, nil
+	recorder := runVoicemailRequest("alice", "/voicemail/list/2")
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	assert.Equal(t, `{"count":1,"rows":[{"callerid":"\"Luigi\" \u003c334\u003e \u0026 `+"\uFFFD\uFFFD\uFFFD"+`","dir":"/var/spool/asterisk/voicemail/default/201/Old","duration":"5","id":2,"mailboxuser":"201","origtime":"1700000100","type":"old"}]}`, recorder.Body.String())
+	assert.Equal(t, []voicemailQuery{{mailbox: "201", offset: 0, limit: legacyVoicemailAllRows}}, mocks.lists)
+	assert.Empty(t, mocks.proxied)
+
+	recorder = runVoicemailRequest("alice", "/voicemail/list/02")
+	assert.Equal(t, `{"count":0,"rows":[]}`, recorder.Body.String())
+}
+
+func TestListVoicemailByID_NumericFailures(t *testing.T) {
+	setupVoicemailMocks(t, legacyVoicemailUsers{"alice": {"201", "202"}, "bob": nil}, 0, nil)
+
+	for _, user := range []string{"alice", "bob", "carl"} {
+		recorder := runVoicemailRequest(user, "/voicemail/list/4")
+		assert.Equal(t, http.StatusBadGateway, recorder.Code, user)
+		assert.Equal(t, `{"code":502,"data":null,"message":"failed to fetch voicemail list"}`, recorder.Body.String(), user)
 	}
 
-	var gotPath string
-	var gotAllowAnonymous bool
-	proxyV1RequestFunc = func(c *gin.Context, path string, allowAnonymous bool) {
-		gotPath = path
-		gotAllowAnonymous = allowAnonymous
-		c.JSON(http.StatusOK, gin.H{"count": 0, "rows": []interface{}{}})
+	recorder := runVoicemailRequest("alice", "/voicemail/list/%20")
+	assert.Equal(t, http.StatusBadRequest, recorder.Code)
+}
+
+func TestListVoicemailMessages_EncodesLikeLegacyServer(t *testing.T) {
+	mocks := setupVoicemailMocks(t, legacyVoicemailUsers{"alice": {"201"}}, 7, sampleVoicemailRows)
+
+	recorder := runVoicemailRequest("alice", "/voicemail/list/all")
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	assert.Equal(t, `{"count":7,"rows":[{"origtime":"1700000100","duration":"5","id":2,"dir":"/var/spool/asterisk/voicemail/default/201/Old","callerid":"\"Luigi\" <334> & `+"\uFFFD\uFFFD\uFFFD"+`","mailboxuser":"201","type":"old"},{"origtime":"","duration":null,"id":4,"dir":null,"callerid":"x`+"\u2028"+`","mailboxuser":"201","type":null}]}`, recorder.Body.String())
+	require.Len(t, mocks.counts, 1)
+	assert.Nil(t, mocks.counts[0].folder)
+	assert.Equal(t, []voicemailQuery{{mailbox: "201", offset: 0, limit: legacyVoicemailAllRows}}, mocks.lists)
+}
+
+func TestListVoicemailMessages_UserStates(t *testing.T) {
+	mocks := setupVoicemailMocks(t, legacyVoicemailUsers{"alice": {"201", "202"}, "bob": nil}, 3, sampleVoicemailRows)
+
+	for _, user := range []string{"alice", "bob"} {
+		recorder := runVoicemailRequest(user, "/voicemail/list/inbox")
+		assert.Equal(t, http.StatusOK, recorder.Code, user)
+		assert.Equal(t, `[]`, recorder.Body.String(), user)
 	}
 
-	router := gin.New()
-	router.GET("/voicemail/list/:id", ListVoicemailByID)
-
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/voicemail/list/all", nil)
-	router.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	for _, user := range []string{"carl", "Bob", "constructor"} {
+		recorder := runVoicemailRequest(user, "/voicemail/list/inbox")
+		assert.Equal(t, http.StatusInternalServerError, recorder.Code, user)
+		assert.Empty(t, recorder.Body.String(), user)
 	}
 
-	if gotPath != "/voicemail/list/all" {
-		t.Fatalf("expected fallback path /voicemail/list/all, got %q", gotPath)
+	assert.Empty(t, mocks.counts)
+}
+
+func TestListVoicemailMessages_FolderFilter(t *testing.T) {
+	mocks := setupVoicemailMocks(t, legacyVoicemailUsers{"alice": {"201"}}, 0, nil)
+
+	cases := map[string]string{
+		"/voicemail/list/INBOX":              "INBOX",
+		"/voicemail/list/inbox%20":           "inbox ",
+		"/voicemail/list/%20inbox":           " inbox",
+		"/voicemail/list/in%22%22box":        `in"box`,
+		"/voicemail/list/inbo%5Cx":           "inbox",
+		"/voicemail/list/a%5Cnb%5C0":         "a\nb\x00",
+		"/voicemail/list/in%5C%25box%5C_":    `in\%box\_`,
+		"/voicemail/list/%C3%AFnbox":         "ïnbox",
+		"/voicemail/list/%5C%C3%A8%5C%5C%3F": `è\?`,
+		"/voicemail/list/a%5C%22":            `a"`,
+	}
+	for target, expected := range cases {
+		mocks.counts = nil
+		recorder := runVoicemailRequest("alice", target)
+		assert.Equal(t, `{"count":0,"rows":[]}`, recorder.Body.String(), target)
+		require.Len(t, mocks.counts, 1, target)
+		require.NotNil(t, mocks.counts[0].folder, target)
+		assert.Equal(t, expected, *mocks.counts[0].folder, target)
+	}
+	assert.Empty(t, mocks.lists)
+
+	mocks.counts = nil
+	for _, target := range []string{"/voicemail/list/a%22b", "/voicemail/list/%22", "/voicemail/list/inbox%5C", "/voicemail/list/a%5C%5C%22"} {
+		recorder := runVoicemailRequest("alice", target)
+		assert.Equal(t, http.StatusInternalServerError, recorder.Code, target)
+		assert.Empty(t, recorder.Body.String(), target)
+	}
+	assert.Empty(t, mocks.counts)
+
+	recorder := runVoicemailRequest("alice", "/voicemail/list/%FF")
+	assert.Equal(t, http.StatusBadRequest, recorder.Code)
+	assert.Equal(t, `{"code":"BadRequestError","message":"URI malformed"}`, recorder.Body.String())
+}
+
+func TestListVoicemailMessages_Pagination(t *testing.T) {
+	mocks := setupVoicemailMocks(t, legacyVoicemailUsers{"alice": {"201"}}, 5, []store.VoicemailMessageRow{})
+
+	cases := map[string][2]uint64{
+		"":                            {0, legacyVoicemailAllRows},
+		"?":                           {0, legacyVoicemailAllRows},
+		"?offset=2":                   {2, legacyVoicemailAllRows},
+		"?limit=3":                    {0, 3},
+		"?offset=1&limit=0":           {1, 0},
+		"?offset=&limit=":             {0, legacyVoicemailAllRows},
+		"?limit=2&limit=1":            {0, 2},
+		"?offset=0x1f":                {31, legacyVoicemailAllRows},
+		"?offset=1e3&limit=12abc":     {1, 12},
+		"?limit=%2B4&offset=+3":       {3, 4},
+		"?offset=%E2%80%A8%C2%A07":    {7, legacyVoicemailAllRows},
+		"?off%73et=6&lim%69t=1":       {6, 1},
+		"?offset=-0":                  {0, legacyVoicemailAllRows},
+		"?limit=18446744073709549568": {0, 18446744073709550000},
+		"?a[b]=1&a.b=2&limit=9":       {0, 9},
+		"?offset":                     {0, legacyVoicemailAllRows},
+		"?limit=1.5e400":              {0, 1},
+	}
+	for query, expected := range cases {
+		mocks.lists = nil
+		recorder := runVoicemailRequest("alice", "/voicemail/list/all"+query)
+		assert.Equal(t, http.StatusOK, recorder.Code, query)
+		assert.Equal(t, `{"count":5,"rows":[]}`, recorder.Body.String(), query)
+		assert.Equal(t, []voicemailQuery{{mailbox: "201", offset: expected[0], limit: expected[1]}}, mocks.lists, query)
 	}
 
-	if gotAllowAnonymous {
-		t.Fatalf("expected authenticated proxy fallback")
+	mocks.lists = nil
+	for _, query := range []string{"?offset=abc", "?limit=-1", "?offset=%zz", "?limit=99999999999999999999", "?limit=,1"} {
+		recorder := runVoicemailRequest("alice", "/voicemail/list/all"+query)
+		assert.Equal(t, http.StatusInternalServerError, recorder.Code, query)
+		assert.Empty(t, recorder.Body.String(), query)
 	}
+	assert.Empty(t, mocks.lists)
+}
+
+func TestListVoicemailMessages_EmptyFolderSkipsPagination(t *testing.T) {
+	mocks := setupVoicemailMocks(t, legacyVoicemailUsers{"alice": {"201"}}, 0, nil)
+
+	recorder := runVoicemailRequest("alice", "/voicemail/list/zzz?offset=abc")
+
+	assert.Equal(t, http.StatusOK, recorder.Code)
+	assert.Equal(t, `{"count":0,"rows":[]}`, recorder.Body.String())
+	assert.Empty(t, mocks.lists)
+}
+
+func TestListVoicemailMessages_ComplexQueryGoesToLegacyServer(t *testing.T) {
+	mocks := setupVoicemailMocks(t, legacyVoicemailUsers{"alice": {"201"}}, 1, nil)
+
+	for _, query := range []string{"offset[x]=1", "offset%5B%5D=1", "limit.x=1", "%5Blimit%5D=2", "offset=1&limit[0]=3", ".x=1"} {
+		recorder := runVoicemailRequest("alice", "/voicemail/list/all?"+query)
+		assert.Equal(t, http.StatusTeapot, recorder.Code, query)
+	}
+	assert.Len(t, mocks.proxied, 6)
+	assert.Equal(t, "/voicemail/list/all", mocks.proxied[0])
+	assert.Empty(t, mocks.counts)
+}
+
+func TestListVoicemailMessages_DatabaseErrors(t *testing.T) {
+	setupVoicemailMocks(t, legacyVoicemailUsers{"alice": {"201"}}, 1, nil)
+	countVoicemailMessagesFunc = func(context.Context, string, *string) (int64, error) { return 0, errors.New("boom") }
+
+	recorder := runVoicemailRequest("alice", "/voicemail/list/all")
+	assert.Equal(t, http.StatusInternalServerError, recorder.Code)
+	assert.Empty(t, recorder.Body.String())
+
+	countVoicemailMessagesFunc = func(context.Context, string, *string) (int64, error) { return 1, nil }
+	listVoicemailMessagesFunc = func(context.Context, string, *string, uint64, uint64) ([]store.VoicemailMessageRow, error) {
+		return nil, errors.New("boom")
+	}
+	recorder = runVoicemailRequest("alice", "/voicemail/list/all")
+	assert.Equal(t, http.StatusInternalServerError, recorder.Code)
+
+	recorder = runVoicemailRequest("alice", "/voicemail/list/3")
+	assert.Equal(t, http.StatusBadGateway, recorder.Code)
+}
+
+func TestParseLegacyVoicemailUsers(t *testing.T) {
+	cases := map[string]legacyVoicemailUsers{
+		`{"alice":{"name":"A","endpoints":{"voicemail":{"201":{}}}},"bob":{"name":"B","endpoints":{"voicemail":{}}}}`:           {"alice": {"201"}, "bob": nil},
+		`{"Alice":{"name":"A","endpoints":{"voicemail":{"202":{}}}},"alice":{"name":"a","endpoints":{"voicemail":{"201":{}}}}}`: {"alice": {"202"}},
+		`{"alice":{"name":"a","endpoints":{"voicemail":{"202":{}}}},"Alice":{"name":"A","endpoints":{"voicemail":{"201":{}}}}}`: {"alice": {"201"}},
+		`{"alice":{"name":"A","endpoints":{"voicemail":{"201":{}}}},"bob":{"endpoints":{}},"carl":{"name":"C"}}`:                {"alice": nil},
+		`{"alice":{"name":"A","endpoints":{"voicemail":{"201":{}}}},"0":null}`:                                                  {},
+		`{"a":{"name":"A","endpoints":{"voicemail":{"201":true}}},"b":{"name":"B","endpoints":{"voicemail":{"202":null,"9":"x","1":[]}}},"c":{"name":"C","endpoints":{"voicemail":["x",{}]}},"d":{"name":"D","endpoints":{"voicemail":"201"}},"e":{"name":"E","endpoints":["voicemail"]}}`: {
+			"a": nil, "b": {"1"}, "c": nil, "d": nil, "e": nil,
+		},
+		`{"alice":{"name":"A","endpoints":{"voicemail":{"201":{}}}},"alice":{"name":"A","endpoints":{"voicemail":{"202":{},"203":{}}}}}`: {"alice": {"202", "203"}},
+		`[{"name":"A","endpoints":{"voicemail":{"201":{}}}}]`:                                                                            {"0": {"201"}},
+		`"alice"`: {},
+		`null`:    {},
+		`{"__proto__":{"name":"A"},"bob":{"name":"B","endpoints":{"voicemail":{"202":{}}}}}`: {"bob": {"202"}},
+	}
+	for input, expected := range cases {
+		users, err := parseLegacyVoicemailUsers([]byte(input))
+		require.NoError(t, err, input)
+		assert.Equal(t, expected, users, input)
+	}
+
+	_, err := parseLegacyVoicemailUsers([]byte(`{"alice":`))
+	assert.Error(t, err)
 }

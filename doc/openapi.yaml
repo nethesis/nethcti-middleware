@@ -223,8 +223,35 @@ components:
         rows:
           type: array
           items:
-            type: object
-            additionalProperties: true
+            $ref: '#/components/schemas/VoicemailMessage'
+
+    VoicemailMessage:
+      type: object
+      properties:
+        origtime:
+          type: string
+          nullable: true
+          description: Unix timestamp of the message, as stored by Asterisk
+        duration:
+          type: string
+          nullable: true
+          description: Duration in seconds, as stored by Asterisk
+        id:
+          type: integer
+        dir:
+          type: string
+          nullable: true
+          description: Asterisk spool directory of the message
+        callerid:
+          type: string
+          nullable: true
+        mailboxuser:
+          type: string
+          nullable: true
+        type:
+          type: string
+          nullable: true
+          description: Lowercased folder name (last segment of dir)
 
     SummaryWatchRequest:
       type: object
@@ -2052,31 +2079,60 @@ paths:
 
   /voicemail/list/{id}:
     get:
-      summary: Get voicemail by numeric ID or proxy legacy list selectors
+      summary: List the user's voicemail messages, or get one message by numeric ID
       operationId: listVoicemailById
       tags:
         - Voicemail
       description: |
-        When `id` is numeric, the middleware fetches the legacy voicemail list and filters it locally.
-        When `id` is a legacy selector such as `all`, `old`, or `inbox`, the request is transparently
-        proxied to the legacy V1 API path.
+        Reads the messages of the user's voicemail from `asteriskcdrdb.voicemessages`, newest first
+        (`origtime` descending). The user's voicemail is the `voicemail` endpoint of the user in
+        `/etc/nethcti/users.json`.
+
+        When `id` is `all`, every message is returned. Any other non-numeric `id` is a folder type
+        (`inbox`, `old`, `urgent`, `work`, `family`, `friends`, ...) matched case-insensitively against
+        the last segment of the message directory. The response is `{"count", "rows"}`, where `count`
+        is the total number of matching messages and `rows` the requested page.
+
+        When `id` is numeric, only the message with that database id is returned (`count` is 0 or 1).
+
+        A user without exactly one voicemail endpoint receives `[]`. Query strings that use the
+        bracket or dot syntax on `offset`/`limit` are still forwarded to the legacy server.
       security:
         - bearerAuth: []
       parameters:
         - name: id
           in: path
           required: true
+          description: Folder type, `all`, or numeric message id
           schema:
             type: string
+        - name: offset
+          in: query
+          required: false
+          description: Number of messages to skip (non-numeric id only)
+          schema:
+            type: integer
+            minimum: 0
+        - name: limit
+          in: query
+          required: false
+          description: Maximum number of messages to return (non-numeric id only)
+          schema:
+            type: integer
+            minimum: 0
       responses:
         '200':
-          description: Voicemail list or filtered voicemail item
+          description: Voicemail messages, or `[]` when the user has no single voicemail
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/VoicemailListResponse'
+                oneOf:
+                  - $ref: '#/components/schemas/VoicemailListResponse'
+                  - type: array
+                    maxItems: 0
+                    items: {}
         '400':
-          description: Missing voicemail id
+          description: Missing voicemail id, or a path that is not valid UTF-8 once decoded
           content:
             application/json:
               schema:
@@ -2087,8 +2143,10 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: User not found in users.json, invalid offset/limit, or database error (empty body)
         '502':
-          description: Failed to fetch the legacy voicemail list
+          description: Numeric id requested by a user without a single voicemail, or database error
           content:
             application/json:
               schema:
@@ -2171,7 +2229,7 @@ tags:
   - name: Users
     description: User settings and profile data exposed to CTI clients
   - name: Voicemail
-    description: Voicemail retrieval and legacy proxy behavior
+    description: Voicemail retrieval
   - name: Administration
     description: Administrative operations requiring super admin authentication
   - name: NethLink
