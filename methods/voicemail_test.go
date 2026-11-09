@@ -38,23 +38,23 @@ func nullString(value string) sql.NullString {
 	return sql.NullString{String: value, Valid: true}
 }
 
-func setupVoicemailMocks(t *testing.T, users legacyVoicemailUsers, count int64, rows []store.VoicemailMessageRow) *voicemailMocks {
+func setupVoicemailMocks(t *testing.T, users legacyUsers, count int64, rows []store.VoicemailMessageRow) *voicemailMocks {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 
-	originalUsers := loadLegacyVoicemailUsersFunc
+	originalUsers := loadLegacyUsersFunc
 	originalCount := countVoicemailMessagesFunc
 	originalList := listVoicemailMessagesFunc
 	originalProxy := proxyV1RequestFunc
 	t.Cleanup(func() {
-		loadLegacyVoicemailUsersFunc = originalUsers
+		loadLegacyUsersFunc = originalUsers
 		countVoicemailMessagesFunc = originalCount
 		listVoicemailMessagesFunc = originalList
 		proxyV1RequestFunc = originalProxy
 	})
 
 	mocks := &voicemailMocks{}
-	loadLegacyVoicemailUsersFunc = func() legacyVoicemailUsers { return users }
+	loadLegacyUsersFunc = func() legacyUsers { return users }
 	countVoicemailMessagesFunc = func(_ context.Context, mailbox string, folder *string) (int64, error) {
 		mocks.counts = append(mocks.counts, voicemailQuery{mailbox: mailbox, folder: folder})
 		return count, nil
@@ -69,6 +69,14 @@ func setupVoicemailMocks(t *testing.T, users legacyVoicemailUsers, count int64, 
 		c.Status(http.StatusTeapot)
 	}
 	return mocks
+}
+
+func voicemailUsers(voicemails map[string][]string) legacyUsers {
+	users := legacyUsers{}
+	for name, ids := range voicemails {
+		users[name] = &legacyUser{voicemails: ids}
+	}
+	return users
 }
 
 func runVoicemailRequest(user, target string) *httptest.ResponseRecorder {
@@ -90,7 +98,7 @@ var sampleVoicemailRows = []store.VoicemailMessageRow{
 }
 
 func TestListVoicemailByID_ReturnsSingleRow(t *testing.T) {
-	mocks := setupVoicemailMocks(t, legacyVoicemailUsers{"alice": {"201"}}, 2, sampleVoicemailRows)
+	mocks := setupVoicemailMocks(t, voicemailUsers(map[string][]string{"alice": {"201"}}), 2, sampleVoicemailRows)
 
 	recorder := runVoicemailRequest("alice", "/voicemail/list/2")
 
@@ -104,7 +112,7 @@ func TestListVoicemailByID_ReturnsSingleRow(t *testing.T) {
 }
 
 func TestListVoicemailByID_NumericFailures(t *testing.T) {
-	setupVoicemailMocks(t, legacyVoicemailUsers{"alice": {"201", "202"}, "bob": nil}, 0, nil)
+	setupVoicemailMocks(t, voicemailUsers(map[string][]string{"alice": {"201", "202"}, "bob": nil}), 0, nil)
 
 	for _, user := range []string{"alice", "bob", "carl"} {
 		recorder := runVoicemailRequest(user, "/voicemail/list/4")
@@ -117,7 +125,7 @@ func TestListVoicemailByID_NumericFailures(t *testing.T) {
 }
 
 func TestListVoicemailMessages_EncodesLikeLegacyServer(t *testing.T) {
-	mocks := setupVoicemailMocks(t, legacyVoicemailUsers{"alice": {"201"}}, 7, sampleVoicemailRows)
+	mocks := setupVoicemailMocks(t, voicemailUsers(map[string][]string{"alice": {"201"}}), 7, sampleVoicemailRows)
 
 	recorder := runVoicemailRequest("alice", "/voicemail/list/all")
 
@@ -129,7 +137,7 @@ func TestListVoicemailMessages_EncodesLikeLegacyServer(t *testing.T) {
 }
 
 func TestListVoicemailMessages_UserStates(t *testing.T) {
-	mocks := setupVoicemailMocks(t, legacyVoicemailUsers{"alice": {"201", "202"}, "bob": nil}, 3, sampleVoicemailRows)
+	mocks := setupVoicemailMocks(t, voicemailUsers(map[string][]string{"alice": {"201", "202"}, "bob": nil}), 3, sampleVoicemailRows)
 
 	for _, user := range []string{"alice", "bob"} {
 		recorder := runVoicemailRequest(user, "/voicemail/list/inbox")
@@ -147,7 +155,7 @@ func TestListVoicemailMessages_UserStates(t *testing.T) {
 }
 
 func TestListVoicemailMessages_FolderFilter(t *testing.T) {
-	mocks := setupVoicemailMocks(t, legacyVoicemailUsers{"alice": {"201"}}, 0, nil)
+	mocks := setupVoicemailMocks(t, voicemailUsers(map[string][]string{"alice": {"201"}}), 0, nil)
 
 	cases := map[string]string{
 		"/voicemail/list/INBOX":              "INBOX",
@@ -185,7 +193,7 @@ func TestListVoicemailMessages_FolderFilter(t *testing.T) {
 }
 
 func TestListVoicemailMessages_Pagination(t *testing.T) {
-	mocks := setupVoicemailMocks(t, legacyVoicemailUsers{"alice": {"201"}}, 5, []store.VoicemailMessageRow{})
+	mocks := setupVoicemailMocks(t, voicemailUsers(map[string][]string{"alice": {"201"}}), 5, []store.VoicemailMessageRow{})
 
 	cases := map[string][2]uint64{
 		"":                            {0, legacyVoicemailAllRows},
@@ -224,7 +232,7 @@ func TestListVoicemailMessages_Pagination(t *testing.T) {
 }
 
 func TestListVoicemailMessages_EmptyFolderSkipsPagination(t *testing.T) {
-	mocks := setupVoicemailMocks(t, legacyVoicemailUsers{"alice": {"201"}}, 0, nil)
+	mocks := setupVoicemailMocks(t, voicemailUsers(map[string][]string{"alice": {"201"}}), 0, nil)
 
 	recorder := runVoicemailRequest("alice", "/voicemail/list/zzz?offset=abc")
 
@@ -234,7 +242,7 @@ func TestListVoicemailMessages_EmptyFolderSkipsPagination(t *testing.T) {
 }
 
 func TestListVoicemailMessages_ComplexQueryGoesToLegacyServer(t *testing.T) {
-	mocks := setupVoicemailMocks(t, legacyVoicemailUsers{"alice": {"201"}}, 1, nil)
+	mocks := setupVoicemailMocks(t, voicemailUsers(map[string][]string{"alice": {"201"}}), 1, nil)
 
 	for _, query := range []string{"offset[x]=1", "offset%5B%5D=1", "limit.x=1", "%5Blimit%5D=2", "offset=1&limit[0]=3", ".x=1"} {
 		recorder := runVoicemailRequest("alice", "/voicemail/list/all?"+query)
@@ -246,7 +254,7 @@ func TestListVoicemailMessages_ComplexQueryGoesToLegacyServer(t *testing.T) {
 }
 
 func TestListVoicemailMessages_DatabaseErrors(t *testing.T) {
-	setupVoicemailMocks(t, legacyVoicemailUsers{"alice": {"201"}}, 1, nil)
+	setupVoicemailMocks(t, voicemailUsers(map[string][]string{"alice": {"201"}}), 1, nil)
 	countVoicemailMessagesFunc = func(context.Context, string, *string) (int64, error) { return 0, errors.New("boom") }
 
 	recorder := runVoicemailRequest("alice", "/voicemail/list/all")
@@ -262,30 +270,4 @@ func TestListVoicemailMessages_DatabaseErrors(t *testing.T) {
 
 	recorder = runVoicemailRequest("alice", "/voicemail/list/3")
 	assert.Equal(t, http.StatusBadGateway, recorder.Code)
-}
-
-func TestParseLegacyVoicemailUsers(t *testing.T) {
-	cases := map[string]legacyVoicemailUsers{
-		`{"alice":{"name":"A","endpoints":{"voicemail":{"201":{}}}},"bob":{"name":"B","endpoints":{"voicemail":{}}}}`:           {"alice": {"201"}, "bob": nil},
-		`{"Alice":{"name":"A","endpoints":{"voicemail":{"202":{}}}},"alice":{"name":"a","endpoints":{"voicemail":{"201":{}}}}}`: {"alice": {"202"}},
-		`{"alice":{"name":"a","endpoints":{"voicemail":{"202":{}}}},"Alice":{"name":"A","endpoints":{"voicemail":{"201":{}}}}}`: {"alice": {"201"}},
-		`{"alice":{"name":"A","endpoints":{"voicemail":{"201":{}}}},"bob":{"endpoints":{}},"carl":{"name":"C"}}`:                {"alice": nil},
-		`{"alice":{"name":"A","endpoints":{"voicemail":{"201":{}}}},"0":null}`:                                                  {},
-		`{"a":{"name":"A","endpoints":{"voicemail":{"201":true}}},"b":{"name":"B","endpoints":{"voicemail":{"202":null,"9":"x","1":[]}}},"c":{"name":"C","endpoints":{"voicemail":["x",{}]}},"d":{"name":"D","endpoints":{"voicemail":"201"}},"e":{"name":"E","endpoints":["voicemail"]}}`: {
-			"a": nil, "b": {"1"}, "c": nil, "d": nil, "e": nil,
-		},
-		`{"alice":{"name":"A","endpoints":{"voicemail":{"201":{}}}},"alice":{"name":"A","endpoints":{"voicemail":{"202":{},"203":{}}}}}`: {"alice": {"202", "203"}},
-		`[{"name":"A","endpoints":{"voicemail":{"201":{}}}}]`:                                                                            {"0": {"201"}},
-		`"alice"`: {},
-		`null`:    {},
-		`{"__proto__":{"name":"A"},"bob":{"name":"B","endpoints":{"voicemail":{"202":{}}}}}`: {"bob": {"202"}},
-	}
-	for input, expected := range cases {
-		users, err := parseLegacyVoicemailUsers([]byte(input))
-		require.NoError(t, err, input)
-		assert.Equal(t, expected, users, input)
-	}
-
-	_, err := parseLegacyVoicemailUsers([]byte(`{"alice":`))
-	assert.Error(t, err)
 }

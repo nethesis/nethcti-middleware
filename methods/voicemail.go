@@ -8,7 +8,6 @@ package methods
 import (
 	"bytes"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -21,7 +20,6 @@ import (
 	"github.com/fatih/structs"
 	"github.com/gin-gonic/gin"
 
-	"github.com/nethesis/nethcti-middleware/configuration"
 	"github.com/nethesis/nethcti-middleware/logs"
 	"github.com/nethesis/nethcti-middleware/models"
 	"github.com/nethesis/nethcti-middleware/store"
@@ -32,8 +30,6 @@ const (
 	legacyQueryParameterLimit = 1000
 )
 
-type legacyVoicemailUsers map[string][]string
-
 type legacyVoicemailList struct {
 	missingUser bool
 	noVoicemail bool
@@ -42,12 +38,9 @@ type legacyVoicemailList struct {
 }
 
 var (
-	legacyVoicemailUsersFile = newCachedConfigFile("VOICEMAIL", parseLegacyVoicemailUsers, func() legacyVoicemailUsers { return legacyVoicemailUsers{} })
-
-	loadLegacyVoicemailUsersFunc = loadLegacyVoicemailUsers
-	countVoicemailMessagesFunc   = store.CountLegacyVoicemailMessages
-	listVoicemailMessagesFunc    = store.ListLegacyVoicemailMessages
-	proxyV1RequestFunc           = ProxyV1Request
+	countVoicemailMessagesFunc = store.CountLegacyVoicemailMessages
+	listVoicemailMessagesFunc  = store.ListLegacyVoicemailMessages
+	proxyV1RequestFunc         = ProxyV1Request
 
 	qsDotNotation = regexp.MustCompile(`\.([^.[]+)`)
 	qsBrackets    = regexp.MustCompile(`\[[^[\]]*\]`)
@@ -142,10 +135,11 @@ func listLegacyVoicemailMessages(c *gin.Context, folder string) {
 }
 
 func fetchLegacyVoicemailList(c *gin.Context, username, folderType string, offset, limit []string) (*legacyVoicemailList, error) {
-	voicemails, exists := loadLegacyVoicemailUsersFunc()[username]
+	user, exists := loadLegacyUsersFunc()[username]
 	if !exists {
 		return &legacyVoicemailList{missingUser: true}, nil
 	}
+	voicemails := user.voicemails
 	if len(voicemails) != 1 {
 		return &legacyVoicemailList{noVoicemail: true}, nil
 	}
@@ -321,134 +315,6 @@ func decodeMySQLDoubleQuotedLiteral(value string) (string, bool) {
 		}
 	}
 	return builder.String(), true
-}
-
-func loadLegacyVoicemailUsers() legacyVoicemailUsers {
-	return legacyVoicemailUsersFile.load(configuration.Config.UsersConfigPath)
-}
-
-func parseLegacyVoicemailUsers(data []byte) (legacyVoicemailUsers, error) {
-	var root json.RawMessage
-	if err := json.Unmarshal(data, &root); err != nil {
-		return nil, err
-	}
-
-	entries, err := decodeJSONContainerEntries(root)
-	if err != nil {
-		return nil, err
-	}
-
-	keys := make([]string, 0, len(entries))
-	values := make(map[string]json.RawMessage, len(entries))
-	for _, entry := range entries {
-		keys = append(keys, entry.key)
-		values[entry.key] = entry.value
-	}
-
-	for _, key := range jsOrderedKeys(keys) {
-		value := values[key]
-		keys = removeKey(keys, key)
-		delete(values, key)
-		lower := strings.ToLower(key)
-		if lower == "__proto__" {
-			continue
-		}
-		if _, exists := values[lower]; !exists {
-			keys = append(keys, lower)
-		}
-		values[lower] = value
-	}
-
-	ordered := jsOrderedKeys(keys)
-	created := 0
-	for created < len(ordered) && legacyUserHasName(values[ordered[created]]) {
-		created++
-	}
-
-	users := make(legacyVoicemailUsers, created)
-	for _, key := range ordered[:created] {
-		if created < len(ordered) {
-			users[key] = nil
-			continue
-		}
-		users[key] = legacyUserVoicemails(values[key])
-	}
-
-	return users, nil
-}
-
-func jsOrderedKeys(keys []string) []string {
-	order := jsPropertyOrder(len(keys), func(i int) string { return keys[i] })
-	ordered := make([]string, len(order))
-	for i, index := range order {
-		ordered[i] = keys[index]
-	}
-	return ordered
-}
-
-func removeKey(keys []string, key string) []string {
-	for i, current := range keys {
-		if current == key {
-			return append(keys[:i], keys[i+1:]...)
-		}
-	}
-	return keys
-}
-
-func jsonObjectField(raw json.RawMessage, name string) (json.RawMessage, bool) {
-	trimmed := bytes.TrimSpace(raw)
-	if len(trimmed) == 0 || trimmed[0] != '{' {
-		return nil, false
-	}
-	entries, err := decodeJSONContainerEntries(trimmed)
-	if err != nil {
-		return nil, false
-	}
-	for _, entry := range entries {
-		if entry.key == name {
-			return entry.value, true
-		}
-	}
-	return nil, false
-}
-
-func legacyUserHasName(raw json.RawMessage) bool {
-	name, ok := jsonObjectField(raw, "name")
-	if !ok {
-		return false
-	}
-	trimmed := bytes.TrimSpace(name)
-	return len(trimmed) > 0 && trimmed[0] == '"'
-}
-
-func legacyUserVoicemails(raw json.RawMessage) []string {
-	endpoints, ok := jsonObjectField(raw, "endpoints")
-	if !ok {
-		return nil
-	}
-	voicemail, ok := jsonObjectField(endpoints, "voicemail")
-	if !ok {
-		return nil
-	}
-
-	trimmed := bytes.TrimSpace(voicemail)
-	if len(trimmed) == 0 || (trimmed[0] != '{' && trimmed[0] != '[') {
-		return nil
-	}
-	entries, err := decodeJSONContainerEntries(trimmed)
-	if err != nil {
-		return nil
-	}
-
-	var voicemails []string
-	for _, entry := range entries {
-		value := bytes.TrimSpace(entry.value)
-		if len(value) == 0 || (value[0] != '{' && value[0] != '[' && value[0] != 'n') {
-			break
-		}
-		voicemails = append(voicemails, entry.key)
-	}
-	return voicemails
 }
 
 func legacyVoicemailStringValue(value sql.NullString) interface{} {

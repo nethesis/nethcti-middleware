@@ -223,6 +223,8 @@ func createRouter() *gin.Engine {
 
 		api.GET("/astproxy/opgroups", methods.GetOperatorGroups)
 		api.GET("/astproxy/feature_codes", methods.GetFeatureCodes)
+		api.GET("/astproxy/pin", methods.GetExtensionPins)
+		api.GET("/astproxy/pinstatus", methods.GetPinStatus)
 		api.GET("/user/all_avatars", methods.GetAllAvatars)
 		api.GET("/user/paramurl", methods.GetParamURL)
 

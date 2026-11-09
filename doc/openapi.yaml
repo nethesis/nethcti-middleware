@@ -225,6 +225,17 @@ components:
           items:
             $ref: '#/components/schemas/VoicemailMessage'
 
+    ExtensionPin:
+      type: object
+      properties:
+        extension:
+          type: integer
+        pin:
+          type: string
+          nullable: true
+        enabled:
+          type: boolean
+
     VoicemailMessage:
       type: object
       properties:
@@ -1991,6 +2002,81 @@ paths:
                 dnd_toggle: '*76'
                 incall_audio: '*49'
                 audio_test: '*41'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /astproxy/pin:
+    get:
+      summary: Get the PIN of the user's phones
+      operationId: getExtensionPins
+      tags:
+        - Asterisk Configuration
+      description: |
+        Served by the middleware from `asterisk.pin`, replacing the legacy nethcti-server endpoint with
+        the same path and response shape. The extensions are the non-WebRTC extensions of the user in
+        `/etc/nethcti/users.json` (main extension and `extension` endpoints). The response is keyed by
+        extension; `enabled` is true only when the stored value is 1.
+
+        The response is `{}` when the user has no non-WebRTC extension and `[]` when none of them has a
+        PIN. Like the legacy server, a main extension that is not also listed among the `extension`
+        endpoints returns `500`. Setting a PIN (`POST /astproxy/pin`) is still handled by nethcti-server.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: PINs keyed by extension, `{}` without phones, `[]` without PINs
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: object
+                    additionalProperties:
+                      $ref: '#/components/schemas/ExtensionPin'
+                  - type: array
+                    maxItems: 0
+                    items: {}
+              example:
+                '93201':
+                  extension: 93201
+                  pin: '12345'
+                  enabled: true
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Database error or invalid main extension (empty body)
+
+  /astproxy/pinstatus:
+    get:
+      summary: Get whether the PIN is enabled on at least one outbound route
+      operationId: getPinStatus
+      tags:
+        - Asterisk Configuration
+      description: |
+        Served by the middleware from `asterisk.pin_protected_routes`, replacing the legacy
+        nethcti-server endpoint with the same path and response shape. Like the legacy server, a
+        database error returns `200` with an empty object.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: PIN activation status, or `{}` on database error
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enabled:
+                    type: boolean
+              example:
+                enabled: true
         '401':
           description: Unauthorized
           content:

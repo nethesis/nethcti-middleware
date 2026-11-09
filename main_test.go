@@ -448,6 +448,44 @@ func TestVoicemailListServedLocally(t *testing.T) {
 	assert.Empty(t, body)
 }
 
+func TestPinServedLocally(t *testing.T) {
+	resetTestState()
+
+	for _, path := range []string{"/astproxy/pin", "/astproxy/pinstatus"} {
+		resp, err := http.Get(testServerURL + path)
+		require.NoError(t, err)
+		resp.Body.Close()
+		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode, path)
+	}
+
+	originalUsersPath := configuration.Config.UsersConfigPath
+	defer func() { configuration.Config.UsersConfigPath = originalUsersPath }()
+	configuration.Config.UsersConfigPath = writeTempFileForTest(t, "users.json", `{"testuser":{"name":"Test","endpoints":{"mainextension":{"201":{}},"extension":{"201":{"type":"webrtc"}}}}}`)
+
+	token := utils.PerformLogin(testServerURL)
+	call := func(method, path string) (int, string) {
+		req, _ := http.NewRequest(method, testServerURL+path, nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		data, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		return resp.StatusCode, string(data)
+	}
+
+	status, body := call(http.MethodGet, "/astproxy/pin")
+	assert.Equal(t, http.StatusOK, status)
+	assert.Equal(t, `{}`, body)
+
+	status, body = call(http.MethodGet, "/astproxy/pinstatus")
+	assert.Equal(t, http.StatusOK, status)
+	assert.True(t, strings.HasPrefix(body, "{"), body)
+
+	status, _ = call(http.MethodPost, "/astproxy/pin")
+	assert.Equal(t, http.StatusNotFound, status)
+}
+
 // Test 2FA QR code generation
 func TestQRCode(t *testing.T) {
 	resetTestState()
