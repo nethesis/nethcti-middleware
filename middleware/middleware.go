@@ -108,13 +108,15 @@ func InitJWT() *jwt.GinJWTMiddleware {
 			if useSso {
 				loginMode = methods.LoginSSO
 			}
-			NethCTIToken, err := methods.LoginV1(username, password, loginMode)
+			// the session is keyed by the account username, whatever name
+			// (extension, case) the user logged in with
+			accountUsername, NethCTIToken, err := methods.LoginV1(username, password, loginMode)
 			if err != nil {
 				return nil, jwt.ErrFailedAuthentication
 			}
 
 			// Login is successful. Middleware returns a JWT.
-			return methods.UpsertUserSession(username, NethCTIToken), nil
+			return methods.UpsertUserSession(accountUsername, NethCTIToken), nil
 		},
 		PayloadFunc: func(data any) gojwt.MapClaims {
 			// read current user
@@ -163,11 +165,8 @@ func InitJWT() *jwt.GinJWTMiddleware {
 			// Check 2FA requirement (only for JWT token authentication, not API key)
 			// Use the otp_verified claim from the JWT token (not from session)
 			if !isOTPVerifyEndpoint {
-				has2FA, has2FAExists := claims["2fa"].(bool)
-				otpVerified, otpVerifiedExists := claims["otp_verified"].(bool)
-
 				// If 2FA is enabled but OTP claim doesn't exist or is false, deny access
-				if has2FAExists && has2FA && (!otpVerifiedExists || !otpVerified) {
+				if methods.OTPPending(claims) {
 					logs.Log("[ERROR][AUTH] authorization failed for user " + username + " (2FA required but OTP not verified in token). " + reqMethod + " " + reqURI)
 					return false
 				}

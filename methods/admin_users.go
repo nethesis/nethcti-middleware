@@ -113,12 +113,12 @@ func AdminCreatePersistentToken(c *gin.Context) {
 	}
 
 	if session, hasSession := store.GetSession(username); !hasSession || session.NethCTIToken == "" {
-		NethCTIToken, err := LoginV1(username, "", LoginInternal)
+		accountUsername, NethCTIToken, err := LoginV1(username, "", LoginInternal)
 		if errors.Is(err, ErrTrustedLoginDisabled) {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"message": "internal login is not configured"})
 			return
 		}
-		if err != nil {
+		if err != nil || accountUsername != username {
 			c.JSON(http.StatusNotFound, gin.H{"message": "user not found or not allowed"})
 			return
 		}

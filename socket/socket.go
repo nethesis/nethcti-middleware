@@ -12,6 +12,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/nethesis/nethcti-middleware/configuration"
 	"github.com/nethesis/nethcti-middleware/logs"
+	"github.com/nethesis/nethcti-middleware/methods"
 	"github.com/nethesis/nethcti-middleware/mqtt"
 	"github.com/nethesis/nethcti-middleware/store"
 	"github.com/nethesis/nethcti-middleware/utils"
@@ -162,6 +163,18 @@ func WsProxyHandler(c *gin.Context) {
 							if sessionExists && hasToken {
 								if !utils.Contains(clientJWTToken, session.JWTTokens) {
 									logs.Log(fmt.Sprintf("[ERROR][WS] Invalid JWT token for websocket login user=%s", accessKeyId))
+									continue
+								}
+
+								// same checks as the HTTP API: a valid token of this
+								// user, with the OTP verified when 2FA is enabled
+								claims, err := methods.ParseUserJWT(clientJWTToken)
+								if err != nil || claims["id"] != session.Username {
+									logs.Log(fmt.Sprintf("[ERROR][WS] Invalid JWT token for websocket login user=%s", accessKeyId))
+									continue
+								}
+								if methods.OTPPending(claims) {
+									logs.Log(fmt.Sprintf("[ERROR][WS] websocket login refused for user=%s (2FA required but OTP not verified in token)", accessKeyId))
 									continue
 								}
 

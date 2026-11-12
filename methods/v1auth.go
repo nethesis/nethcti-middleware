@@ -57,20 +57,54 @@ func v1URL(path string) string {
 	return configuration.Config.V1Protocol + "://" + configuration.Config.V1ApiEndpoint + configuration.Config.V1ApiPath + path
 }
 
-// LoginV1 authenticates the user on the V1 server and returns the persistent
-// NethCTIToken ("username:token") the middleware uses to call it.
+// LoginV1 authenticates the user on the V1 server and returns the username
+// of the account, as the V1 server names it, with the persistent NethCTIToken
+// ("username:token") the middleware uses to call it.
+//
+// The V1 server also accepts other names for the same account (the main
+// extension number, a different case): the session must always be keyed by
+// the account username, so the login is repeated once with that username.
 //
 // With LoginPassword, password is the user password and it is also the key of
 // the legacy token. The other modes need no user password: the request
 // carries the username and a shared secret in dedicated headers, and the
 // legacy token key is derived from that secret.
-func LoginV1(username, password string, mode LoginMode) (string, error) {
+func LoginV1(username, password string, mode LoginMode) (string, string, error) {
+	client := &http.Client{Timeout: 30 * time.Second}
+
+	for attempt := 0; attempt < 2; attempt++ {
+		NethCTIToken, accountUsername, err := loginV1Challenge(client, username, password, mode)
+		if err != nil {
+			return "", "", err
+		}
+		if accountUsername != username {
+			if attempt == 0 && accountUsername != "" {
+				logs.Log("[INFO][AUTH] login name " + username + " belongs to user " + accountUsername)
+				username = accountUsername
+				continue
+			}
+			logs.Log("[ERROR][AUTH] V1 server returned an unexpected username for user " + username)
+			return "", "", ErrV1AuthFailed
+		}
+
+		token, err := persistentV1Token(client, username, NethCTIToken)
+		if err != nil {
+			return "", "", err
+		}
+		return username, username + ":" + token, nil
+	}
+	return "", "", ErrV1AuthFailed
+}
+
+// loginV1Challenge performs the V1 login challenge and returns the login token
+// with the username reported by /user/me for it.
+func loginV1Challenge(client *http.Client, username, password string, mode LoginMode) (string, string, error) {
 	tokenPassword := password
 	headers := map[string]string{}
 	switch mode {
 	case LoginSSO:
 		if configuration.Config.SsoTrustedSecret == "" {
-			return "", ErrTrustedLoginDisabled
+			return "", "", ErrTrustedLoginDisabled
 		}
 		password = configuration.Config.SsoTrustedSecret
 		tokenPassword = configuration.Config.SsoTokenKey
@@ -79,7 +113,7 @@ func LoginV1(username, password string, mode LoginMode) (string, error) {
 	case LoginInternal:
 		secret := configuration.Config.SuperAdminToken
 		if secret == "" || configuration.Config.SuperAdminTokenGenerated {
-			return "", ErrTrustedLoginDisabled
+			return "", "", ErrTrustedLoginDisabled
 		}
 		tokenPassword = internalTokenKey(secret)
 		password = tokenPassword
@@ -91,55 +125,62 @@ func LoginV1(username, password string, mode LoginMode) (string, error) {
 	req, err := http.NewRequest("POST", v1URL("/authentication/login"), bytes.NewBuffer(payloadBytes))
 	if err != nil {
 		logs.Log("[ERROR][AUTH] Failed to create HTTP request")
-		return "", err
+		return "", "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	for name, value := range headers {
 		req.Header.Set(name, value)
 	}
 
-	// Timeout avoids the client hanging indefinitely if the backend
+	// The client timeout avoids hanging indefinitely if the backend
 	// leaves the response unfinished (e.g. an unhandled exception
 	// that never calls resp.end() on the restify side).
-	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		logs.Log("[ERROR][AUTH] Failed to send request to NetCTI")
-		return "", ErrV1AuthFailed
+		return "", "", ErrV1AuthFailed
 	}
-	defer resp.Body.Close()
+	resp.Body.Close()
 
-	var NethCTIToken string
-
-	if resp.StatusCode == http.StatusUnauthorized {
-		wwwAuth := resp.Header.Get("Www-Authenticate")
-		if wwwAuth != "" {
-			// Generate NethCTIToken using the www-authenticate header
-			NethCTIToken = utils.GenerateLegacyToken(resp, username, tokenPassword)
-			if NethCTIToken == "" {
-				logs.Log("[ERROR][AUTH] Failed to generate NethCTIToken")
-				return "", ErrV1AuthFailed
-			}
-
-			// Retry the request with the new Authorization header
-			meReq, _ := http.NewRequest("GET", v1URL("/user/me"), nil)
-			meReq.Header.Set("Authorization", NethCTIToken)
-			meResp, err := client.Do(meReq)
-			if err != nil {
-				logs.Log("[ERROR][AUTH] Failed to retry request to NetCTI")
-				return "", ErrV1AuthFailed
-			}
-			defer meResp.Body.Close()
-			resp = meResp
-		}
-	}
-
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusUnauthorized || resp.Header.Get("Www-Authenticate") == "" {
 		logs.Log("[ERROR][AUTH] Authentication failed for user " + username + " with status: " + resp.Status)
-		return "", ErrV1AuthFailed
+		return "", "", ErrV1AuthFailed
 	}
 
-	// Exchange the login token for a persistent one, used for the session
+	// Generate NethCTIToken using the www-authenticate header
+	NethCTIToken := utils.GenerateLegacyToken(resp, username, tokenPassword)
+	if NethCTIToken == "" {
+		logs.Log("[ERROR][AUTH] Failed to generate NethCTIToken")
+		return "", "", ErrV1AuthFailed
+	}
+
+	meReq, _ := http.NewRequest("GET", v1URL("/user/me"), nil)
+	meReq.Header.Set("Authorization", NethCTIToken)
+	meResp, err := client.Do(meReq)
+	if err != nil {
+		logs.Log("[ERROR][AUTH] Failed to retry request to NetCTI")
+		return "", "", ErrV1AuthFailed
+	}
+	defer meResp.Body.Close()
+
+	if meResp.StatusCode != http.StatusOK {
+		logs.Log("[ERROR][AUTH] Authentication failed for user " + username + " with status: " + meResp.Status)
+		return "", "", ErrV1AuthFailed
+	}
+
+	var me struct {
+		Username string `json:"username"`
+	}
+	if err := json.NewDecoder(meResp.Body).Decode(&me); err != nil {
+		logs.Log("[ERROR][AUTH] Failed to parse the V1 user of " + username)
+		return "", "", ErrV1AuthFailed
+	}
+	return NethCTIToken, me.Username, nil
+}
+
+// persistentV1Token exchanges the login token for a persistent one, used for
+// the session.
+func persistentV1Token(client *http.Client, username, NethCTIToken string) (string, error) {
 	piPayloadBytes, _ := json.Marshal(map[string]string{"subtype": "user"})
 	piReq, err := http.NewRequest("POST", v1URL("/authentication/phone_island_token_login"), bytes.NewBuffer(piPayloadBytes))
 	if err != nil {
@@ -167,8 +208,7 @@ func LoginV1(username, password string, mode LoginMode) (string, error) {
 		logs.Log("[ERROR][AUTH] Failed to parse server v1 response for user " + username)
 		return "", ErrV1AuthFailed
 	}
-
-	return username + ":" + v1Resp.Token, nil
+	return v1Resp.Token, nil
 }
 
 // UpsertUserSession stores the NethCTIToken of a successful login, reusing the

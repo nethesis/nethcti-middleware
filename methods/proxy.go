@@ -6,9 +6,11 @@
 package methods
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	neturl "net/url"
 	"strings"
 	"time"
 
@@ -121,10 +123,12 @@ func ProxyV1Request(c *gin.Context, path string, allowAnonymous bool) {
 		req.Header.Set("Authorization", nethCTIToken)
 	}
 
-	// Copy query parameters
+	// Copy query parameters, except the middleware token (?jwt=)
 	req.URL.RawQuery = c.Request.URL.RawQuery
-
-	forwardURL := req.URL.String()
+	if query := c.Request.URL.Query(); query.Has("jwt") {
+		query.Del("jwt")
+		req.URL.RawQuery = query.Encode()
+	}
 
 	// Create HTTP client with timeout
 	client := &http.Client{
@@ -134,7 +138,12 @@ func ProxyV1Request(c *gin.Context, path string, allowAnonymous bool) {
 	// Forward the request
 	resp, err := client.Do(req)
 	if err != nil {
-		logs.Log(fmt.Sprintf("[ERROR][PROXY][V1] request failed method=%s url=%s requester=%s auth=%s err=%v", c.Request.Method, forwardURL, requester, authType, err))
+		// path only, and the error without the URL: the query may carry tokens
+		var urlErr *neturl.Error
+		if errors.As(err, &urlErr) {
+			err = urlErr.Err
+		}
+		logs.Log(fmt.Sprintf("[ERROR][PROXY][V1] request failed method=%s path=%s requester=%s auth=%s err=%v", c.Request.Method, req.URL.Path, requester, authType, err))
 		c.JSON(http.StatusBadGateway, gin.H{
 			"code":    502,
 			"message": "Failed to reach V1 API",

@@ -1034,6 +1034,17 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          description: Too many wrong codes for the user, verification temporarily locked (see Retry-After)
+          headers:
+            Retry-After:
+              description: Seconds until the verification is unlocked
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '500':
           description: Failed to generate refreshed JWT
           content:

@@ -11,7 +11,9 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	jwt "github.com/appleboy/gin-jwt/v3"
@@ -25,6 +27,64 @@ import (
 	"github.com/nethesis/nethcti-middleware/store"
 	"github.com/nethesis/nethcti-middleware/utils"
 )
+
+// OTP verification attempts per user: after otpMaxFailures wrong codes the
+// verification is locked for otpLockout, whatever the client address.
+const (
+	otpMaxFailures = 5
+	otpLockout     = 15 * time.Minute
+)
+
+type otpAttempts struct {
+	failures    int
+	lastFailure time.Time
+	lockedUntil time.Time
+}
+
+var otpAttemptsMu sync.Mutex
+var otpAttemptsByUser = map[string]*otpAttempts{}
+
+// otpLockedFor returns how long the OTP verification of the user is still
+// locked (0 when it is not).
+func otpLockedFor(username string) time.Duration {
+	otpAttemptsMu.Lock()
+	defer otpAttemptsMu.Unlock()
+	if a := otpAttemptsByUser[username]; a != nil {
+		if left := time.Until(a.lockedUntil); left > 0 {
+			return left
+		}
+	}
+	return 0
+}
+
+func otpFailed(username string) {
+	otpAttemptsMu.Lock()
+	defer otpAttemptsMu.Unlock()
+	now := time.Now()
+	// drop the entries that are no longer relevant
+	for user, a := range otpAttemptsByUser {
+		if now.After(a.lockedUntil) && now.Sub(a.lastFailure) > otpLockout {
+			delete(otpAttemptsByUser, user)
+		}
+	}
+	a := otpAttemptsByUser[username]
+	if a == nil {
+		a = &otpAttempts{}
+		otpAttemptsByUser[username] = a
+	}
+	a.failures++
+	a.lastFailure = now
+	if a.failures >= otpMaxFailures {
+		a.failures = 0
+		a.lockedUntil = now.Add(otpLockout)
+	}
+}
+
+func otpSucceeded(username string) {
+	otpAttemptsMu.Lock()
+	defer otpAttemptsMu.Unlock()
+	delete(otpAttemptsByUser, username)
+}
 
 // -------------------------------- exported methods --------------------------------
 
@@ -73,6 +133,17 @@ func VerifyOTP(c *gin.Context) {
 		return
 	}
 
+	if retryAfter := otpLockedFor(username); retryAfter > 0 {
+		logs.Log("[ERROR][2FA] OTP verification locked for user " + username)
+		c.Header("Retry-After", strconv.Itoa(int(retryAfter.Seconds())+1))
+		c.JSON(http.StatusTooManyRequests, structs.Map(models.StatusBadRequest{
+			Code:    http.StatusTooManyRequests,
+			Message: "too_many_attempts",
+			Data:    nil,
+		}))
+		return
+	}
+
 	// get secret for the user
 	secret := getUserSecret(username)
 
@@ -101,6 +172,7 @@ func VerifyOTP(c *gin.Context) {
 		recoveryCodes := getRecoveryCodes(username)
 
 		if !utils.Contains(jsonOTP.OTP, recoveryCodes) {
+			otpFailed(username)
 			c.JSON(http.StatusBadRequest, structs.Map(models.StatusBadRequest{
 				Code:    400,
 				Message: "invalid_otp",
@@ -122,6 +194,8 @@ func VerifyOTP(c *gin.Context) {
 			return
 		}
 	}
+
+	otpSucceeded(username)
 
 	// Check if this is initial 2FA setup (not login OTP verification)
 	// If the current token has 2fa:false, it means user is setting up 2FA for the first time

@@ -108,13 +108,18 @@ func createRouter() *gin.Engine {
 			if _, proxied := params.Keys["proxied"]; proxied {
 				proxyFlag = " [proxied]"
 			}
+			// path only: the query string may carry the token (?jwt=)
+			path := params.Path
+			if params.Request != nil {
+				path = params.Request.URL.Path
+			}
 			return fmt.Sprintf("[GIN] %v | %3d | %13v | %15s | %-7s %#v%s\n",
 				params.TimeStamp.Format("2006/01/02 - 15:04:05"),
 				params.StatusCode,
 				params.Latency,
 				params.ClientIP,
 				params.Method,
-				params.Path,
+				path,
 				proxyFlag,
 			)
 		}),
