@@ -156,7 +156,7 @@ func WsProxyHandler(c *gin.Context) {
 						// Check if accessKeyId exists and is valid
 						accessKeyId, ok := loginData["accessKeyId"].(string)
 						if ok {
-							session, sessionExists := store.UserSessions[accessKeyId]
+							session, sessionExists := store.GetSession(accessKeyId)
 							clientJWTToken, hasToken := loginData["token"].(string)
 
 							if sessionExists && hasToken {

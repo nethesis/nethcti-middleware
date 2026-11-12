@@ -154,6 +154,16 @@ func GetUserCapabilities(username string) (map[string]bool, error) {
 }
 
 // GetUserProfile returns the profile data for a given username
+// UserExists reports whether the username is a configured user (exact name,
+// case insensitive): extensions and other aliases are not users.
+func UserExists(username string) bool {
+	profileMutex.RLock()
+	defer profileMutex.RUnlock()
+
+	_, ok := users[strings.ToLower(username)]
+	return ok
+}
+
 func GetUserProfile(username string) (*ProfileData, error) {
 	profileMutex.RLock()
 	defer profileMutex.RUnlock()

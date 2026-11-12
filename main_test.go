@@ -1173,3 +1173,81 @@ func TestNethlinkHeartbeat(t *testing.T) {
 }
 
 // ** End of NethLink Heartbeat Endpoint Tests **
+
+// ** Admin users Endpoint Tests **
+
+// TestAdminUserEndpointsRequireSuperAdmin checks that the admin token and 2FA
+// endpoints are behind the super admin authentication.
+func TestAdminUserEndpointsRequireSuperAdmin(t *testing.T) {
+	resetTestState()
+
+	configuration.Config.SuperAdminToken = "test-super-admin-token"
+	configuration.Config.SuperAdminAllowedIPs = []string{"127.0.0.1"}
+
+	endpoints := []struct {
+		method, path string
+		authorized   int
+	}{
+		{"GET", "/admin/tokens/persistent/testuser/mobile-app", http.StatusOK},
+		{"DELETE", "/admin/tokens/persistent/testuser/all", http.StatusNoContent},
+		{"GET", "/admin/2fa/testuser", http.StatusOK},
+		{"DELETE", "/admin/2fa/testuser", http.StatusNoContent},
+	}
+
+	for _, ep := range endpoints {
+		for _, token := range []string{"", "wrong-token", "test-super-admin-token"} {
+			req, _ := http.NewRequest(ep.method, testServerURL+ep.path, nil)
+			if token != "" {
+				req.Header.Set("Authorization", "Bearer "+token)
+			}
+			resp, err := http.DefaultClient.Do(req)
+			assert.NoError(t, err)
+			resp.Body.Close()
+
+			expected := http.StatusUnauthorized
+			if token == "test-super-admin-token" {
+				expected = ep.authorized
+			}
+			assert.Equal(t, expected, resp.StatusCode, ep.method+" "+ep.path+" token="+token)
+		}
+	}
+}
+
+// ** End of Admin users Endpoint Tests **
+
+// ** 2FA enforcement Tests **
+
+// TestOTPRequiredForVerifiedRoutes checks that a token without OTP
+// verification is refused outside the OTP verification route, and that the
+// OTP is verified only for the user of the token.
+func TestOTPRequiredForVerifiedRoutes(t *testing.T) {
+	resetTestState()
+
+	token := utils.PerformLogin(testServerURL)
+	otpSecret := utils.Setup2FA(testServerURL, token, t)
+	utils.Verify2FA(testServerURL, utils.GenerateOTP(otpSecret), token, t)
+
+	// New login: the token has 2fa=true and otp_verified=false
+	unverified := utils.PerformLogin(testServerURL)
+
+	for _, path := range []string{"/2fa/status", "/2fa/status?x=/verify-otp", "/2fa/status?/verify-otp"} {
+		req, _ := http.NewRequest("GET", testServerURL+path, nil)
+		req.Header.Set("Authorization", "Bearer "+unverified)
+		resp, err := http.DefaultClient.Do(req)
+		assert.NoError(t, err)
+		resp.Body.Close()
+		assert.NotEqual(t, http.StatusOK, resp.StatusCode, path)
+	}
+
+	// The OTP is verified only for the user of the token
+	jsonData, _ := json.Marshal(map[string]string{"username": "otheruser", "otp": utils.GenerateOTP(otpSecret)})
+	req, _ := http.NewRequest("POST", testServerURL+"/2fa/verify-otp", bytes.NewBuffer(jsonData))
+	req.Header.Set("Authorization", "Bearer "+unverified)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	assert.NoError(t, err)
+	resp.Body.Close()
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+}
+
+// ** End of 2FA enforcement Tests **

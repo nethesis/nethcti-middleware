@@ -57,6 +57,11 @@ func ProxyV1Request(c *gin.Context, path string, allowAnonymous bool) {
 
 	// Copy headers from the original request
 	for name, values := range c.Request.Header {
+		// Never forward the password-less login headers of a client: only
+		// the middleware itself sends them to V1 (see LoginV1)
+		if isTrustedLoginHeader(name) {
+			continue
+		}
 		for _, value := range values {
 			req.Header.Add(name, value)
 
@@ -100,8 +105,8 @@ func ProxyV1Request(c *gin.Context, path string, allowAnonymous bool) {
 		requester = username
 		authType = "jwt-session"
 
-		userSession := store.UserSessions[username]
-		if userSession == nil || userSession.NethCTIToken == "" {
+		userSession, hasSession := store.GetSession(username)
+		if !hasSession || userSession.NethCTIToken == "" {
 			c.JSON(http.StatusUnauthorized, gin.H{
 				"code":    401,
 				"message": "User session not found",
@@ -179,4 +184,11 @@ func ProxyV1Request(c *gin.Context, path string, allowAnonymous bool) {
 
 	// Write response body
 	c.Writer.Write(body)
+}
+
+// isTrustedLoginHeader reports whether the header belongs to the trusted SSO
+// or internal login of the V1 server.
+func isTrustedLoginHeader(name string) bool {
+	canonical := http.CanonicalHeaderKey(name)
+	return strings.HasPrefix(canonical, "X-Internal-") || strings.HasPrefix(canonical, "X-Sso-")
 }
