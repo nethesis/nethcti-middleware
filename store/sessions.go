@@ -53,19 +53,6 @@ func SessionHasToken(username, token string) bool {
 	return false
 }
 
-// FindUsernameByNethCTIToken returns the user owning the V1 token.
-func FindUsernameByNethCTIToken(token string) (string, bool) {
-	sessionsMu.RLock()
-	defer sessionsMu.RUnlock()
-
-	for username, s := range UserSessions {
-		if s != nil && s.NethCTIToken == token {
-			return username, true
-		}
-	}
-	return "", false
-}
-
 // SessionsSnapshot returns a copy of every session.
 func SessionsSnapshot() map[string]models.UserSession {
 	sessionsMu.RLock()

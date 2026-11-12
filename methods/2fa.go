@@ -64,7 +64,7 @@ func VerifyOTP(c *gin.Context) {
 
 	// the OTP is verified for the user of the token, never for another one
 	username, _ := jwt.ExtractClaims(c)["id"].(string)
-	if username == "" || (jsonOTP.Username != "" && jsonOTP.Username != username) {
+	if username == "" || (jsonOTP.Username != "" && !strings.EqualFold(strings.TrimSpace(jsonOTP.Username), username)) {
 		c.JSON(http.StatusBadRequest, structs.Map(models.StatusBadRequest{
 			Code:    400,
 			Message: "username does not match the token",
