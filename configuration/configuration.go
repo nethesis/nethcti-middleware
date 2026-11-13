@@ -52,8 +52,11 @@ type Configuration struct {
 	SatellitePgSQLPort     string `json:"satellite_pgsql_port"`
 
 	// Super Admin Configuration
-	SuperAdminToken      string   `json:"super_admin_token"`
-	SuperAdminAllowedIPs []string `json:"super_admin_allowed_ips"`
+	SuperAdminToken string `json:"super_admin_token"`
+	// SuperAdminTokenGenerated is set when the token is not shared through the
+	// environment: the V1 server does not know it, so no internal login.
+	SuperAdminTokenGenerated bool     `json:"-"`
+	SuperAdminAllowedIPs     []string `json:"super_admin_allowed_ips"`
 
 	// NethVoice secret key for FreePBX SecretKey computation
 	NethVoiceSecretKey string `json:"nethvoice_secret_key"`
@@ -317,6 +320,7 @@ func Init() {
 		Config.SuperAdminToken = os.Getenv("NETHVOICE_MIDDLEWARE_SUPER_ADMIN_TOKEN")
 	} else {
 		Config.SuperAdminToken = uuid.New().String()
+		Config.SuperAdminTokenGenerated = true
 		logs.Log("[WARN][ENV] NETHVOICE_MIDDLEWARE_SUPER_ADMIN_TOKEN variable is not set; generated random token")
 	}
 

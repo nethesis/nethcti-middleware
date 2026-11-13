@@ -156,12 +156,24 @@ func WsProxyHandler(c *gin.Context) {
 						// Check if accessKeyId exists and is valid
 						accessKeyId, ok := loginData["accessKeyId"].(string)
 						if ok {
-							session, sessionExists := store.UserSessions[accessKeyId]
+							session, sessionExists := store.GetSession(accessKeyId)
 							clientJWTToken, hasToken := loginData["token"].(string)
 
 							if sessionExists && hasToken {
 								if !utils.Contains(clientJWTToken, session.JWTTokens) {
 									logs.Log(fmt.Sprintf("[ERROR][WS] Invalid JWT token for websocket login user=%s", accessKeyId))
+									continue
+								}
+
+								// same checks as the HTTP API: a valid token of this
+								// user, with the OTP verified when 2FA is enabled
+								claims, err := utils.ParseUserJWT(clientJWTToken, configuration.Config.Secret_jwt)
+								if err != nil || claims["id"] != session.Username {
+									logs.Log(fmt.Sprintf("[ERROR][WS] Invalid JWT token for websocket login user=%s", accessKeyId))
+									continue
+								}
+								if utils.OTPPending(claims) {
+									logs.Log(fmt.Sprintf("[ERROR][WS] websocket login refused for user=%s (2FA required but OTP not verified in token)", accessKeyId))
 									continue
 								}
 

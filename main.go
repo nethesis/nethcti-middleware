@@ -108,13 +108,18 @@ func createRouter() *gin.Engine {
 			if _, proxied := params.Keys["proxied"]; proxied {
 				proxyFlag = " [proxied]"
 			}
+			// path only: the query string may carry the token (?jwt=)
+			path := params.Path
+			if params.Request != nil {
+				path = params.Request.URL.Path
+			}
 			return fmt.Sprintf("[GIN] %v | %3d | %13v | %15s | %-7s %#v%s\n",
 				params.TimeStamp.Format("2006/01/02 - 15:04:05"),
 				params.StatusCode,
 				params.Latency,
 				params.ClientIP,
 				params.Method,
-				params.Path,
+				path,
 				proxyFlag,
 			)
 		}),
@@ -149,6 +154,11 @@ func createRouter() *gin.Engine {
 	// Super admin endpoints (no JWT required) - must be registered on router, not api group
 	router.POST("/admin/phonebook/import", middleware.RequireSuperAdmin(), methods.AdminImportPhonebookCSV)
 	router.POST("/admin/reload/profiles", middleware.RequireSuperAdmin(), methods.AdminReloadProfiles)
+	router.GET("/admin/tokens/persistent/:username/:audience", middleware.RequireSuperAdmin(), methods.AdminCheckPersistentToken)
+	router.POST("/admin/tokens/persistent/:username/:audience", middleware.RequireSuperAdmin(), methods.AdminCreatePersistentToken)
+	router.DELETE("/admin/tokens/persistent/:username/:audience", middleware.RequireSuperAdmin(), methods.AdminRemovePersistentToken)
+	router.GET("/admin/2fa/:username", middleware.RequireSuperAdmin(), methods.AdminGet2FAStatus)
+	router.DELETE("/admin/2fa/:username", middleware.RequireSuperAdmin(), methods.AdminDisable2FA)
 
 	// Define api group
 	api := router.Group("")
