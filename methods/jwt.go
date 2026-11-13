@@ -6,7 +6,9 @@
 package methods
 
 import (
+	"errors"
 	"fmt"
+	"os"
 	"time"
 
 	jwtv5 "github.com/golang-jwt/jwt/v5"
@@ -24,11 +26,17 @@ type UserJWTOptions struct {
 }
 
 func buildBaseUserJWTClaims(username string, otpVerified bool) jwtv5.MapClaims {
-	status, _ := GetUserStatus(username)
+	status, err := GetUserStatus(username)
+	enabled2FA := status == "1"
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		// unknown status: require the OTP rather than skip it
+		logs.Log(fmt.Sprintf("[ERROR][AUTH] Failed to read the 2FA status of user %s: %v", username, err))
+		enabled2FA = true
+	}
 
 	claims := jwtv5.MapClaims{
 		"id":           username,
-		"2fa":          status == "1",
+		"2fa":          enabled2FA,
 		"otp_verified": otpVerified,
 	}
 
@@ -69,4 +77,25 @@ func IssueUserJWT(opts UserJWTOptions) (jwtv5.MapClaims, string, error) {
 		return nil, "", err
 	}
 	return claims, tokenString, nil
+}
+
+// OTPPending reports whether the claims belong to a token of a user with 2FA
+// enabled whose OTP has not been verified yet.
+func OTPPending(claims map[string]interface{}) bool {
+	has2FA, _ := claims["2fa"].(bool)
+	otpVerified, _ := claims["otp_verified"].(bool)
+	return has2FA && !otpVerified
+}
+
+// ParseUserJWT validates a user JWT (signature and expiration) and returns its
+// claims.
+func ParseUserJWT(tokenString string) (jwtv5.MapClaims, error) {
+	claims := jwtv5.MapClaims{}
+	_, err := jwtv5.ParseWithClaims(tokenString, claims, func(token *jwtv5.Token) (interface{}, error) {
+		return []byte(configuration.Config.Secret_jwt), nil
+	}, jwtv5.WithValidMethods([]string{jwtv5.SigningMethodHS256.Alg()}))
+	if err != nil {
+		return nil, err
+	}
+	return claims, nil
 }
