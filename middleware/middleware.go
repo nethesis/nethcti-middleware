@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -40,6 +41,13 @@ type login struct {
 
 var jwtMiddleware *jwt.GinJWTMiddleware
 var identityKey = "id"
+
+// ErrPasswordExpired is returned by the login when the credentials are
+// right but the password must be changed before logging in
+var ErrPasswordExpired = errors.New("password_expired")
+
+// Context key of the password policy returned with ErrPasswordExpired
+const passwordPolicyKey = "password_policy"
 
 // ResetJWTMiddleware clears the cached JWT middleware instance.
 // Used primarily in tests to force reinitialization with a different configuration.
@@ -112,10 +120,24 @@ func InitJWT() *jwt.GinJWTMiddleware {
 			// (extension, case) the user logged in with
 			accountUsername, NethCTIToken, err := methods.LoginV1(username, password, loginMode)
 			if err != nil {
+				// the V1 server rejects an expired password like a wrong one
+				if !useSso && errors.Is(err, methods.ErrV1LoginRefused) {
+					if expired, policy := methods.IsPasswordExpired(c.Request.Context(), username, password); expired {
+						logs.Log("[INFO][AUTH] password expired for user " + username)
+						c.Set(passwordPolicyKey, policy)
+						return nil, ErrPasswordExpired
+					}
+				}
 				return nil, jwt.ErrFailedAuthentication
 			}
 
 			// Login is successful. Middleware returns a JWT.
+
+			// Cache the password expiration info, the user portal needs the password
+			if !useSso {
+				methods.RefreshPasswordInfo(accountUsername, password)
+			}
+
 			return methods.UpsertUserSession(accountUsername, NethCTIToken), nil
 		},
 		PayloadFunc: func(data any) gojwt.MapClaims {
@@ -248,10 +270,15 @@ func InitJWT() *jwt.GinJWTMiddleware {
 			c.JSON(200, gin.H{"code": 200})
 		},
 		Unauthorized: func(c *gin.Context, code int, message string) {
+			var data interface{}
+			if policy, ok := c.Get(passwordPolicyKey); ok {
+				// policy of the new password, for the expired password form
+				data = gin.H{"policy": policy}
+			}
 			c.JSON(code, structs.Map(models.StatusUnauthorized{
 				Code:    code,
 				Message: message,
-				Data:    nil,
+				Data:    data,
 			}))
 		},
 		TokenLookup:   "header: Authorization, query: jwt",

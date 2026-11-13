@@ -12,6 +12,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -26,6 +27,10 @@ import (
 // ErrV1AuthFailed is returned when the V1 server (nethcti-server) does not
 // authenticate the user.
 var ErrV1AuthFailed = errors.New("V1 authentication failed")
+
+// ErrV1LoginRefused is returned when the V1 server refuses the login without
+// a challenge, as it does for an expired password. It wraps ErrV1AuthFailed.
+var ErrV1LoginRefused = fmt.Errorf("%w: login refused", ErrV1AuthFailed)
 
 // ErrTrustedLoginDisabled is returned when a password-less login is requested
 // but its secret is not configured.
@@ -144,6 +149,9 @@ func loginV1Challenge(client *http.Client, username, password string, mode Login
 
 	if resp.StatusCode != http.StatusUnauthorized || resp.Header.Get("Www-Authenticate") == "" {
 		logs.Log("[ERROR][AUTH] Authentication failed for user " + username + " with status: " + resp.Status)
+		if resp.StatusCode == http.StatusUnauthorized {
+			return "", "", ErrV1LoginRefused
+		}
 		return "", "", ErrV1AuthFailed
 	}
 

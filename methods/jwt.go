@@ -15,6 +15,7 @@ import (
 	"github.com/nethesis/nethcti-middleware/configuration"
 	"github.com/nethesis/nethcti-middleware/logs"
 	"github.com/nethesis/nethcti-middleware/store"
+	"github.com/nethesis/nethcti-middleware/utils"
 )
 
 type UserJWTOptions struct {
@@ -82,20 +83,11 @@ func IssueUserJWT(opts UserJWTOptions) (jwtv5.MapClaims, string, error) {
 // OTPPending reports whether the claims belong to a token of a user with 2FA
 // enabled whose OTP has not been verified yet.
 func OTPPending(claims map[string]interface{}) bool {
-	has2FA, _ := claims["2fa"].(bool)
-	otpVerified, _ := claims["otp_verified"].(bool)
-	return has2FA && !otpVerified
+	return utils.OTPPending(claims)
 }
 
 // ParseUserJWT validates a user JWT (signature and expiration) and returns its
 // claims.
 func ParseUserJWT(tokenString string) (jwtv5.MapClaims, error) {
-	claims := jwtv5.MapClaims{}
-	_, err := jwtv5.ParseWithClaims(tokenString, claims, func(token *jwtv5.Token) (interface{}, error) {
-		return []byte(configuration.Config.Secret_jwt), nil
-	}, jwtv5.WithValidMethods([]string{jwtv5.SigningMethodHS256.Alg()}))
-	if err != nil {
-		return nil, err
-	}
-	return claims, nil
+	return utils.ParseUserJWT(tokenString, configuration.Config.Secret_jwt)
 }
